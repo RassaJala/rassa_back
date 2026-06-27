@@ -39,3 +39,19 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.email} ({self.get_role_display()})"
+
+
+class Role(models.Model):
+    id_rol = models.AutoField(primary_key=True)
+    nombre_rol = models.CharField(max_length=50, unique=True)
+    descripcion = models.CharField(max_length=300)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    estado = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "roles"
+        verbose_name = "Role"
+        verbose_name_plural = "Roles"
+
+    def __str__(self):
+        return self.nombre_rol

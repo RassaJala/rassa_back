@@ -4,10 +4,19 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.views.generic import FormView, RedirectView, TemplateView
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import User
-from .serializers import UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer
+from .models import Role, User
+from .serializers import (
+    LoginSerializer,
+    RoleSerializer,
+    UserSerializer,
+    RegisterSerializer,
+    CustomTokenObtainPairSerializer,
+)
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -61,6 +70,62 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (permissions.AllowAny,)
     serializer_class = RegisterSerializer
+
+
+class LoginApiView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data["password"]
+        remember = serializer.validated_data["remember"]
+
+        user = authenticate(request, email=email, password=password)
+        if user is None:
+            return Response(
+                {"success": False, "message": "Credenciales incorrectas."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        if not user.is_active:
+            return Response(
+                {"success": False, "message": "Esta cuenta está desactivada."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        login(request, user)
+        if remember:
+            request.session.set_expiry(1209600)
+        else:
+            request.session.set_expiry(0)
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "success": True,
+                "message": "Inicio de sesión correcto.",
+                "remember": remember,
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class UserListView(generics.ListAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = (permissions.AllowAny,)
+
+
+class RoleListView(generics.ListAPIView):
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = (permissions.AllowAny,)
 
 
 class MeView(generics.RetrieveUpdateAPIView):
