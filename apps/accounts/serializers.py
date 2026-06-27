@@ -1,5 +1,17 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import User
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+User = get_user_model()
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    username_field = User.USERNAME_FIELD
+
+    def validate(self, attrs):
+        if self.username_field not in attrs and "username" in attrs:
+            attrs[self.username_field] = attrs["username"]
+        return super().validate(attrs)
 
 
 class UserSerializer(serializers.ModelSerializer):
