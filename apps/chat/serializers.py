@@ -5,7 +5,7 @@ class MensajeConversacionSerializer(serializers.Serializer):
     id_mensaje = serializers.IntegerField()
     id_usuario = serializers.IntegerField()
     emisor = serializers.CharField()
-    contenido = serializers.CharField()
+    contenido = serializers.CharField(allow_null=True, allow_blank=True)
     leido = serializers.BooleanField()
     creado_en = serializers.DateTimeField()
 
