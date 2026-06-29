@@ -7,17 +7,32 @@ API REST para Rassa, una app mobile de e-commerce donde agricultores venden prod
 - **Django 5** + **Django REST Framework**
 - **PostgreSQL**
 - **JWT Auth** (SimpleJWT)
-- Python 3.11+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) para gestión de dependencias
 
 ## Requisitos
 
-- Python 3.11 o superior
+- Python 3.12 o superior
 - PostgreSQL (o SQLite para desarrollo local sin instalar nada)
+- [uv](https://docs.astral.sh/uv/) (opcional, recomendado) o pip
 
 ## Instalación
 
+### Con uv (recomendado)
+
 ```bash
-# 1. Clonar el repo (si no lo hiciste)
+# 1. Clonar el repo
+git clone <repo-url>
+cd Rassaback
+
+# 2. Instalar dependencias (uv crea el venv automáticamente)
+uv sync
+```
+
+### Con pip (tradicional)
+
+```bash
+# 1. Clonar el repo
 git clone <repo-url>
 cd Rassaback
 
@@ -51,13 +66,14 @@ CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
 
 ```bash
 # Aplicar migraciones
-python manage.py migrate
+uv run python manage.py migrate          # con uv
+python manage.py migrate                 # con pip (venv activado)
 
 # Crear superusuario
-python manage.py createsuperuser
+uv run python manage.py createsuperuser
 
 # Iniciar servidor de desarrollo
-python manage.py runserver
+uv run python manage.py runserver
 ```
 
 La API arranca en `http://localhost:8000/api/`.
@@ -66,13 +82,13 @@ La API arranca en `http://localhost:8000/api/`.
 
 ```bash
 # Crear migraciones después de cambiar modelos
-python manage.py makemigrations
+uv run python manage.py makemigrations
 
 # Abrir shell de Django
-python manage.py shell
+uv run python manage.py shell
 
 # Correr tests
-python manage.py test
+uv run python manage.py test
 ```
 
 ## Estructura
@@ -89,5 +105,6 @@ Rassaback/
 │   ├── orders/         # Órdenes de compra
 │   └── categories/     # Categorías de productos
 ├── manage.py
-└── requirements.txt
+├── pyproject.toml      # Dependencias y config del proyecto
+└── requirements.txt    # Dependencias (fallback para pip)
 ```
