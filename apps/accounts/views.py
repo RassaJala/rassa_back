@@ -1,7 +1,9 @@
 from django import forms
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import connection
 from django.urls import reverse_lazy
 from django.views.generic import FormView, RedirectView, TemplateView
 from rest_framework import generics, permissions, status
@@ -11,7 +13,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import Role
 from .serializers import (
+    ChangePasswordSerializer,
     LoginSerializer,
+    MeUpdateSerializer,
     RoleSerializer,
     UserSerializer,
     RegisterSerializer,
@@ -140,6 +144,7 @@ class RoleListView(generics.ListAPIView):
 
 
 class MeView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
 
     def get(self, request):
         user_data = get_user_data_dict(request.user.id_usuario)
@@ -151,3 +156,70 @@ class MeView(APIView):
         serializer = UserSerializer(data=user_data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.data)
+
+    def patch(self, request):
+        serializer = MeUpdateSerializer(data=request.data, user_id=request.user.id_usuario)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data.get("email")
+        phone_number = serializer.validated_data.get("phone_number")
+        first_name = serializer.validated_data.get("first_name")
+        last_name = serializer.validated_data.get("last_name")
+
+        with connection.cursor() as cursor:
+            if email is not None:
+                cursor.execute(
+                    "UPDATE usuario SET correo = %s WHERE id_usuario = %s",
+                    [email, request.user.id_usuario],
+                )
+            if phone_number is not None:
+                cursor.execute(
+                    "UPDATE usuario SET telefono = %s WHERE id_usuario = %s",
+                    [phone_number, request.user.id_usuario],
+                )
+            if first_name is not None or last_name is not None:
+                cursor.execute(
+                    "SELECT fk_persona FROM usuario WHERE id_usuario = %s",
+                    [request.user.id_usuario],
+                )
+                persona_id = cursor.fetchone()[0]
+                if first_name is not None:
+                    cursor.execute(
+                        "UPDATE persona SET nombre = %s WHERE id_persona = %s",
+                        [first_name, persona_id],
+                    )
+                if last_name is not None:
+                    cursor.execute(
+                        "UPDATE persona SET apellido_paterno = %s WHERE id_persona = %s",
+                        [last_name, persona_id],
+                    )
+
+        user_data = get_user_data_dict(request.user.id_usuario)
+        serializer = UserSerializer(data=user_data)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.data)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, user=request.user)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            message = errors.get("current_password") or errors.get("non_field_errors") or errors
+            return Response(
+                {"success": False, "message": message},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_password = serializer.validated_data["new_password"]
+        hashed = make_password(new_password)
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE usuario SET contrasenia = %s WHERE id_usuario = %s",
+                [hashed, request.user.id_usuario],
+            )
+
+        return Response({"success": True, "message": "Contraseña actualizada correctamente."})
