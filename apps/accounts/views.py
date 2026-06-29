@@ -9,13 +9,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import Role, User
+from .models import Role
 from .serializers import (
     LoginSerializer,
     RoleSerializer,
     UserSerializer,
     RegisterSerializer,
     CustomTokenObtainPairSerializer,
+    get_user_data_dict,
+    get_user_list_data,
 )
 
 
@@ -36,7 +38,7 @@ class LoginView(FormView):
     def form_valid(self, form):
         email = form.cleaned_data["email"]
         password = form.cleaned_data["password"]
-        user = authenticate(self.request, email=email, password=password)
+        user = authenticate(self.request, correo=email, password=password)
         if user is None:
             form.add_error(None, "Credenciales incorrectas. Intenta de nuevo.")
             return self.form_invalid(form)
@@ -66,10 +68,14 @@ class LogoutView(RedirectView):
         return super().get(request, *args, **kwargs)
 
 
-class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
+class RegisterView(APIView):
     permission_classes = (permissions.AllowAny,)
-    serializer_class = RegisterSerializer
+
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user_data = serializer.save()
+        return Response(user_data, status=status.HTTP_201_CREATED)
 
 
 class LoginApiView(APIView):
@@ -83,7 +89,7 @@ class LoginApiView(APIView):
         password = serializer.validated_data["password"]
         remember = serializer.validated_data["remember"]
 
-        user = authenticate(request, email=email, password=password)
+        user = authenticate(request, correo=email, password=password)
         if user is None:
             return Response(
                 {"success": False, "message": "Credenciales incorrectas."},
@@ -102,6 +108,7 @@ class LoginApiView(APIView):
             request.session.set_expiry(0)
 
         refresh = RefreshToken.for_user(user)
+        user_data = get_user_data_dict(user.id_usuario)
 
         return Response(
             {
@@ -110,16 +117,20 @@ class LoginApiView(APIView):
                 "remember": remember,
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
-                "user": UserSerializer(user).data,
+                "user": user_data,
             },
             status=status.HTTP_200_OK,
         )
 
 
-class UserListView(generics.ListAPIView):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
+class UserListView(APIView):
     permission_classes = (permissions.AllowAny,)
+
+    def get(self, request):
+        users = get_user_list_data()
+        serializer = UserSerializer(data=users, many=True)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.data)
 
 
 class RoleListView(generics.ListAPIView):
@@ -128,8 +139,15 @@ class RoleListView(generics.ListAPIView):
     permission_classes = (permissions.AllowAny,)
 
 
-class MeView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserSerializer
+class MeView(APIView):
 
-    def get_object(self):
-        return self.request.user
+    def get(self, request):
+        user_data = get_user_data_dict(request.user.id_usuario)
+        if user_data is None:
+            return Response(
+                {"error": "Usuario no encontrado"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = UserSerializer(data=user_data)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.data)

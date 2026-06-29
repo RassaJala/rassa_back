@@ -36,6 +36,7 @@ LOCAL_APPS = [
     "apps.products",
     "apps.orders",
     "apps.categories",
+    "apps.chat",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -81,6 +82,7 @@ DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_ag
 # === AUTH ===
 AUTH_USER_MODEL = "accounts.User"
 AUTHENTICATION_BACKENDS = [
+    "apps.accounts.backends.UsuarioAuthBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
 AUTH_PASSWORD_VALIDATORS = [
@@ -109,7 +111,7 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
-    "USER_ID_FIELD": "id",
+    "USER_ID_FIELD": "id_usuario",
 }
 
 # === CORS ===
