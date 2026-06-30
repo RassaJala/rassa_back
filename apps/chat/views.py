@@ -325,10 +325,11 @@ class CrearConversacionPrivadaView(APIView):
 
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT 1 FROM usuario WHERE id_usuario IN (%s, %s)",
+                "SELECT id_usuario FROM usuario WHERE id_usuario IN (%s, %s)",
                 [usuario1, usuario2],
             )
-            if cursor.rowcount != 2:
+            existing_users = cursor.fetchall()
+            if len(existing_users) != 2:
                 return Response(
                     {"ok": False, "mensaje": "Uno o ambos usuarios no existen."},
                     status=status.HTTP_400_BAD_REQUEST,
