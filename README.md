@@ -13,68 +13,87 @@ API REST para Rassa, una app mobile de e-commerce donde agricultores venden prod
 ## Requisitos
 
 - Python 3.12 o superior
-- PostgreSQL (o SQLite para desarrollo local sin instalar nada)
+- PostgreSQL
 - [uv](https://docs.astral.sh/uv/) (opcional, recomendado) o pip
 
 ## Instalación
 
-### Con uv (recomendado)
+### 1. Clonar el repo
+
+**Opción A — Solo backend:**
 
 ```bash
-# 1. Clonar el repo
-git clone <repo-url>
-cd Rassaback
-
-# 2. Instalar dependencias (uv crea el venv automáticamente)
-uv sync
+gh repo clone ObedAlPa/rassa_back
+cd rassa_back
 ```
 
-### Con pip (tradicional)
+**Opción B — Monorepo (backend + frontend):**
 
 ```bash
-# 1. Clonar el repo
-git clone <repo-url>
-cd Rassaback
+mkdir rassa-monorepo && cd rassa-monorepo
+gh repo clone ObedAlPa/rassa_back back
+gh repo clone ObedAlPa/rassa_front front
+cd back
+```
 
-# 2. Crear y activar entorno virtual
+### 2. Instalar uv (si no lo tienes)
+
+[uv docs](https://docs.astral.sh/uv/getting-started/installation/#installation-methods)
+
+### 3. Instalar dependencias
+
+```bash
+# Con uv (recomendado) — crea el venv automáticamente
+uv sync
+
+# O con pip
 python -m venv venv
-source venv/bin/activate   # Linux/Mac
-# venv\Scripts\activate    # Windows
-
-# 3. Instalar dependencias
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configuración
+### 4. Configurar variables de entorno
 
 Crear un archivo `.env` en la raíz del proyecto:
 
-```env
-SECRET_KEY=una-clave-segura-acá
-DEBUG=True
-DATABASE_URL=sqlite:///db.sqlite3
+```bash
+# Generar una SECRET_KEY segura
+uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
 
-# Para PostgreSQL:
-# DATABASE_URL=postgres://usuario:password@localhost:5432/rassa
+Copiar la clave generada y crear el `.env`:
+
+```env
+SECRET_KEY=<la-clave-generada>
+DEBUG=True
+DATABASE_URL=postgres://usuario:password@localhost:5432/rassa
 
 CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
 ```
 
-> **Tips**: En desarrollo podés usar SQLite (`sqlite:///db.sqlite3`) sin instalar PostgreSQL. En producción usá PostgreSQL.
+### 5. Configurar PostgreSQL
+
+> **IMPORTANTE**: SQLite no soporta todo el esquema de PostgreSQL. Se recomienda usar PostgreSQL incluso en desarrollo.
+
+```bash
+# Actualizar DATABASE_URL en .env
+DATABASE_URL=postgres://usuario:password@localhost:5432/rassa
+```
 
 ## Ejecutar
 
 ```bash
 # Aplicar migraciones
-uv run python manage.py migrate          # con uv
-python manage.py migrate                 # con pip (venv activado)
+uv run manage.py migrate
 
-# Crear superusuario
-uv run python manage.py createsuperuser
+# Aplicar seeders si existen
+uv run manage.py seed
 
 # Iniciar servidor de desarrollo
-uv run python manage.py runserver
+uv run manage.py runserver
 ```
+
+> Con pip (venv activado): reemplazar `uv run python` por `python`.
 
 La API arranca en `http://localhost:8000/api/`.
 
@@ -94,7 +113,7 @@ uv run python manage.py test
 ## Estructura
 
 ```
-Rassaback/
+rassa_back/
 ├── rassa/              # Configuración del proyecto
 │   ├── settings.py
 │   ├── urls.py         # Rutas principales
