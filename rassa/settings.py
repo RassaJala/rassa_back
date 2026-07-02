@@ -31,14 +31,13 @@ THIRD_PARTY_APPS = [
     "corsheaders",
 ]
 
-LOCAL_APPS = [
-    "apps.accounts",
-    "apps.products",
-    "apps.orders",
-    "apps.categories",
-]
-
-INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+INSTALLED_APPS = (
+    DJANGO_APPS
+    + THIRD_PARTY_APPS
+    + [
+        "rassa",
+    ]
+)
 
 # === MIDDLEWARE ===
 MIDDLEWARE = [
@@ -79,7 +78,9 @@ DATABASE_URL = config("DATABASE_URL", default="sqlite:///db.sqlite3")
 DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
 
 # === AUTH ===
-AUTH_USER_MODEL = "accounts.User"
+# Using default Django User model. Custom user removed with apps/accounts/.
+# CustomTokenObtainPairSerializer in rassa/auth_serializers.py provides
+# Spanish error messages compatible with default User model.
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
