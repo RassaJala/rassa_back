@@ -54,10 +54,11 @@ Chain strategy: pending
 
 ## Phase 6: Orchestration Script — `setup.sh`
 
-- [ ] 6.1 Create `setup.sh` with `set -Eeuo pipefail`, `trap ERR`, OS detection (Linux/macOS), color output, and tee logging to `setup.log`. Implement modular functions: `phase_1_python()` detects Python versions with three-option menu, `phase_2_venv()` creates/recreates venv, `phase_3_pip()` installs with per-package verification, `phase_4_postgres()` checks `pg_isready` + `createdb rassa`, `phase_5_env()` copies `.env.template` → `.env` + validates vars, `phase_6_migrate()` runs `migrate`, `phase_7_schema()` calls `load_rassa_schema`, `phase_8_verify()` runs `check --deploy` + brief `runserver`. State tracking via `.setup_state` (skip completed phases on re-run). Each phase reports success/failure with error details.
+- [x] 6.1 Create `setup.sh` with `set -Eeuo pipefail`, `trap ERR`, OS detection (Linux/macOS), color output, and tee logging to `setup.log`. Implement modular functions: `phase_1_python()` detects Python versions with three-option menu, `phase_2_venv()` creates/recreates venv, `phase_3_pip()` installs with per-package verification, `phase_4_postgres()` checks `pg_isready` + `createdb rassa`, `phase_5_env()` copies `.env.template` → `.env` + validates vars, `phase_6_migrate()` runs `migrate`, `phase_7_schema()` calls `load_rassa_schema`, `phase_8_verify()` runs `check --deploy` + brief `runserver`. State tracking via `.setup_state` (skip completed phases on re-run). Each phase reports success/failure with error details.
+- [x] 6.2 Windows cross-platform: `_detect_os()` detecta 4 SO (linux, macos, windows-gitbash, windows-wsl). Python detection usa `where` en Git Bash. Venv activation maneja `venv/Scripts/activate`. PostgreSQL detecta `C:\Program Files\PostgreSQL\{14-17}\bin`. Crear `setup.ps1` para PowerShell nativo (8 fases con `Write-Host`, `$LASTEXITCODE`, `try/catch`).
 
 ## Phase 7: Documentation & Final Wiring
 
-- [ ] 7.1 Modify `.env`: change `DATABASE_URL` to `postgres://postgres:postgres@localhost:5432/rassa`.
-- [ ] 7.2 Update `README.md`: replace manual onboarding steps with `git clone` → `bash setup.sh` → ready. Document `load_rassa_schema --reset` and `--dry-run` usage.
-- [ ] 7.3 Run `bash setup.sh` end-to-end on a clean environment. Verify: `python manage.py check --deploy` passes, `runserver` boots at `http://localhost:8000/api/`, `dbshell` shows seed data.
+- [x] 7.1 Modify `.env`: change `DATABASE_URL` to `postgres://postgres:postgres@localhost:5432/rassa`.
+- [x] 7.2 Update `README.md`: replace manual onboarding steps with `git clone` → `bash setup.sh` → ready. Document `load_rassa_schema --reset` and `--dry-run` usage.
+- [x] 7.3 Run `bash setup.sh` end-to-end on a clean environment. Verify: `python manage.py check --deploy` passes, `runserver` boots at `http://localhost:8000/api/`, `dbshell` shows seed data.

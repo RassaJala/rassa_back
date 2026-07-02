@@ -34,3 +34,7 @@ staticfiles/
 htmlcov/
 .coverage
 coverage/
+
+# Setup artifacts
+.setup_state
+setup.log
