@@ -55,6 +55,7 @@ Chain strategy: pending
 ## Phase 6: Orchestration Script — `setup.sh`
 
 - [x] 6.1 Create `setup.sh` with `set -Eeuo pipefail`, `trap ERR`, OS detection (Linux/macOS), color output, and tee logging to `setup.log`. Implement modular functions: `phase_1_python()` detects Python versions with three-option menu, `phase_2_venv()` creates/recreates venv, `phase_3_pip()` installs with per-package verification, `phase_4_postgres()` checks `pg_isready` + `createdb rassa`, `phase_5_env()` copies `.env.template` → `.env` + validates vars, `phase_6_migrate()` runs `migrate`, `phase_7_schema()` calls `load_rassa_schema`, `phase_8_verify()` runs `check --deploy` + brief `runserver`. State tracking via `.setup_state` (skip completed phases on re-run). Each phase reports success/failure with error details.
+- [x] 6.2 Windows cross-platform: `_detect_os()` detecta 4 SO (linux, macos, windows-gitbash, windows-wsl). Python detection usa `where` en Git Bash. Venv activation maneja `venv/Scripts/activate`. PostgreSQL detecta `C:\Program Files\PostgreSQL\{14-17}\bin`. Crear `setup.ps1` para PowerShell nativo (8 fases con `Write-Host`, `$LASTEXITCODE`, `try/catch`).
 
 ## Phase 7: Documentation & Final Wiring
 

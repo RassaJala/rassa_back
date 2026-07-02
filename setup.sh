@@ -5,6 +5,12 @@
 # Single-command setup: Python detection → venv → pip → PostgreSQL →
 # environment → migrate → load schema → verify.
 #
+# Plataformas soportadas:
+#   Linux     → bash setup.sh
+#   macOS     → bash setup.sh
+#   Windows   → bash setup.sh  (Git Bash)  o  .\setup.ps1  (PowerShell nativo)
+#   Windows   → bash setup.sh  (WSL, se trata como Linux)
+#
 # Uso:
 #   bash setup.sh          # Ejecución completa (salta fases ya completadas)
 #   bash setup.sh --reset  # Ignora .setup_state, ejecuta todo de nuevo
@@ -60,17 +66,47 @@ _setup_logging() {
 }
 
 # ---------------------------------------------------------------------------
-# OS detection (testable)
+# OS detection (testable) — returns: linux | macos | windows-gitbash | windows-wsl | unknown
 # ---------------------------------------------------------------------------
 
 _detect_os() {
     local os_name
     os_name="$(uname -s)"
     case "$os_name" in
-        Linux)  echo "linux" ;;
-        Darwin) echo "macos" ;;
-        *)      echo "unknown" ;;
+        Linux*)
+            if grep -qi microsoft /proc/version 2>/dev/null; then
+                echo "windows-wsl"
+            else
+                echo "linux"
+            fi
+            ;;
+        Darwin)  echo "macos" ;;
+        CYGWIN*|MINGW*|MSYS*) echo "windows-gitbash" ;;
+        *)       echo "unknown" ;;
     esac
+}
+
+_is_windows() {
+    local os
+    os=$(_detect_os)
+    [[ "$os" == "windows-gitbash" || "$os" == "windows-wsl" ]]
+}
+
+# On Windows Git Bash, common PostgreSQL install paths (adds to PATH if found)
+_find_pg_tools() {
+    local -a pg_dirs=(
+        "/c/Program Files/PostgreSQL/17/bin"
+        "/c/Program Files/PostgreSQL/16/bin"
+        "/c/Program Files/PostgreSQL/15/bin"
+        "/c/Program Files/PostgreSQL/14/bin"
+    )
+    for dir in "${pg_dirs[@]}"; do
+        if [[ -f "$dir/pg_isready.exe" ]]; then
+            export PATH="$dir:$PATH"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -224,38 +260,59 @@ _run_phase() {
 _phase_1_python() {
     echo "Buscando instalaciones de Python..."
 
+    local os_name
+    os_name=$(_detect_os)
+
     # Collect python3 results from which and pyenv
     local -a python_paths=()
     local -a python_versions=()
     local -A seen_versions
 
-    # which -a python3
-    while IFS= read -r pypath; do
-        [[ -n "$pypath" ]] || continue
-        local ver
-        ver=$("$pypath" --version 2>&1 || true)
-        ver=$(_parse_python_version "$ver")
-        if [[ -n "$ver" ]] && [[ -z "${seen_versions[$ver]:-}" ]]; then
-            python_paths+=("$pypath")
-            python_versions+=("$ver")
-            seen_versions[$ver]="$pypath"
-        fi
-    done < <(command -v python3 2>/dev/null && which -a python3 2>/dev/null || true)
+    case "$os_name" in
+        windows-gitbash)
+            # Use 'where' (native Windows) on Git Bash — more reliable than 'which'
+            while IFS= read -r pypath; do
+                [[ -n "$pypath" ]] || continue
+                local ver
+                ver=$("$pypath" --version 2>&1 || true)
+                ver=$(_parse_python_version "$ver")
+                if [[ -n "$ver" ]] && [[ -z "${seen_versions[$ver]:-}" ]]; then
+                    python_paths+=("$pypath")
+                    python_versions+=("$ver")
+                    seen_versions[$ver]="$pypath"
+                fi
+            done < <({ where python 2>/dev/null; where python3 2>/dev/null; } || true)
+            ;;
+        *)
+            # Unix: which -a python3 + pyenv
+            while IFS= read -r pypath; do
+                [[ -n "$pypath" ]] || continue
+                local ver
+                ver=$("$pypath" --version 2>&1 || true)
+                ver=$(_parse_python_version "$ver")
+                if [[ -n "$ver" ]] && [[ -z "${seen_versions[$ver]:-}" ]]; then
+                    python_paths+=("$pypath")
+                    python_versions+=("$ver")
+                    seen_versions[$ver]="$pypath"
+                fi
+            done < <(command -v python3 2>/dev/null && which -a python3 2>/dev/null || true)
 
-    # pyenv versions
-    if command -v pyenv &>/dev/null; then
-        while IFS= read -r pyline; do
-            local pyver
-            pyver=$(echo "$pyline" | sed 's/^[* ]*//' | awk '{print $1}')
-            if [[ -z "${seen_versions[$pyver]:-}" ]]; then
-                local pyp
-                pyp=$(pyenv which python3 2>/dev/null || echo "$HOME/.pyenv/versions/$pyver/bin/python3")
-                python_paths+=("$pyp")
-                python_versions+=("$pyver")
-                seen_versions[$pyver]="$pyp"
+            # pyenv versions
+            if command -v pyenv &>/dev/null; then
+                while IFS= read -r pyline; do
+                    local pyver
+                    pyver=$(echo "$pyline" | sed 's/^[* ]*//' | awk '{print $1}')
+                    if [[ -z "${seen_versions[$pyver]:-}" ]]; then
+                        local pyp
+                        pyp=$(pyenv which python3 2>/dev/null || echo "$HOME/.pyenv/versions/$pyver/bin/python3")
+                        python_paths+=("$pyp")
+                        python_versions+=("$pyver")
+                        seen_versions[$pyver]="$pyp"
+                    fi
+                done < <(pyenv versions --bare 2>/dev/null || true)
             fi
-        done < <(pyenv versions --bare 2>/dev/null || true)
-    fi
+            ;;
+    esac
 
     # Filter: only ≥ MIN_PYTHON_VERSION
     local -a compatible_paths=()
@@ -313,7 +370,7 @@ _phase_1_python() {
         case "$answer" in
             b|B) echo "Cancelado."; return 1 ;;
             [1-9]|[1-9][0-9])
-                local idx=$((answer - 1))
+                local idx=$((answer-1))
                 if [[ $idx -ge 0 ]] && [[ $idx -lt ${#compatible_versions[@]} ]]; then
                     PYTHON_CMD="${compatible_paths[$idx]}"
                     echo "Usando Python ${compatible_versions[$idx]} (${compatible_paths[$idx]})"
@@ -331,7 +388,7 @@ _show_python_install_guide() {
     echo "Para instalar Python ${MIN_PYTHON_VERSION}+:"
     echo ""
     case "$os_name" in
-        linux)
+        linux|windows-wsl)
             echo "  sudo apt update && sudo apt install -y python3 python3-venv python3-pip"
             echo "  # o si necesitás una versión específica:"
             echo "  sudo add-apt-repository ppa:deadsnakes/ppa -y"
@@ -340,6 +397,10 @@ _show_python_install_guide() {
             echo "  brew install python@3.12"
             echo "  # o con pyenv:"
             echo "  brew install pyenv && pyenv install 3.12" ;;
+        windows-gitbash)
+            echo "  Descargá el instalador oficial: https://www.python.org/downloads/"
+            echo "  IMPORTANTE: Marcá 'Add Python to PATH' durante la instalación."
+            echo "  Luego cerrá y reabrí Git Bash para que detecte el nuevo PATH." ;;
         *)
             echo "  Visitá https://www.python.org/downloads/" ;;
     esac
@@ -378,12 +439,30 @@ _activate_venv() {
     if [[ -f "venv/bin/activate" ]]; then
         # shellcheck disable=SC1091
         source "venv/bin/activate"
-        echo "  → pip: $(command -v pip)"
-        echo "  → python: $(command -v python)"
+    elif [[ -f "venv/Scripts/activate" ]]; then
+        # shellcheck disable=SC1091
+        source "venv/Scripts/activate"
     else
-        echo "$(_red "No se encontró venv/bin/activate. ¿Se creó correctamente?")"
+        echo "$(_red "No se encontró venv/bin/activate ni venv/Scripts/activate. ¿Se creó correctamente?")"
         return 1
     fi
+    echo "  → pip: $(command -v pip)"
+    echo "  → python: $(command -v python)"
+}
+
+# Unified venv activation — called by phases 3-8 (cross-platform)
+_ensure_venv_active() {
+    if [[ -f "venv/bin/activate" ]]; then
+        # shellcheck disable=SC1091
+        source "venv/bin/activate"
+        return 0
+    fi
+    if [[ -f "venv/Scripts/activate" ]]; then
+        # shellcheck disable=SC1091
+        source "venv/Scripts/activate"
+        return 0
+    fi
+    return 0  # Not fatal — phases handle missing venv gracefully
 }
 
 # ---------------------------------------------------------------------------
@@ -391,11 +470,7 @@ _activate_venv() {
 # ---------------------------------------------------------------------------
 
 _phase_3_pip() {
-    # Ensure venv is active
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
-    fi
+    _ensure_venv_active
 
     if [[ ! -f "requirements.txt" ]]; then
         echo "$(_red "No se encontró requirements.txt en $(pwd)")"
@@ -423,6 +498,14 @@ _phase_3_pip() {
 _phase_4_postgres() {
     echo "Verificando PostgreSQL..."
 
+    local os_name
+    os_name=$(_detect_os)
+
+    # On Windows Git Bash, probe common PostgreSQL bin dirs
+    if [[ "$os_name" == "windows-gitbash" ]]; then
+        _find_pg_tools
+    fi
+
     if ! command -v pg_isready &>/dev/null; then
         echo "$(_red "PostgreSQL no está instalado o pg_isready no está en el PATH.")"
         echo ""
@@ -432,12 +515,13 @@ _phase_4_postgres() {
 
     if ! pg_isready -q 2>/dev/null; then
         echo "$(_yellow "PostgreSQL está instalado pero no está corriendo.")"
-        local os_name
         os_name=$(_detect_os)
         echo ""
         case "$os_name" in
-            linux)  echo "Iniciá PostgreSQL con: sudo systemctl start postgresql" ;;
-            macos)  echo "Iniciá PostgreSQL con: brew services start postgresql@16" ;;
+            linux)           echo "Iniciá PostgreSQL con: sudo systemctl start postgresql" ;;
+            macos)           echo "Iniciá PostgreSQL con: brew services start postgresql@16" ;;
+            windows-gitbash) echo "Iniciá PostgreSQL desde Services o: net start postgresql-x64-16" ;;
+            windows-wsl)     echo "Iniciá PostgreSQL con: sudo service postgresql start" ;;
         esac
         return 1
     fi
@@ -458,7 +542,7 @@ _show_postgres_install_guide() {
     echo "Para instalar PostgreSQL:"
     echo ""
     case "$os_name" in
-        linux)
+        linux|windows-wsl)
             echo "  sudo apt update && sudo apt install -y postgresql postgresql-client"
             echo "  sudo systemctl start postgresql"
             echo "  sudo systemctl enable postgresql"
@@ -471,6 +555,11 @@ _show_postgres_install_guide() {
             echo ""
             echo "Luego creá el usuario postgres si no existe:"
             echo "  createuser -s postgres" ;;
+        windows-gitbash)
+            echo "  Descargá el instalador oficial: https://www.postgresql.org/download/windows/"
+            echo "  Durante la instalación, anotá el puerto (default: 5432) y la contraseña de postgres."
+            echo "  Asegurate de que pg_isready y createdb estén en C:\\Program Files\\PostgreSQL\\{version}\\bin\\"
+            echo "  (el script detecta automáticamente las versiones 14-17 en esa ubicación)." ;;
         *)
             echo "  Visitá https://www.postgresql.org/download/" ;;
     esac
@@ -484,11 +573,7 @@ _show_postgres_install_guide() {
 # ---------------------------------------------------------------------------
 
 _phase_5_env() {
-    # Ensure venv is active for decouple
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
-    fi
+    _ensure_venv_active
 
     if [[ ! -f ".env" ]]; then
         if [[ -f ".env.template" ]]; then
@@ -535,11 +620,7 @@ _phase_5_env() {
 # ---------------------------------------------------------------------------
 
 _phase_6_migrate() {
-    # Ensure venv is active
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
-    fi
+    _ensure_venv_active
 
     echo "Aplicando migraciones de Django..."
 
@@ -558,11 +639,7 @@ _phase_6_migrate() {
 # ---------------------------------------------------------------------------
 
 _phase_7_schema() {
-    # Ensure venv is active
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
-    fi
+    _ensure_venv_active
 
     echo "Cargando esquema SQL (32 tablas + seeders)..."
 
@@ -582,11 +659,7 @@ _phase_7_schema() {
 # ---------------------------------------------------------------------------
 
 _phase_8_verify() {
-    # Ensure venv is active
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
-    fi
+    _ensure_venv_active
 
     echo "Verificando configuración de Django..."
 
@@ -652,6 +725,9 @@ Opciones:
 
 Sin opciones, el script ejecuta solo las fases que no se hayan completado
 anteriormente (según .setup_state).
+
+Plataformas: Linux | macOS | Windows (Git Bash / WSL)
+En Windows PowerShell nativo usá: .\\setup.ps1
 
 Log: setup.log
 EOF
