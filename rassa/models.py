@@ -176,6 +176,14 @@ class Usuario(models.Model):
     """
 
     id_usuario = models.AutoField(primary_key=True)
+    fk_user = models.OneToOneField(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        db_column="fk_user",
+        related_name="usuario",
+        null=True,
+        blank=True,
+    )
     fk_persona = models.OneToOneField(
         Persona, on_delete=models.CASCADE, db_column="fk_persona"
     )
@@ -550,7 +558,7 @@ class Log(models.Model):
 
     id_log = models.AutoField(primary_key=True)
     fk_usuario = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_usuario"
+        Usuario, on_delete=models.SET_NULL, null=True, db_column="fk_usuario"
     )
     descripcion = models.TextField()
     ip = models.GenericIPAddressField()

@@ -2,15 +2,18 @@
 
 Endpoints disponibles:
     - /admin/              → Panel de administración Django
-    - /api/auth/           → Autenticación (login, register, me, refresh)
-
-Todos los endpoints de autenticación están bajo /api/auth/.
+    - /api/token/          → Login JWT (CustomTokenObtainPairView)
+    - /api/token/refresh/  → Refresh token
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from rassa.auth_views import CustomTokenObtainPairView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/auth/", include("rassa.auth.urls")),
+    path("api/token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 ]

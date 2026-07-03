@@ -605,6 +605,11 @@ class Command(BaseCommand):
             if created:
                 auth_user.set_password(credenciales[u["id_usuario"]])
                 auth_user.save()
+            # Vincular Usuario con auth.User via fk_user
+            usuario = Usuario.objects.get(id_usuario=u["id_usuario"])
+            if usuario.fk_user_id != auth_user.id:
+                usuario.fk_user = auth_user
+                usuario.save(update_fields=["fk_user"])
         self.stdout.write("  Usuarios: OK")
 
     # ------------------------------------------------------------------
