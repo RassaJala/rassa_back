@@ -8,14 +8,21 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('rassa', '0004_usuario_add_fk_user'),
+        ("rassa", "0004_usuario_add_fk_user"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='usuario',
-            name='fk_user',
-            field=models.OneToOneField(blank=True, db_column='fk_user', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='usuario', to=settings.AUTH_USER_MODEL),
+            model_name="usuario",
+            name="fk_user",
+            field=models.OneToOneField(
+                blank=True,
+                db_column="fk_user",
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="usuario",
+                to=settings.AUTH_USER_MODEL,
+            ),
         ),
     ]

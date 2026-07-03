@@ -2,6 +2,14 @@
 
 Cada modelo respeta los nombres de columna originales (snake_case español)
 para mantener compatibilidad con el esquema SQL existente y las consultas.
+
+Política de on_delete:
+- CASCADE: relación padre-hijo directa (ej: DetallePedido→Pedido). Si se
+  elimina el padre, el hijo no tiene sentido existir.
+- SET_NULL: preservar traza de auditoría o historial. Si se elimina el
+  padre, el hijo queda huérfano pero conserva el registro (fk nullable).
+- PROTECT: catálogos compartidos que no deben eliminarse si tienen
+  registros dependientes (ej: TipoPago, EstadoPedido, Rol).
 """
 
 from django.db import models
@@ -189,7 +197,7 @@ class Usuario(models.Model):
     )
     telefono = models.CharField(max_length=15)
     correo = models.CharField(max_length=150, unique=True)
-    fk_rol = models.ForeignKey(Rol, on_delete=models.CASCADE, db_column="fk_rol")
+    fk_rol = models.ForeignKey(Rol, on_delete=models.PROTECT, db_column="fk_rol")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -215,7 +223,7 @@ class Familia(models.Model):
 
     id_familia = models.AutoField(primary_key=True)
     fk_jefe_familia = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_jefe_familia"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_jefe_familia"
     )
     nombre_familia = models.CharField(max_length=100)
     detalle_familia = models.CharField(max_length=300, blank=True, null=True)
@@ -315,7 +323,7 @@ class PublicacionSemanal(models.Model):
 
     id_publicacion = models.AutoField(primary_key=True)
     fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_agricultor"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
     )
     fecha_publicacion = models.DateField()
     semana = models.PositiveIntegerField()
@@ -352,7 +360,7 @@ class ProductoSemanal(models.Model):
         Producto, on_delete=models.CASCADE, db_column="fk_producto"
     )
     fk_unidad = models.ForeignKey(
-        Unidad, on_delete=models.CASCADE, db_column="fk_unidad"
+        Unidad, on_delete=models.PROTECT, db_column="fk_unidad"
     )
     stock = models.PositiveIntegerField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
@@ -379,13 +387,15 @@ class PedidoCabecera(models.Model):
     id_pedido = models.AutoField(primary_key=True)
     fk_cliente = models.ForeignKey(
         Usuario,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         db_column="fk_cliente",
         related_name="pedidos_como_cliente",
     )
     fk_estado = models.ForeignKey(
         EstadoPedido,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         db_column="fk_estado",
         default=1,
     )
@@ -470,9 +480,9 @@ class Pago(models.Model):
 
     id_pago = models.AutoField(primary_key=True)
     fk_pedido = models.ForeignKey(
-        PedidoCabecera, on_delete=models.CASCADE, db_column="fk_pedido"
+        PedidoCabecera, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_pedido"
     )
-    fk_tipo = models.ForeignKey(TipoPago, on_delete=models.CASCADE, db_column="fk_tipo")
+    fk_tipo = models.ForeignKey(TipoPago, on_delete=models.PROTECT, db_column="fk_tipo")
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     referencia = models.CharField(max_length=100, blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -495,13 +505,13 @@ class Merma(models.Model):
 
     id_merma = models.AutoField(primary_key=True)
     fk_producto_semanal = models.ForeignKey(
-        ProductoSemanal, on_delete=models.CASCADE, db_column="fk_producto_semanal"
+        ProductoSemanal, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_producto_semanal"
     )
     cantidad = models.PositiveIntegerField()
     motivo = models.CharField(max_length=300)
     comentarios = models.TextField(blank=True, null=True)
     fk_decision = models.ForeignKey(
-        DecisionMerma, on_delete=models.CASCADE, db_column="fk_decision"
+        DecisionMerma, on_delete=models.PROTECT, db_column="fk_decision"
     )
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
@@ -629,7 +639,7 @@ class Mensaje(models.Model):
 
     id_mensaje = models.AutoField(primary_key=True)
     fk_emisor = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_emisor"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_emisor"
     )
     fk_conversacion = models.ForeignKey(
         Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion"
@@ -658,7 +668,7 @@ class Documento(models.Model):
 
     id_documento = models.AutoField(primary_key=True)
     fk_usuario = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_usuario"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_usuario"
     )
     nombre_documento = models.CharField(max_length=100)
     url_documento = models.TextField()
@@ -737,7 +747,7 @@ class Recoleccion(models.Model):
 
     id_recoleccion = models.AutoField(primary_key=True)
     fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_agricultor"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
     )
     fecha_recoleccion = models.DateField()
     hora_inicio = models.TimeField(blank=True, null=True)
@@ -761,7 +771,7 @@ class HistorialEstadoPedido(models.Model):
 
     id_historial = models.AutoField(primary_key=True)
     fk_pedido = models.ForeignKey(
-        PedidoCabecera, on_delete=models.CASCADE, db_column="fk_pedido"
+        PedidoCabecera, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_pedido"
     )
     fk_estado_anterior = models.ForeignKey(
         EstadoPedido,
@@ -773,12 +783,12 @@ class HistorialEstadoPedido(models.Model):
     )
     fk_estado_nuevo = models.ForeignKey(
         EstadoPedido,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         db_column="fk_estado_nuevo",
         related_name="historial_nuevo",
     )
     fk_cambiado_por = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_cambiado_por"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_cambiado_por"
     )
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -794,9 +804,9 @@ class Recibo(models.Model):
     """Recibo emitido por un pago recibido."""
 
     id_recibo = models.AutoField(primary_key=True)
-    fk_pago = models.ForeignKey(Pago, on_delete=models.CASCADE, db_column="fk_pago")
+    fk_pago = models.ForeignKey(Pago, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_pago")
     fk_pedido = models.ForeignKey(
-        PedidoCabecera, on_delete=models.CASCADE, db_column="fk_pedido"
+        PedidoCabecera, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_pedido"
     )
     folio = models.CharField(max_length=50, unique=True)
     monto = models.DecimalField(max_digits=10, decimal_places=2)
@@ -821,7 +831,7 @@ class Liquidacion(models.Model):
 
     id_liquidacion = models.AutoField(primary_key=True)
     fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_agricultor"
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
     )
     periodo_inicio = models.DateField()
     periodo_fin = models.DateField()
