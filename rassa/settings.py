@@ -1,7 +1,15 @@
 """
-Django settings for Rassa project.
+Configuración de Django para el proyecto Rassa.
 
-Generated with ❤️ for a farm-to-market mobile app.
+Esta es la configuración principal del backend. Lee variables de entorno
+desde un archivo .env usando python-decouple.
+
+Variables requeridas:
+    - SECRET_KEY: Clave secreta de Django (obligatorio en producción).
+    - DEBUG: Modo debug (True/False).
+    - DATABASE_URL: URL de conexión a la base de datos PostgreSQL.
+    - ALLOWED_HOSTS: Hosts permitidos (separados por coma).
+    - CORS_ALLOWED_ORIGINS: Orígenes CORS permitidos (separados por coma).
 """
 
 import os
@@ -35,7 +43,7 @@ INSTALLED_APPS = (
     DJANGO_APPS
     + THIRD_PARTY_APPS
     + [
-        "rassa",
+        "rassa.apps.RassaConfig",
     ]
 )
 
@@ -78,9 +86,8 @@ DATABASE_URL = config("DATABASE_URL", default="sqlite:///db.sqlite3")
 DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
 
 # === AUTH ===
-# Using default Django User model. Custom user removed with apps/accounts/.
-# CustomTokenObtainPairSerializer in rassa/auth_serializers.py provides
-# Spanish error messages compatible with default User model.
+# Using default Django User model for authentication.
+# Auth endpoints in rassa/auth/ module provide login, register, me.
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
@@ -92,14 +99,10 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
-    ),
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
-    "DEFAULT_RENDERER_CLASSES": (
-        "rest_framework.renderers.JSONRenderer",
-    ),
+    "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
 }
 
 # === SIMPLE JWT ===
