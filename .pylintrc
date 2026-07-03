@@ -1,0 +1,39 @@
+[MASTER]
+# Cargar plugin Django para análisis
+load-plugins=pylint_django
+
+# Configuración de Django para pylint-django
+django-settings-module=rassa.settings
+
+# Excluir archivos generados por Django
+ignore=migrations,manage.py
+
+[MESSAGES CONTROL]
+# Deshabilitar reglas que no aplican al proyecto Rassa
+disable=
+    # Seed command: más de 1000 líneas es normal para datos de prueba
+    too-many-lines,
+    # Serializadores JWT: create/update no se sobre escriben
+    abstract-method,
+    # Migraciones Django generadas por makemigrations
+    no-member,
+    # manage.py: import dentro de try/except (patrón estándar Django)
+    import-outside-toplevel
+
+[FORMAT]
+max-line-length=100
+
+[DESIGN]
+# Permitir más métodos en clases Django (models, serializers)
+max-args=8
+max-locals=20
+max-returns=8
+max-branches=15
+max-statements=60
+max-attributes=15
+min-public-methods=1
+max-public-methods=20
+
+[SIMILARITIES]
+# Ignorar imports duplicados en Django
+ignore-imports=yes
