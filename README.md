@@ -17,6 +17,36 @@ API REST para Rassa, una app mobile de e-commerce donde agricultores venden prod
 
 ## Instalación
 
+### Opción rápida — Script interactivo
+
+Un solo comando. El script detecta tu sistema operativo y te guía paso a paso:
+
+| Plataforma               | Comando         |
+| ------------------------ | --------------- |
+| **Linux**                | `bash setup.sh` |
+| **macOS**                | `bash setup.sh` |
+| **Windows (Git Bash)**   | `bash setup.sh` |
+| **Windows (WSL)**        | `bash setup.sh` |
+| **Windows (PowerShell)** | `.\setup.ps1`   |
+
+```bash
+git clone <repo-url>
+cd Rassaback
+bash setup.sh      # Linux / macOS / Windows (Git Bash / WSL)
+# .\setup.ps1      # Windows (PowerShell)
+```
+
+El script pregunta:
+
+1. Versión de Python a usar
+2. Gestor de dependencias (pip o uv)
+3. Configuración de PostgreSQL (host, puerto, DB, usuario, contraseña)
+4. Genera SECRET_KEY automáticamente
+5. Crea la base de datos si no existe
+6. Ejecuta migraciones y seeds
+
+### Instalación manual
+
 ### 1. Clonar el repo
 
 **Opción A — Solo backend:**
@@ -179,6 +209,8 @@ back/
 ├── docs/
 │   ├── ARQUITECTURA_MODULOS.md
 │   └── USUARIOS_PRUEBA.md
+├── setup.sh                        # Setup interactivo (Linux/macOS/Git Bash)
+├── setup.ps1                       # Setup interactivo (PowerShell)
 ├── .env.template
 ├── .pylintrc
 ├── pyproject.toml
