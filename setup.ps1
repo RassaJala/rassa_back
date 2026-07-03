@@ -212,8 +212,18 @@ function Invoke-Phase2Venv {
             Remove-Item -Recurse -Force venv
         } else {
             Write-Host "Usando venv\ existente."
-            Invoke-ActivateVenv
-            return $true
+            return
+        }
+    }
+    if (Test-Path ".venv") {
+        Write-Yellow "El entorno virtual '.venv\' ya existe (creado por uv)."
+        $answer = Read-Host "¿Recrearlo? Se eliminará el actual. [y/N]"
+        if ($answer -match '^[sSyY]') {
+            Write-Host "Eliminando .venv\ existente..."
+            Remove-Item -Recurse -Force .venv
+        } else {
+            Write-Host "Usando .venv\ existente."
+            return
         }
     }
 
@@ -230,22 +240,34 @@ function Invoke-Phase2Venv {
 }
 
 function Invoke-ActivateVenv {
-    $activatePath = Join-Path $script:ScriptDir "venv\Scripts\Activate.ps1"
-    if (Test-Path $activatePath) {
-        . $activatePath
-        Write-Host "  → python: $(Get-Command python | Select-Object -ExpandProperty Source)"
-        Write-Host "  → pip: $(Get-Command pip | Select-Object -ExpandProperty Source)"
-        return $true
-    } else {
-        Write-Red "No se encontró venv\Scripts\Activate.ps1."
-        return $false
+    $venvCandidates = @(
+        "venv\Scripts\Activate.ps1",
+        ".venv\Scripts\Activate.ps1"
+    )
+    foreach ($candidate in $venvCandidates) {
+        $activatePath = Join-Path $script:ScriptDir $candidate
+        if (Test-Path $activatePath) {
+            . $activatePath
+            Write-Host "  → python: $(Get-Command python | Select-Object -ExpandProperty Source)"
+            Write-Host "  → pip: $(Get-Command pip | Select-Object -ExpandProperty Source)"
+            return $true
+        }
     }
+    Write-Red "No se encontró Activate.ps1 en venv/ ni .venv/."
+    return $false
 }
 
 function Invoke-EnsureVenvActive {
-    $activatePath = Join-Path $script:ScriptDir "venv\Scripts\Activate.ps1"
-    if (Test-Path $activatePath) {
-        . $activatePath 2>$null
+    $venvCandidates = @(
+        "venv\Scripts\Activate.ps1",
+        ".venv\Scripts\Activate.ps1"
+    )
+    foreach ($candidate in $venvCandidates) {
+        $activatePath = Join-Path $script:ScriptDir $candidate
+        if (Test-Path $activatePath) {
+            . $activatePath 2>$null
+            return
+        }
     }
 }
 
@@ -256,16 +278,30 @@ function Invoke-EnsureVenvActive {
 function Invoke-Phase3Deps {
     Invoke-EnsureVenvActive
 
-    Write-Host "¿Cómo querés instalar las dependencias?"
-    Write-Host ""
-    Write-Host "  [1] pip (requirements.txt)"
-    Write-Host "  [2] uv (pyproject.toml)"
-    Write-Host ""
+    # Detectar si el venv fue creado por uv
+    $uvCreated = $false
+    @("venv\pyvenv.cfg", ".venv\pyvenv.cfg") | ForEach-Object {
+        if (Test-Path $_) {
+            $content = Get-Content $_ -Raw
+            if ($content -match "uv") { $uvCreated = $true }
+        }
+    }
 
-    while ($true) {
-        $depChoice = Read-Host "Elegí una opción [1/2]"
-        if ($depChoice -eq '1' -or $depChoice -eq '2') { break }
-        Write-Host "Opción no válida."
+    if ($uvCreated) {
+        Write-Yellow "El venv fue creado por uv. Se usará uv automáticamente."
+        $depChoice = "2"
+    } else {
+        Write-Host "¿Cómo querés instalar las dependencias?"
+        Write-Host ""
+        Write-Host "  [1] pip (requirements.txt)"
+        Write-Host "  [2] uv (pyproject.toml)"
+        Write-Host ""
+
+        while ($true) {
+            $depChoice = Read-Host "Elegí una opción [1/2]"
+            if ($depChoice -eq '1' -or $depChoice -eq '2') { break }
+            Write-Host "Opción no válida."
+        }
     }
 
     if ($depChoice -eq '2') {
@@ -358,13 +394,14 @@ function Invoke-Phase5Env {
     $secretKey = ""
     if (Test-Path ".env") {
         $envContent = Get-Content .env -Raw
-        if ($envContent -match '^SECRET_KEY=(.+)') {
+        if ($envContent -match "^SECRET_KEY=['""]?(.+?)['""]?$") {
             $secretKey = $Matches[1]
         }
     }
 
     if (-not $secretKey -or $secretKey -eq "changeme") {
         Write-Host "Generando SECRET_KEY segura..."
+        Invoke-EnsureVenvActive
         $secretKey = & python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>$null
         if (-not $secretKey) {
             Write-Yellow "No se pudo generar SECRET_KEY automáticamente."
@@ -400,17 +437,17 @@ function Invoke-Phase5Env {
         }
     }
 
-    $input = Read-Host "Host [$dbHost]"
-    if ($input) { $dbHost = $input }
+    $userInput = Read-Host "Host [$dbHost]"
+    if ($userInput) { $dbHost = $userInput }
 
-    $input = Read-Host "Puerto [$dbPort]"
-    if ($input) { $dbPort = $input }
+    $userInput = Read-Host "Puerto [$dbPort]"
+    if ($userInput) { $dbPort = $userInput }
 
-    $input = Read-Host "Nombre de la base de datos [$dbName]"
-    if ($input) { $dbName = $input }
+    $userInput = Read-Host "Nombre de la base de datos [$dbName]"
+    if ($userInput) { $dbName = $userInput }
 
-    $input = Read-Host "Usuario de PostgreSQL [$dbUser]"
-    if ($input) { $dbUser = $input }
+    $userInput = Read-Host "Usuario de PostgreSQL [$dbUser]"
+    if ($userInput) { $dbUser = $userInput }
 
     $dbPass = Read-Host "Contraseña de PostgreSQL" -AsSecureString
     $dbPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -426,18 +463,23 @@ function Invoke-Phase5Env {
     Write-Host "Creando base de datos '$dbName' si no existe..."
 
     $env:PGPASSWORD = $dbPassPlain
-    $dbExists = & psql -h $dbHost -p $dbPort -U $dbUser -tc "SELECT 1 FROM pg_database WHERE datname = '$dbName'" 2>$null
-    if ($dbExists -match '1') {
-        Write-Yellow "La base de datos '$dbName' ya existe."
-    } else {
-        & psql -h $dbHost -p $dbPort -U $dbUser -c "CREATE DATABASE $dbName" 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Green "Base de datos '$dbName' creada."
+    try {
+        $dbExists = & psql -h $dbHost -p $dbPort -U $dbUser -tc "SELECT 1 FROM pg_database WHERE datname = '$dbName'" 2>$null
+        if ($dbExists -and $dbExists -match '1') {
+            Write-Yellow "La base de datos '$dbName' ya existe."
         } else {
-            Write-Red "No se pudo crear la base de datos."
-            Write-Host "Podés crearla manualmente:"
-            Write-Host "  psql -h $dbHost -p $dbPort -U $dbUser -c `"CREATE DATABASE $dbName;`""
+            & psql -h $dbHost -p $dbPort -U $dbUser -c "CREATE DATABASE $dbName" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Green "Base de datos '$dbName' creada."
+            } else {
+                Write-Red "No se pudo crear la base de datos."
+                Write-Host "Podés crearla manualmente:"
+                Write-Host "  psql -h $dbHost -p $dbPort -U $dbUser -c `"CREATE DATABASE $dbName;`""
+            }
         }
+    } catch {
+        Write-Yellow "No se pudo verificar la base de datos (psql no encontrado o error de conexión)."
+        Write-Host "Creá la base de datos manualmente si es necesario."
     }
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 
@@ -460,24 +502,32 @@ function Write-EnvFile {
     $envLines = @()
 
     if (Test-Path ".env") {
-        $envLines = Get-Content .env | ForEach-Object {
-            if ($_ -match '^SECRET_KEY=') { "SECRET_KEY=$SecretKey" }
-            elseif ($DatabaseUrl -and $_ -match '^DATABASE_URL=') { "DATABASE_URL=$DatabaseUrl" }
-            else { $_ }
+        $existingContent = Get-Content .env -ErrorAction SilentlyContinue
+        if ($existingContent) {
+            $envLines = @($existingContent | ForEach-Object {
+                if ($_ -match '^SECRET_KEY=') { "SECRET_KEY=`"$SecretKey`"" }
+                elseif ($DatabaseUrl -and $_ -match '^DATABASE_URL=') { "DATABASE_URL=$DatabaseUrl" }
+                else { $_ }
+            })
         }
-    } else {
-        $envLines = @(
-            "SECRET_KEY=$SecretKey"
-        )
+    }
+
+    if ($envLines.Count -eq 0) {
+        $envLines = @("SECRET_KEY=`"$SecretKey`"")
         if ($DatabaseUrl) {
             $envLines += "DATABASE_URL=$DatabaseUrl"
         }
     }
 
     # Defaults
-    if ($envLines -notmatch '^DEBUG=') { $envLines += "DEBUG=True" }
-    if ($envLines -notmatch '^ALLOWED_HOSTS=') { $envLines += "ALLOWED_HOSTS=localhost,127.0.0.1" }
-    if ($envLines -notmatch '^CORS_ALLOWED_ORIGINS=') { $envLines += "CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006" }
+    $hasDebug = $envLines | Where-Object { $_ -match '^DEBUG=' }
+    if (-not $hasDebug) { $envLines += "DEBUG=True" }
+
+    $hasHosts = $envLines | Where-Object { $_ -match '^ALLOWED_HOSTS=' }
+    if (-not $hasHosts) { $envLines += "ALLOWED_HOSTS=localhost,127.0.0.1" }
+
+    $hasCors = $envLines | Where-Object { $_ -match '^CORS_ALLOWED_ORIGINS=' }
+    if (-not $hasCors) { $envLines += "CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006" }
 
     $envLines | Set-Content .env
     Write-Green ".env configurado exitosamente."

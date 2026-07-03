@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 LOG_FILE="${SCRIPT_DIR}/setup.log"
 STATE_FILE="${SCRIPT_DIR}/.setup_state"
+_STATE_FILE="${_STATE_FILE:-$STATE_FILE}"
 
 MIN_PYTHON_VERSION="3.12"
 CURRENT_PHASE=""
@@ -160,7 +161,7 @@ _reset_state() {
 _banner() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║         Rassa — Configuración del entorno  v${SCRIPT_VERSION}          ║"
+    echo "║         Rassa — Configuración del entorno  v${SCRIPT_VERSION}            ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -242,9 +243,9 @@ _phase_1_python() {
     local os_name
     os_name=$(_detect_os)
 
-    local -a python_paths=()
-    local -a python_versions=()
-    local -A seen_versions
+    # Usar un array asociativo para emparejar versiones con rutas
+    declare -A version_to_path
+    local -a all_versions=()
 
     case "$os_name" in
         windows-gitbash)
@@ -253,10 +254,9 @@ _phase_1_python() {
                 local ver
                 ver=$("$pypath" --version 2>&1 || true)
                 ver=$(_parse_python_version "$ver")
-                if [[ -n "$ver" ]] && [[ -z "${seen_versions[$ver]:-}" ]]; then
-                    python_paths+=("$pypath")
-                    python_versions+=("$ver")
-                    seen_versions[$ver]="$pypath"
+                if [[ -n "$ver" ]] && [[ -z "${version_to_path[$ver]:-}" ]]; then
+                    version_to_path[$ver]="$pypath"
+                    all_versions+=("$ver")
                 fi
             done < <({ where python 2>/dev/null; where python3 2>/dev/null; } || true)
             ;;
@@ -266,10 +266,9 @@ _phase_1_python() {
                 local ver
                 ver=$("$pypath" --version 2>&1 || true)
                 ver=$(_parse_python_version "$ver")
-                if [[ -n "$ver" ]] && [[ -z "${seen_versions[$ver]:-}" ]]; then
-                    python_paths+=("$pypath")
-                    python_versions+=("$ver")
-                    seen_versions[$ver]="$pypath"
+                if [[ -n "$ver" ]] && [[ -z "${version_to_path[$ver]:-}" ]]; then
+                    version_to_path[$ver]="$pypath"
+                    all_versions+=("$ver")
                 fi
             done < <(command -v python3 2>/dev/null && which -a python3 2>/dev/null || true)
 
@@ -277,24 +276,25 @@ _phase_1_python() {
                 while IFS= read -r pyline; do
                     local pyver
                     pyver=$(echo "$pyline" | sed 's/^[* ]*//' | awk '{print $1}')
-                    if [[ -z "${seen_versions[$pyver]:-}" ]]; then
+                    if [[ -n "$pyver" ]] && [[ -z "${version_to_path[$pyver]:-}" ]]; then
                         local pyp
                         pyp=$(pyenv which python3 2>/dev/null || echo "$HOME/.pyenv/versions/$pyver/bin/python3")
-                        python_paths+=("$pyp")
-                        python_versions+=("$pyver")
-                        seen_versions[$pyver]="$pyp"
+                        version_to_path[$pyver]="$pyp"
+                        all_versions+=("$pyver")
                     fi
                 done < <(pyenv versions --bare 2>/dev/null || true)
             fi
             ;;
     esac
 
-    local -a compatible_paths=()
+    # Filtrar versiones compatibles
     local -a compatible_versions=()
-    for i in "${!python_versions[@]}"; do
-        if _version_ge "${python_versions[$i]}" "$MIN_PYTHON_VERSION"; then
-            compatible_paths+=("${python_paths[$i]}")
-            compatible_versions+=("${python_versions[$i]}")
+    local -a compatible_paths=()
+    for ver in "${all_versions[@]}"; do
+        local path="${version_to_path[$ver]}"
+        if [[ -n "$path" ]] && _version_ge "$ver" "$MIN_PYTHON_VERSION"; then
+            compatible_versions+=("$ver")
+            compatible_paths+=("$path")
         fi
     done
 
@@ -368,15 +368,18 @@ _show_python_install_guide() {
 _phase_2_venv() {
     local -r py="${PYTHON_CMD:-python3}"
 
-    if [[ -d "venv" ]]; then
-        echo "$(_yellow "El entorno virtual 'venv/' ya existe.")"
+    # Verificar si ya existe un venv (venv o .venv)
+    if [[ -d "venv" ]] || [[ -d ".venv" ]]; then
+        local venv_dir="venv"
+        [[ -d ".venv" ]] && venv_dir=".venv"
+        echo "$(_yellow "El entorno virtual '${venv_dir}/' ya existe.")"
         echo -n "¿Recrearlo? Se eliminará el actual. [y/N]: "
         read -r answer
         if [[ "$answer" =~ ^[sSyY] ]]; then
-            echo "Eliminando venv/ existente..."
-            rm -rf venv
+            echo "Eliminando ${venv_dir}/ existente..."
+            rm -rf venv .venv
         else
-            echo "Usando venv/ existente."
+            echo "Usando ${venv_dir}/ existente."
             _activate_venv
             return 0
         fi
@@ -391,8 +394,12 @@ _phase_2_venv() {
 _activate_venv() {
     if [[ -f "venv/bin/activate" ]]; then
         source "venv/bin/activate"
+    elif [[ -f ".venv/bin/activate" ]]; then
+        source ".venv/bin/activate"
     elif [[ -f "venv/Scripts/activate" ]]; then
         source "venv/Scripts/activate"
+    elif [[ -f ".venv/Scripts/activate" ]]; then
+        source ".venv/Scripts/activate"
     else
         echo "$(_red "No se encontró activate. ¿Se creó correctamente el venv?")"
         return 1
@@ -406,10 +413,20 @@ _ensure_venv_active() {
         source "venv/bin/activate"
         return 0
     fi
+    if [[ -f ".venv/bin/activate" ]]; then
+        source ".venv/bin/activate"
+        return 0
+    fi
     if [[ -f "venv/Scripts/activate" ]]; then
         source "venv/Scripts/activate"
         return 0
     fi
+    if [[ -f ".venv/Scripts/activate" ]]; then
+        source ".venv/Scripts/activate"
+        return 0
+    fi
+    echo "$(_yellow "Advertencia: No se encontró venv/activate. Algunas fases pueden fallar.")"
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -419,13 +436,27 @@ _ensure_venv_active() {
 _phase_3_deps() {
     _ensure_venv_active
 
-    echo "¿Cómo querés instalar las dependencias?"
-    echo ""
-    echo "  [1] pip (requirements.txt)"
-    echo "  [2] uv (pyproject.toml)"
-    echo ""
-    echo -n "Elegí una opción [1/2]: "
-    read -r dep_choice
+    # Detectar si el venv fue creado por uv
+    local uv_created=false
+    if [[ -f ".venv/pyvenv.cfg" ]] && grep -q "uv" .venv/pyvenv.cfg 2>/dev/null; then
+        uv_created=true
+    fi
+    if [[ -f "venv/pyvenv.cfg" ]] && grep -q "uv" venv/pyvenv.cfg 2>/dev/null; then
+        uv_created=true
+    fi
+
+    if [[ "$uv_created" == "true" ]]; then
+        echo "$(_yellow "El venv fue creado por uv. Se usará uv automáticamente.")"
+        dep_choice=2
+    else
+        echo "¿Cómo querés instalar las dependencias?"
+        echo ""
+        echo "  [1] pip (requirements.txt)"
+        echo "  [2] uv (pyproject.toml)"
+        echo ""
+        echo -n "Elegí una opción [1/2]: "
+        read -r dep_choice
+    fi
 
     case "$dep_choice" in
         2)
@@ -520,12 +551,13 @@ _phase_5_env() {
 
     # --- SECRET_KEY ---
     local secret_key=""
-    if [[ -f ".env" ]] && grep -qE '^SECRET_KEY=.+' .env 2>/dev/null; then
-        secret_key=$(grep '^SECRET_KEY=' .env | cut -d'=' -f2-)
+    if [[ -f ".env" ]] && grep -qE '^SECRET_KEY=' .env 2>/dev/null; then
+        secret_key=$(grep '^SECRET_KEY=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
     fi
 
     if [[ -z "$secret_key" || "$secret_key" == "changeme" ]]; then
         echo "Generando SECRET_KEY segura..."
+        _ensure_venv_active
         secret_key=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>/dev/null || true)
         if [[ -z "$secret_key" ]]; then
             echo "$(_yellow "No se pudo generar SECRET_KEY automáticamente.")"
@@ -630,10 +662,10 @@ _write_env_file() {
 
     # SECRET_KEY
     if [[ -n "$env_content" ]] && grep -qE '^SECRET_KEY=' .env 2>/dev/null; then
-        env_content=$(echo "$env_content" | sed "s|^SECRET_KEY=.*|SECRET_KEY=${secret_key}|")
+        env_content=$(echo "$env_content" | sed "s|^SECRET_KEY=.*|SECRET_KEY=\"${secret_key}\"|")
     else
         env_content="${env_content}
-SECRET_KEY=${secret_key}"
+SECRET_KEY=\"${secret_key}\""
     fi
 
     # DATABASE_URL
