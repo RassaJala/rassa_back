@@ -501,6 +501,7 @@ function Invoke-Phase5Env {
     }
 
     Write-EnvFile -SecretKey $secretKey -DatabaseUrl $databaseUrl
+    return $true
 }
 
 function Write-EnvFile {
