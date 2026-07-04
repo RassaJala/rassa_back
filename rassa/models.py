@@ -421,7 +421,7 @@ class PedidoCabecera(models.Model):
         return f"Pedido #{self.id_pedido} — {str(self.fk_cliente)}"
 
     def save(self, *args, **kwargs):
-        if not self.total:
+        if self.total is None:
             self.total = self.subtotal + self.iva
         super().save(*args, **kwargs)
 
@@ -450,7 +450,7 @@ class DetallePedido(models.Model):
         return f"{str(self.nombre_producto)} x{self.cantidad}"
 
     def save(self, *args, **kwargs):
-        if not self.importe:
+        if self.importe is None:
             self.importe = self.precio_unitario * self.cantidad
         super().save(*args, **kwargs)
 
@@ -553,7 +553,7 @@ class Corte(models.Model):
         return f"Corte #{self.id_corte} — {str(self.estado)}"
 
     def save(self, *args, **kwargs):
-        if not self.diferencia:
+        if self.diferencia is None:
             self.diferencia = self.monto_real - self.monto_teorico
         super().save(*args, **kwargs)
 
@@ -858,6 +858,6 @@ class Liquidacion(models.Model):
         return f"Liquidación #{self.id_liquidacion} — {str(self.fk_agricultor)}"
 
     def save(self, *args, **kwargs):
-        if not self.monto_liquidar:
+        if self.monto_liquidar is None:
             self.monto_liquidar = self.monto_ventas - self.comision
         super().save(*args, **kwargs)
