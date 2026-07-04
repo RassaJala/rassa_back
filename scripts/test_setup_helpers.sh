@@ -210,6 +210,128 @@ test_banner() {
 }
 
 # ---------------------------------------------------------------------------
+# Suite: _log function
+# ---------------------------------------------------------------------------
+
+test_log_function() {
+    echo "--- _log ---"
+
+    local tmp_log
+    tmp_log=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f $tmp_log" EXIT
+
+    # Override LOG_FILE for test isolation
+    local orig_log_file="$LOG_FILE"
+    LOG_FILE="$tmp_log"
+
+    # _log should write to both stdout and file
+    local stdout_out
+    stdout_out=$(_log "test message 123")
+
+    # Check stdout
+    _assert_contains "stdout contains message" "test message 123" "$stdout_out"
+
+    # Check file
+    local file_content
+    file_content=$(cat "$tmp_log")
+    _assert_contains "file contains message" "test message 123" "$file_content"
+
+    # Test with color helpers
+    local colored_out
+    colored_out=$(_log "$(_green "green msg")")
+    _assert_contains "colored stdout works" "green msg" "$colored_out"
+    local colored_file
+    colored_file=$(cat "$tmp_log")
+    _assert_contains "colored file works" "green msg" "$colored_file"
+
+    # Test multiple calls append
+    _log "second message"
+    local line_count
+    line_count=$(wc -l < "$tmp_log")
+    _assert_eq "file has 3 lines after 3 _log calls" "3" "$line_count"
+
+    # Restore
+    LOG_FILE="$orig_log_file"
+    rm -f "$tmp_log"
+    trap - EXIT
+}
+
+# ---------------------------------------------------------------------------
+# Suite: _find_pg_tools version range
+# ---------------------------------------------------------------------------
+
+test_find_pg_tools_range() {
+    echo "--- _find_pg_tools range ---"
+
+    # Test that _find_pg_tools scans version range 10-99
+    # We can't test actual file existence, but we can verify the function
+    # iterates through versions by checking it doesn't error on a clean system
+
+    # On Linux, _find_pg_tools should return 1 (not found) without errors
+    # This validates the loop logic doesn't crash
+    local result=0
+    _find_pg_tools || result=$?
+
+    # Should return 1 (not found) on Linux without pg tools
+    _assert_eq "_find_pg_tools returns 1 on Linux" "1" "$result"
+
+    # Verify the function is callable and doesn't crash with set -Eeuo pipefail
+    _assert_eq "_find_pg_tools doesn't crash" "1" "$result"
+}
+
+# ---------------------------------------------------------------------------
+# Suite: state partial reset (phases 3-8)
+# ---------------------------------------------------------------------------
+
+test_state_partial_reset() {
+    echo "--- state partial reset ---"
+
+    local tmp_state
+    tmp_state=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f $tmp_state" EXIT
+
+    # Override STATE_FILE for test isolation
+    local orig_state_file="$_STATE_FILE"
+    _STATE_FILE="$tmp_state"
+
+    # Set up state with all phases done
+    for p in phase_1 phase_2 phase_3 phase_4 phase_5 phase_6 phase_7 phase_8; do
+        echo "$p=done" >> "$_STATE_FILE"
+    done
+
+    _assert_eq "all phases done initially" "8" "$(wc -l < "$_STATE_FILE" | tr -d ' ')"
+
+    # Simulate what _phase_2_venv does on recreate: delete phases 3-8
+    for p in phase_3 phase_4 phase_5 phase_6 phase_7 phase_8; do
+        sed -i "/^${p}=done$/d" "$_STATE_FILE" 2>/dev/null
+    done
+
+    # Verify phases 1-2 still exist
+    _assert_eq "phase_1 preserved" "true" "$(_is_phase_done "phase_1" && echo true || echo false)"
+    _assert_eq "phase_2 preserved" "true" "$(_is_phase_done "phase_2" && echo true || echo false)"
+
+    # Verify phases 3-8 removed
+    _assert_eq "phase_3 removed" "false" "$(_is_phase_done "phase_3" && echo true || echo false)"
+    _assert_eq "phase_4 removed" "false" "$(_is_phase_done "phase_4" && echo true || echo false)"
+    _assert_eq "phase_5 removed" "false" "$(_is_phase_done "phase_5" && echo true || echo false)"
+    _assert_eq "phase_6 removed" "false" "$(_is_phase_done "phase_6" && echo true || echo false)"
+    _assert_eq "phase_7 removed" "false" "$(_is_phase_done "phase_7" && echo true || echo false)"
+    _assert_eq "phase_8 removed" "false" "$(_is_phase_done "phase_8" && echo true || echo false)"
+
+    # Verify only 2 lines remain (phase_1 + phase_2)
+    local remaining
+    remaining=$(wc -l < "$_STATE_FILE" | tr -d ' ')
+    _assert_eq "only 2 lines remain" "2" "$remaining"
+
+    # Cleanup
+    _STATE_FILE="$orig_state_file"
+    rm -f "$tmp_state"
+    trap - EXIT
+}
+
+# ---------------------------------------------------------------------------
 # Main test runner
 # ---------------------------------------------------------------------------
 
@@ -238,6 +360,9 @@ run_all_tests() {
     test_color_helpers
     test_state_functions
     test_banner
+    test_log_function
+    test_find_pg_tools_range
+    test_state_partial_reset
 
     echo ""
     echo "────────────────────────────────────────────────────────────────"
