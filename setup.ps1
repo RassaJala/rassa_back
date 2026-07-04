@@ -1,8 +1,8 @@
 # ============================================================================
 # Rassa — Configuración del Entorno de Desarrollo (PowerShell)
 # ============================================================================
-# Single-command setup: Python detection → venv → pip → PostgreSQL →
-# environment → migrate → load schema → verify.
+# Setup interactivo: Python → venv → dependencias → PostgreSQL →
+# .env (SECRET_KEY + DATABASE_URL) → migrate → seed → verify.
 #
 # Plataforma: Windows (PowerShell 5.1+ / PowerShell Core 7+)
 # En Linux/macOS/Git-Bash usá: bash setup.sh
@@ -22,7 +22,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$script:Version = "1.0.0"
+$script:Version = "2.0.0"
 $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:LogFile = Join-Path $script:ScriptDir "setup.log"
 $script:StateFile = Join-Path $script:ScriptDir ".setup_state"
@@ -94,7 +94,6 @@ function Reset-State {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase0Check {
-    # Validate we're on Windows PowerShell
     if ($PSVersionTable.PSVersion.Major -lt 5) {
         Write-Red "ERROR: Se requiere PowerShell 5.1 o superior."
         Write-Red "Versión detectada: $($PSVersionTable.PSVersion)"
@@ -113,7 +112,6 @@ function Invoke-Phase1Python {
     $pythonPaths = @{}
     $allPaths = @()
 
-    # Collect all python executables via 'where.exe'
     try {
         $paths = @(where.exe python 2>$null) + @(where.exe python3 2>$null) | Select-Object -Unique
     } catch {
@@ -129,12 +127,9 @@ function Invoke-Phase1Python {
                 $pythonPaths[$ver] = $pypath
                 $allPaths += @{ Version = $ver; Path = $pypath }
             }
-        } catch {
-            # Skip unresponsive python
-        }
+        } catch {}
     }
 
-    # Filter: only >= MinPythonVersion
     $compatible = $allPaths | Where-Object {
         Test-VersionGe -Version1 $_.Version -Version2 $script:MinPythonVersion
     }
@@ -146,7 +141,6 @@ function Invoke-Phase1Python {
         return $false
     }
 
-    # Sort by version descending
     $compatible = $compatible | Sort-Object -Property Version -Descending
 
     if ($compatible.Count -eq 1) {
@@ -156,39 +150,29 @@ function Invoke-Phase1Python {
         return $true
     }
 
-    # Multiple versions — menu
     Write-Host ("Se encontraron {0} versiones de Python compatibles:" -f $compatible.Count)
     Write-Host ""
     for ($i = 0; $i -lt $compatible.Count; $i++) {
         Write-Host ("  [{0}] Python {1} — {2}" -f ($i + 1), $compatible[$i].Version, $compatible[$i].Path)
     }
     Write-Host ""
-    Write-Host "Opciones:"
-    Write-Host "  (a) Elegir una de la lista"
-    Write-Host "  (b) Cancelar"
-    Write-Host ""
 
     while ($true) {
-        $answer = Read-Host "Elegí una opción [1-$($compatible.Count)/b]"
-        if ($answer -eq 'b' -or $answer -eq 'B') {
-            Write-Host "Cancelado."
-            return $false
-        }
+        $answer = Read-Host "Elegí una opción [1-$($compatible.Count)]"
         try {
             $idx = [int]$answer - 1
             if ($idx -ge 0 -and $idx -lt $compatible.Count) {
                 $script:PythonCmd = $compatible[$idx].Path
-                Write-Host ("Usando Python {0} ({1})" -f $compatible[$idx].Version, $compatible[$idx].Path)
+                Write-Host ("Usando Python {0}" -f $compatible[$idx].Version)
                 return $true
             }
         } catch {}
-        Write-Host "Opción no válida. Intentá de nuevo."
+        Write-Host "Opción no válida."
     }
 }
 
 function Parse-PythonVersion {
     param([string]$Raw)
-    # "Python 3.14.6" or path containing /3.14.6/
     if ($Raw -match 'Python\s+(\d+\.\d+(\.\d+)?)') {
         return $Matches[1]
     }
@@ -210,7 +194,6 @@ function Show-PythonInstallGuide {
     Write-Host ""
     Write-Host "  Descargá el instalador oficial: https://www.python.org/downloads/"
     Write-Host "  IMPORTANTE: Marcá 'Add Python to PATH' durante la instalación."
-    Write-Host "  Luego cerrá y reabrí PowerShell para que detecte el nuevo PATH."
     Write-Host ""
 }
 
@@ -229,7 +212,18 @@ function Invoke-Phase2Venv {
             Remove-Item -Recurse -Force venv
         } else {
             Write-Host "Usando venv\ existente."
-            return $true
+            return
+        }
+    }
+    if (Test-Path ".venv") {
+        Write-Yellow "El entorno virtual '.venv\' ya existe (creado por uv)."
+        $answer = Read-Host "¿Recrearlo? Se eliminará el actual. [y/N]"
+        if ($answer -match '^[sSyY]') {
+            Write-Host "Eliminando .venv\ existente..."
+            Remove-Item -Recurse -Force .venv
+        } else {
+            Write-Host "Usando .venv\ existente."
+            return
         }
     }
 
@@ -242,25 +236,38 @@ function Invoke-Phase2Venv {
 
     Write-Green "Entorno virtual creado en venv\"
     Invoke-ActivateVenv
+    return $true
 }
 
 function Invoke-ActivateVenv {
-    $activatePath = Join-Path $script:ScriptDir "venv\Scripts\Activate.ps1"
-    if (Test-Path $activatePath) {
-        . $activatePath
-        Write-Host "  → pip: $(Get-Command pip | Select-Object -ExpandProperty Source)"
-        Write-Host "  → python: $(Get-Command python | Select-Object -ExpandProperty Source)"
-        return $true
-    } else {
-        Write-Red "No se encontró venv\Scripts\Activate.ps1. ¿Se creó correctamente?"
-        return $false
+    $venvCandidates = @(
+        "venv\Scripts\Activate.ps1",
+        ".venv\Scripts\Activate.ps1"
+    )
+    foreach ($candidate in $venvCandidates) {
+        $activatePath = Join-Path $script:ScriptDir $candidate
+        if (Test-Path $activatePath) {
+            . $activatePath
+            Write-Host "  → python: $(Get-Command python | Select-Object -ExpandProperty Source)"
+            Write-Host "  → pip: $(Get-Command pip | Select-Object -ExpandProperty Source)"
+            return $true
+        }
     }
+    Write-Red "No se encontró Activate.ps1 en venv/ ni .venv/."
+    return $false
 }
 
 function Invoke-EnsureVenvActive {
-    $activatePath = Join-Path $script:ScriptDir "venv\Scripts\Activate.ps1"
-    if (Test-Path $activatePath) {
-        . $activatePath 2>$null
+    $venvCandidates = @(
+        "venv\Scripts\Activate.ps1",
+        ".venv\Scripts\Activate.ps1"
+    )
+    foreach ($candidate in $venvCandidates) {
+        $activatePath = Join-Path $script:ScriptDir $candidate
+        if (Test-Path $activatePath) {
+            . $activatePath 2>$null
+            return
+        }
     }
 }
 
@@ -268,22 +275,58 @@ function Invoke-EnsureVenvActive {
 # Phase 3: Dependencies
 # ---------------------------------------------------------------------------
 
-function Invoke-Phase3Pip {
+function Invoke-Phase3Deps {
     Invoke-EnsureVenvActive
 
-    if (-not (Test-Path "requirements.txt")) {
-        Write-Red "No se encontró requirements.txt en $(Get-Location)"
-        return $false
+    # Detectar si el venv fue creado por uv
+    $uvCreated = $false
+    @("venv\pyvenv.cfg", ".venv\pyvenv.cfg") | ForEach-Object {
+        if (Test-Path $_) {
+            $content = Get-Content $_ -Raw
+            if ($content -match "uv") { $uvCreated = $true }
+        }
     }
 
-    Write-Host "Instalando dependencias desde requirements.txt..."
+    if ($uvCreated) {
+        Write-Yellow "El venv fue creado por uv. Se usará uv automáticamente."
+        $depChoice = "2"
+    } else {
+        Write-Host "¿Cómo querés instalar las dependencias?"
+        Write-Host ""
+        Write-Host "  [1] pip (requirements.txt)"
+        Write-Host "  [2] uv (pyproject.toml)"
+        Write-Host ""
 
-    pip install -r requirements.txt 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Red "Falló la instalación de dependencias."
-        Write-Host "Revisá el error arriba y asegurate de que todas las dependencias"
-        Write-Host "estén disponibles para tu sistema operativo."
-        return $false
+        while ($true) {
+            $depChoice = Read-Host "Elegí una opción [1/2]"
+            if ($depChoice -eq '1' -or $depChoice -eq '2') { break }
+            Write-Host "Opción no válida."
+        }
+    }
+
+    if ($depChoice -eq '2') {
+        $uvExists = Get-Command uv -ErrorAction SilentlyContinue
+        if (-not $uvExists) {
+            Write-Yellow "uv no está instalado. Instalando con pip..."
+            pip install uv 2>&1 | Out-Null
+        }
+        Write-Host "Instalando dependencias con uv..."
+        uv sync 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Red "Falló la instalación con uv."
+            return $false
+        }
+    } else {
+        if (-not (Test-Path "requirements.txt")) {
+            Write-Red "No se encontró requirements.txt"
+            return $false
+        }
+        Write-Host "Instalando dependencias con pip..."
+        pip install -r requirements.txt 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Red "Falló la instalación de dependencias."
+            return $false
+        }
     }
 
     Write-Host ""
@@ -298,7 +341,6 @@ function Invoke-Phase3Pip {
 function Invoke-Phase4Postgres {
     Write-Host "Verificando PostgreSQL..."
 
-    # Probe common PostgreSQL install paths and add to PATH
     $pgVersions = @(17, 16, 15, 14)
     $pgFound = $false
     foreach ($ver in $pgVersions) {
@@ -307,16 +349,6 @@ function Invoke-Phase4Postgres {
             $env:Path = "$pgBin;$env:Path"
             $pgFound = $true
             break
-        }
-    }
-
-    if (-not $pgFound) {
-        $pgBinEnv = [Environment]::GetEnvironmentVariable("PATH", "Machine")
-        foreach ($ver in $pgVersions) {
-            if ($pgBinEnv -match [regex]::Escape("PostgreSQL\$ver\bin")) {
-                $pgFound = $true
-                break
-            }
         }
     }
 
@@ -337,15 +369,6 @@ function Invoke-Phase4Postgres {
     }
 
     Write-Green "PostgreSQL está corriendo."
-
-    # Create database if it doesn't exist
-    $result = createdb rassa 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Green "Base de datos 'rassa' creada."
-    } else {
-        Write-Yellow "La base de datos 'rassa' ya existe — continuando."
-    }
-
     return $true
 }
 
@@ -354,59 +377,160 @@ function Show-PostgresInstallGuide {
     Write-Host ""
     Write-Host "  Descargá el instalador oficial: https://www.postgresql.org/download/windows/"
     Write-Host "  Durante la instalación, anotá el puerto (default: 5432) y la contraseña de postgres."
-    Write-Host "  Asegurate de que pg_isready.exe y createdb.exe estén en:"
-    Write-Host "  C:\Program Files\PostgreSQL\{version}\bin\"
-    Write-Host "  (el script detecta automáticamente las versiones 14-17 en esa ubicación)."
     Write-Host ""
-    Write-Host "Una vez instalado, volvé a ejecutar: .\setup.ps1"
-    Write-Host "  (las fases ya completadas se saltean automáticamente)"
 }
 
 # ---------------------------------------------------------------------------
-# Phase 5: Environment variables
+# Phase 5: Environment variables (.env)
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase5Env {
     Invoke-EnsureVenvActive
 
-    if (-not (Test-Path ".env")) {
-        if (Test-Path ".env.template") {
-            Copy-Item .env.template .env
-            Write-Green ".env creado desde .env.template."
-        } else {
-            Write-Red "No se encontró .env ni .env.template."
-            return $false
-        }
-    } else {
-        Write-Host ".env ya existe."
-    }
-
+    Write-Host "Configuración del archivo .env"
     Write-Host ""
-    Write-Host "Validando variables de entorno..."
 
-    $hasWarnings = $false
-    $envContent = Get-Content .env -Raw
-
-    if ($envContent -notmatch '^SECRET_KEY=.+') {
-        Write-Yellow "⚠ ADVERTENCIA: SECRET_KEY no está definido en .env"
-        $hasWarnings = $true
-    }
-    if ($envContent -match '^SECRET_KEY=changeme') {
-        Write-Yellow "⚠ ADVERTENCIA: SECRET_KEY tiene el valor por defecto 'changeme'."
-        Write-Yellow "             Cambialo por una clave segura en producción."
-        $hasWarnings = $true
-    }
-    if ($envContent -notmatch '^DATABASE_URL=.+') {
-        Write-Yellow "⚠ ADVERTENCIA: DATABASE_URL no está definido en .env"
-        $hasWarnings = $true
+    # --- SECRET_KEY ---
+    $secretKey = ""
+    if (Test-Path ".env") {
+        $envContent = Get-Content .env -Raw
+        if ($envContent -match "^SECRET_KEY=['""]?(.+?)['""]?$") {
+            $secretKey = $Matches[1]
+        }
     }
 
-    if ($hasWarnings) {
-        Write-Host ""
-        Write-Yellow "Se encontraron advertencias pero el script puede continuar."
+    if (-not $secretKey -or $secretKey -eq "changeme") {
+        Write-Host "Generando SECRET_KEY segura..."
+        Invoke-EnsureVenvActive
+        $secretKey = & python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>$null
+        if (-not $secretKey) {
+            Write-Yellow "No se pudo generar SECRET_KEY automáticamente."
+            $secretKey = Read-Host "Ingresá una SECRET_KEY (o Enter para 'changeme')"
+            if (-not $secretKey) { $secretKey = "changeme" }
+        }
+        Write-Green "SECRET_KEY generada."
+    } else {
+        Write-Host "SECRET_KEY ya está configurada."
     }
 
-    return $true
+    # --- DATABASE_URL ---
+    Write-Host ""
+    Write-Host "Configuración de PostgreSQL:"
+    Write-Host ""
+
+    $dbHost = "localhost"
+    $dbPort = "5432"
+    $dbName = "rassa_jala_db"
+    $dbUser = "postgres"
+    $dbPass = ""
+
+    if (Test-Path ".env") {
+        $envContent = Get-Content .env -Raw
+        if ($envContent -match '^DATABASE_URL=(.+)') {
+            Write-Host "DATABASE_URL actual: $($Matches[1])"
+            $reconfig = Read-Host "¿Querés reconfigurar la base de datos? [y/N]"
+            if ($reconfig -notmatch '^[sSyY]') {
+                Write-Host "Manteniendo configuración actual."
+                Write-EnvFile -SecretKey $secretKey
+                return $true
+            }
+        }
+    }
+
+    $userInput = Read-Host "Host [$dbHost]"
+    if ($userInput) { $dbHost = $userInput }
+
+    $userInput = Read-Host "Puerto [$dbPort]"
+    if ($userInput) { $dbPort = $userInput }
+
+    $userInput = Read-Host "Nombre de la base de datos [$dbName]"
+    if ($userInput) { $dbName = $userInput }
+
+    $userInput = Read-Host "Usuario de PostgreSQL [$dbUser]"
+    if ($userInput) { $dbUser = $userInput }
+
+    $dbPass = Read-Host "Contraseña de PostgreSQL" -AsSecureString
+    $dbPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($dbPass)
+    )
+
+    if (-not $dbPassPlain) {
+        Write-Yellow "Contraseña vacía. Se usará conexión sin contraseña."
+    }
+
+    # Crear base de datos
+    Write-Host ""
+    Write-Host "Creando base de datos '$dbName' si no existe..."
+
+    $env:PGPASSWORD = $dbPassPlain
+    try {
+        $dbExists = & psql -h $dbHost -p $dbPort -U $dbUser -tc "SELECT 1 FROM pg_database WHERE datname = '$dbName'" 2>$null
+        if ($dbExists -and $dbExists -match '1') {
+            Write-Yellow "La base de datos '$dbName' ya existe."
+        } else {
+            & psql -h $dbHost -p $dbPort -U $dbUser -c "CREATE DATABASE $dbName" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Green "Base de datos '$dbName' creada."
+            } else {
+                Write-Red "No se pudo crear la base de datos."
+                Write-Host "Podés crearla manualmente:"
+                Write-Host "  psql -h $dbHost -p $dbPort -U $dbUser -c `"CREATE DATABASE $dbName;`""
+            }
+        }
+    } catch {
+        Write-Yellow "No se pudo verificar la base de datos (psql no encontrado o error de conexión)."
+        Write-Host "Creá la base de datos manualmente si es necesario."
+    }
+    Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+
+    # Construir DATABASE_URL
+    if ($dbPassPlain) {
+        $databaseUrl = "postgres://${dbUser}:${dbPassPlain}@${dbHost}:${dbPort}/${dbName}"
+    } else {
+        $databaseUrl = "postgres://${dbUser}@${dbHost}:${dbPort}/${dbName}"
+    }
+
+    Write-EnvFile -SecretKey $secretKey -DatabaseUrl $databaseUrl
+}
+
+function Write-EnvFile {
+    param(
+        [string]$SecretKey,
+        [string]$DatabaseUrl = ""
+    )
+
+    $envLines = @()
+
+    if (Test-Path ".env") {
+        $existingContent = Get-Content .env -ErrorAction SilentlyContinue
+        if ($existingContent) {
+            $envLines = @($existingContent | ForEach-Object {
+                if ($_ -match '^SECRET_KEY=') { "SECRET_KEY=`"$SecretKey`"" }
+                elseif ($DatabaseUrl -and $_ -match '^DATABASE_URL=') { "DATABASE_URL=$DatabaseUrl" }
+                else { $_ }
+            })
+        }
+    }
+
+    if ($envLines.Count -eq 0) {
+        $envLines = @("SECRET_KEY=`"$SecretKey`"")
+        if ($DatabaseUrl) {
+            $envLines += "DATABASE_URL=$DatabaseUrl"
+        }
+    }
+
+    # Defaults
+    $hasDebug = $envLines | Where-Object { $_ -match '^DEBUG=' }
+    if (-not $hasDebug) { $envLines += "DEBUG=True" }
+
+    $hasHosts = $envLines | Where-Object { $_ -match '^ALLOWED_HOSTS=' }
+    if (-not $hasHosts) { $envLines += "ALLOWED_HOSTS=localhost,127.0.0.1" }
+
+    $hasCors = $envLines | Where-Object { $_ -match '^CORS_ALLOWED_ORIGINS=' }
+    if (-not $hasCors) { $envLines += "CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006" }
+
+    $envLines | Set-Content .env
+    Write-Green ".env configurado exitosamente."
 }
 
 # ---------------------------------------------------------------------------
@@ -421,7 +545,7 @@ function Invoke-Phase6Migrate {
     python manage.py migrate --noinput 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Red "Falló la migración. Revisá la conexión a la base de datos."
+        Write-Red "Falló la migración. Revisá la conexión a la base de datos en .env"
         return $false
     }
 
@@ -431,24 +555,24 @@ function Invoke-Phase6Migrate {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 7: Schema load
+# Phase 7: Seed data
 # ---------------------------------------------------------------------------
 
-function Invoke-Phase7Schema {
+function Invoke-Phase7Seed {
     Invoke-EnsureVenvActive
 
-    Write-Host "Cargando esquema SQL (32 tablas + seeders)..."
+    Write-Host "Cargando datos de prueba (32 tablas + seeders)..."
 
-    python manage.py load_rassa_schema 2>&1
+    python manage.py seed_rassa_data 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Red "Falló la carga del esquema."
-        Write-Host "Podés reintentar con: python manage.py load_rassa_schema --reset"
+        Write-Red "Falló la carga de datos."
+        Write-Host "Podés reintentar con: python manage.py seed_rassa_data --clear"
         return $false
     }
 
     Write-Host ""
-    Write-Green "Esquema cargado exitosamente."
+    Write-Green "Datos de prueba cargados exitosamente."
     return $true
 }
 
@@ -471,7 +595,6 @@ function Invoke-Phase8Verify {
 
     Write-Host ""
 
-    # Brief runserver test
     Write-Host "Probando arranque del servidor (3 segundos)..."
     $serverProcess = Start-Process -FilePath "python" `
         -ArgumentList "manage.py","runserver","--noreload" `
@@ -490,9 +613,7 @@ function Invoke-Phase8Verify {
                 Write-Green "✓ Servidor responde en http://localhost:8000/api/"
                 $serverOk = $true
             }
-        } catch {
-            # Server not ready yet or curl-equivalent failed — not fatal
-        }
+        } catch {}
     }
 
     Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
@@ -513,6 +634,12 @@ function Invoke-Phase8Verify {
     Write-Host "  python manage.py runserver"
     Write-Host ""
     Write-Host "La API estará disponible en: http://localhost:8000/api/"
+    Write-Host ""
+    Write-Host "Usuarios de prueba:"
+    Write-Host "  admin@rassa.com / admin123 (Administrador)"
+    Write-Host "  vendedor@rassa.com / vendedor123 (Vendedor)"
+    Write-Host "  juan.perez@email.com / juan123 (Agricultor)"
+    Write-Host "  ana.ramirez@email.com / ana123 (Cliente)"
     Write-Host ""
 
     return $true
@@ -557,15 +684,6 @@ function Invoke-RunPhase {
         Write-Host ""
         Write-Red ("✗ ERROR en fase {0}: {1}" -f $PhaseKey, $_.Exception.Message)
         Write-Host ""
-        Write-Red "╔══════════════════════════════════════════════════════╗"
-        Write-Red "║  ERROR — El script falló                            ║"
-        Write-Red ("║  Fase: {0}                                    ║" -f $script:CurrentPhase)
-        Write-Red ("╚══════════════════════════════════════════════════════╝")
-        Write-Host ""
-        Write-Host ("Revisá el log completo en: $($script:LogFile)")
-        Write-Host "Corregí el error y volvé a ejecutar: .\setup.ps1"
-        Write-Host "  (las fases ya completadas se saltean automáticamente)"
-        Write-Host ""
         exit 1
     }
 
@@ -577,7 +695,6 @@ function Invoke-RunPhase {
 # ---------------------------------------------------------------------------
 
 function Invoke-Main {
-    # Parse arguments
     if ($Help) {
         Show-Help
         exit 0
@@ -587,16 +704,14 @@ function Invoke-Main {
         Reset-State
     }
 
-    # Start logging
     try {
         Start-Transcript -Path $script:LogFile -Append -Force | Out-Null
     } catch {
-        Write-Yellow "⚠ No se pudo iniciar el log en $($script:LogFile). Continuando sin log."
+        Write-Yellow "⚠ No se pudo iniciar el log. Continuando sin log."
     }
 
     Write-Banner
 
-    # Pre-flight
     try {
         Invoke-Phase0Check
     } catch {
@@ -606,11 +721,11 @@ function Invoke-Main {
 
     Invoke-RunPhase "phase_1" "Detección de Python"      ${function:Invoke-Phase1Python}
     Invoke-RunPhase "phase_2" "Entorno virtual"          ${function:Invoke-Phase2Venv}
-    Invoke-RunPhase "phase_3" "Dependencias"             ${function:Invoke-Phase3Pip}
+    Invoke-RunPhase "phase_3" "Dependencias"             ${function:Invoke-Phase3Deps}
     Invoke-RunPhase "phase_4" "PostgreSQL"               ${function:Invoke-Phase4Postgres}
     Invoke-RunPhase "phase_5" "Variables de entorno"     ${function:Invoke-Phase5Env}
     Invoke-RunPhase "phase_6" "Migraciones Django"       ${function:Invoke-Phase6Migrate}
-    Invoke-RunPhase "phase_7" "Carga de esquema SQL"     ${function:Invoke-Phase7Schema}
+    Invoke-RunPhase "phase_7" "Datos de prueba"          ${function:Invoke-Phase7Seed}
     Invoke-RunPhase "phase_8" "Verificación final"       ${function:Invoke-Phase8Verify}
 
     try {
@@ -619,9 +734,5 @@ function Invoke-Main {
 
     Write-Host "Log guardado en: $($script:LogFile)"
 }
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 Invoke-Main
