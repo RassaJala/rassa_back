@@ -57,7 +57,11 @@ _setup_logging() {
     if [[ "${1:-}" == "--reset" ]]; then
         : > "$LOG_FILE"
     fi
-    exec > >(tee -a "$LOG_FILE") 2>&1
+}
+
+_log() {
+    echo "$@"
+    echo "$@" >> "$LOG_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -82,17 +86,15 @@ _detect_os() {
 }
 
 _find_pg_tools() {
-    local -a pg_dirs=(
-        "/c/Program Files/PostgreSQL/17/bin"
-        "/c/Program Files/PostgreSQL/16/bin"
-        "/c/Program Files/PostgreSQL/15/bin"
-        "/c/Program Files/PostgreSQL/14/bin"
-    )
-    for dir in "${pg_dirs[@]}"; do
-        if [[ -f "$dir/pg_isready.exe" ]]; then
-            export PATH="$dir:$PATH"
-            return 0
-        fi
+    local -a base_dirs=("/c/Program Files" "/c/Program Files (x86)")
+    for base in "${base_dirs[@]}"; do
+        for ver in $(seq 10 99); do
+            local dir="$base/PostgreSQL/$ver/bin"
+            if [[ -f "$dir/pg_isready.exe" ]]; then
+                export PATH="$dir:$PATH"
+                return 0
+            fi
+        done
     done
     return 1
 }
@@ -238,7 +240,7 @@ _run_phase() {
 # ---------------------------------------------------------------------------
 
 _phase_1_python() {
-    echo "Buscando instalaciones de Python..."
+    _log "Buscando instalaciones de Python..."
 
     local os_name
     os_name=$(_detect_os)
@@ -378,6 +380,10 @@ _phase_2_venv() {
         if [[ "$answer" =~ ^[sSyY] ]]; then
             echo "Eliminando ${venv_dir}/ existente..."
             rm -rf venv .venv
+            echo "Reseteando fases dependientes del venv..."
+            for p in phase_3 phase_4 phase_5 phase_6 phase_7 phase_8; do
+                sed -i "/^${p}=done$/d" "$_STATE_FILE" 2>/dev/null
+            done
         else
             echo "Usando ${venv_dir}/ existente."
             _activate_venv
@@ -386,8 +392,18 @@ _phase_2_venv() {
     fi
 
     echo "Creando entorno virtual con: $py -m venv venv"
-    "$py" -m venv venv
-    echo "$(_green "Entorno virtual creado en venv/")"
+    if ! "$py" -m venv venv 2>&1; then
+        echo "$(_yellow "Falló venv. python3-venv no está instalado.")"
+        echo -n "Intentar instalar python3-venv? (requiere sudo) [s/N]: "
+        read -r answer
+        if [[ "$answer" =~ ^[sSyY] ]]; then
+            sudo apt install -y python3-venv && "$py" -m venv venv
+        else
+            echo "Intentá: pip install virtualenv && virtualenv venv"
+            return 1
+        fi
+    fi
+    _log "$(_green "Entorno virtual creado en venv/")"
     _activate_venv
 }
 
@@ -464,7 +480,7 @@ _phase_3_deps() {
                 echo "$(_yellow "uv no está instalado. Instalando con pip...")"
                 pip install uv
             fi
-            echo "Instalando dependencias con uv..."
+    _log "Instalando dependencias con uv..."
             if ! uv sync 2>&1; then
                 echo "$(_red "Falló la instalación con uv.")"
                 return 1
@@ -475,7 +491,7 @@ _phase_3_deps() {
                 echo "$(_red "No se encontró requirements.txt")"
                 return 1
             fi
-            echo "Instalando dependencias con pip..."
+            _log "Instalando dependencias con pip..."
             if ! pip install -r requirements.txt 2>&1; then
                 echo "$(_red "Falló la instalación de dependencias.")"
                 return 1
@@ -484,7 +500,7 @@ _phase_3_deps() {
     esac
 
     echo ""
-    echo "$(_green "Dependencias instaladas exitosamente.")"
+    _log "$(_green "Dependencias instaladas exitosamente.")"
 }
 
 # ---------------------------------------------------------------------------
@@ -492,7 +508,7 @@ _phase_3_deps() {
 # ---------------------------------------------------------------------------
 
 _phase_4_postgres() {
-    echo "Verificando PostgreSQL..."
+    _log "Verificando PostgreSQL..."
 
     local os_name
     os_name=$(_detect_os)
@@ -520,7 +536,7 @@ _phase_4_postgres() {
         return 1
     fi
 
-    echo "$(_green "PostgreSQL está corriendo.")"
+    _log "$(_green "PostgreSQL está corriendo.")"
 }
 
 _show_postgres_install_guide() {
@@ -546,7 +562,7 @@ _show_postgres_install_guide() {
 _phase_5_env() {
     _ensure_venv_active
 
-    echo "Configuración del archivo .env"
+    _log "Configuración del archivo .env"
     echo ""
 
     # --- SECRET_KEY ---
@@ -556,7 +572,7 @@ _phase_5_env() {
     fi
 
     if [[ -z "$secret_key" || "$secret_key" == "changeme" ]]; then
-        echo "Generando SECRET_KEY segura..."
+    _log "Generando SECRET_KEY segura..."
         _ensure_venv_active
         secret_key=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>/dev/null || true)
         if [[ -z "$secret_key" ]]; then
@@ -565,14 +581,14 @@ _phase_5_env() {
             read -r secret_key
             secret_key="${secret_key:-changeme}"
         fi
-        echo "$(_green "SECRET_KEY generada.")"
+        _log "$(_green "SECRET_KEY generada.")"
     else
-        echo "SECRET_KEY ya está configurada."
+        _log "SECRET_KEY ya está configurada."
     fi
 
     # --- DATABASE_URL ---
     echo ""
-    echo "Configuración de PostgreSQL:"
+    _log "Configuración de PostgreSQL:"
     echo ""
 
     local db_host="localhost"
@@ -618,14 +634,14 @@ _phase_5_env() {
 
     # Crear base de datos si no existe
     echo ""
-    echo "Creando base de datos '${db_name}' si no existe..."
+    _log "Creando base de datos '${db_name}' si no existe..."
 
     export PGPASSWORD="$db_pass"
     if psql -h "$db_host" -p "$db_port" -U "$db_user" -tc "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" | grep -q 1; then
         echo "$(_yellow "La base de datos '${db_name}' ya existe.")"
     else
         if psql -h "$db_host" -p "$db_port" -U "$db_user" -c "CREATE DATABASE ${db_name}" 2>/dev/null; then
-            echo "$(_green "Base de datos '${db_name}' creada.")"
+            _log "$(_green "Base de datos '${db_name}' creada.")"
         else
             echo "$(_red "No se pudo crear la base de datos.")"
             echo "Podés crearla manualmente:"
@@ -693,7 +709,7 @@ CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006"
     fi
 
     echo "$env_content" > .env
-    echo "$(_green ".env configurado exitosamente.")"
+    _log "$(_green ".env configurado exitosamente.")"
 }
 
 # ---------------------------------------------------------------------------
@@ -703,11 +719,11 @@ CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006"
 _phase_6_migrate() {
     _ensure_venv_active
 
-    echo "Aplicando migraciones de Django..."
+    _log "Aplicando migraciones de Django..."
 
     if python manage.py migrate --noinput 2>&1; then
         echo ""
-        echo "$(_green "Migraciones aplicadas exitosamente.")"
+        _log "$(_green "Migraciones aplicadas exitosamente.")"
     else
         echo ""
         echo "$(_red "Falló la migración. Revisá la conexión a la base de datos en .env")"
@@ -722,11 +738,11 @@ _phase_6_migrate() {
 _phase_7_seed() {
     _ensure_venv_active
 
-    echo "Cargando datos de prueba (32 tablas + seeders)..."
+    _log "Cargando datos de prueba (32 tablas + seeders)..."
 
     if python manage.py seed_rassa_data 2>&1; then
         echo ""
-        echo "$(_green "Datos de prueba cargados exitosamente.")"
+        _log "$(_green "Datos de prueba cargados exitosamente.")"
     else
         echo ""
         echo "$(_red "Falló la carga de datos.")"
@@ -742,18 +758,18 @@ _phase_7_seed() {
 _phase_8_verify() {
     _ensure_venv_active
 
-    echo "Verificando configuración de Django..."
+    _log "Verificando configuración de Django..."
 
     if python manage.py check --deploy 2>&1; then
         echo ""
-        echo "$(_green "✓ check --deploy: SIN ERRORES CRÍTICOS")"
+        _log "$(_green "✓ check --deploy: SIN ERRORES CRÍTICOS")"
     else
         echo "$(_yellow "⚠ check --deploy encontró advertencias (no bloqueantes).")"
     fi
 
     echo ""
 
-    echo "Probando arranque del servidor (3 segundos)..."
+    _log "Probando arranque del servidor (3 segundos)..."
     python manage.py runserver --noreload 2>&1 &
     local server_pid=$!
     sleep 3
