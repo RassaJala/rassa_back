@@ -120,17 +120,20 @@ test_version_ge() {
 test_detect_os() {
     echo "--- _detect_os ---"
 
-    # Can only test that it returns one of linux/macos
+    # _detect_os can return: linux, macos, windows-gitbash, windows-wsl, unknown
     local os_name
     os_name=$(_detect_os)
-    if [[ "$os_name" == "linux" || "$os_name" == "macos" ]]; then
-        PASSED=$((PASSED + 1))
-        echo "  PASS: _detect_os returns linux or macos (got: $os_name)"
-    else
-        FAILED=$((FAILED + 1))
-        FAILURES+=("_detect_os returned unexpected value: $os_name")
-        echo "  FAIL: _detect_os returns unexpected value: $os_name"
-    fi
+    case "$os_name" in
+        linux|macos|windows-gitbash|windows-wsl|unknown)
+            PASSED=$((PASSED + 1))
+            echo "  PASS: _detect_os returns valid value (got: $os_name)"
+            ;;
+        *)
+            FAILED=$((FAILED + 1))
+            FAILURES+=("_detect_os returned unexpected value: $os_name")
+            echo "  FAIL: _detect_os returned unexpected value: $os_name"
+            ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -210,6 +213,27 @@ test_banner() {
 }
 
 # ---------------------------------------------------------------------------
+# Suite: _version_ge scope leak regression
+# ---------------------------------------------------------------------------
+
+test_version_ge_no_leak() {
+    echo "--- _version_ge scope leak regression ---"
+
+    # Before the fix, _version_ge leaked its loop variable $i to the caller.
+    # With set -u, this caused "unbound variable" crashes in _phase_1_python.
+    local i="LEAKED_VALUE"
+    _version_ge "3.12.0" "3.11.0"
+    if [[ "$i" == "LEAKED_VALUE" ]]; then
+        PASSED=$((PASSED + 1))
+        echo "  PASS: _version_ge did not leak \$i (value preserved)"
+    else
+        FAILED=$((FAILED + 1))
+        FAILURES+=("_version_ge leaked \$i: expected 'LEAKED_VALUE', got '$i'")
+        echo "  FAIL: _version_ge leaked \$i (expected 'LEAKED_VALUE', got '$i')"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main test runner
 # ---------------------------------------------------------------------------
 
@@ -234,6 +258,7 @@ run_all_tests() {
 
     test_parse_python_version
     test_version_ge
+    test_version_ge_no_leak
     test_detect_os
     test_color_helpers
     test_state_functions
