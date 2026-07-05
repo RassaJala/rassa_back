@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 # Tests for setup.ps1 helper functions.
 #
 # Run from project root:
@@ -21,8 +21,8 @@ function Assert-Eq {
         Write-Host "  PASS: $Label"
     } else {
         $script:FAILED++
-        $script:FAILURES += "$Label: expected '$Expected', got '$Actual'"
-        Write-Host "  FAIL: $Label — expected '$Expected', got '$Actual'"
+        $script:FAILURES += "$($Label): expected '$Expected', got '$Actual'"
+        Write-Host "  FAIL: $($Label) — expected '$Expected', got '$Actual'"
     }
 }
 
@@ -33,8 +33,8 @@ function Assert-Contains {
         Write-Host "  PASS: $Label"
     } else {
         $script:FAILED++
-        $script:FAILURES += "$Label: output does not contain '$Needle'"
-        Write-Host "  FAIL: $Label — output does not contain '$Needle'"
+        $script:FAILURES += "$($Label): output does not contain '$Needle'"
+        Write-Host "  FAIL: $($Label) — output does not contain '$Needle'"
         Write-Host "         got: $Haystack"
     }
 }
@@ -46,8 +46,8 @@ function Assert-True {
         Write-Host "  PASS: $Label"
     } else {
         $script:FAILED++
-        $script:FAILURES += "$Label: expected true, got false"
-        Write-Host "  FAIL: $Label — expected true, got false"
+        $script:FAILURES += "$($Label): expected true, got false"
+        Write-Host "  FAIL: $($Label) — expected true, got false"
     }
 }
 
@@ -58,8 +58,8 @@ function Assert-False {
         Write-Host "  PASS: $Label"
     } else {
         $script:FAILED++
-        $script:FAILURES += "$Label: expected false, got true"
-        Write-Host "  FAIL: $Label — expected false, got true"
+        $script:FAILURES += "$($Label): expected false, got true"
+        Write-Host "  FAIL: $($Label) — expected false, got true"
     }
 }
 
