@@ -8,44 +8,69 @@ API REST para Rassa, una app móvil de e-commerce donde agricultores venden prod
 - **PostgreSQL**
 - **JWT Auth** (SimpleJWT)
 - Python 3.12+
-- [uv](https://docs.astral.sh/uv/) o pip para gestión de dependencias
 
 ## Requisitos
 
 - Python 3.12 o superior
 - PostgreSQL
 
-## Inicio rápido (2 comandos)
+## Inicio rápido
 
 ### 1. Clonar y configurar
+
+**Linux / macOS / Git Bash / WSL:**
 
 ```bash
 git clone https://github.com/ObedAlPa/rassa_back.git
 cd rassa_back
-bash setup.sh      # Linux / macOS / Git Bash / WSL
-# .\setup.ps1     # Windows (PowerShell)
+bash setup.sh
 ```
 
-El script te guía paso a paso: detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera SECRET_KEY, ejecuta migraciones y carga datos de prueba.
+**Windows (PowerShell):**
 
-### 2. Iniciar el backend
+```powershell
+git clone https://github.com/ObedAlPa/rassa_back.git
+cd rassa_back
+.\setup.ps1
+```
+
+El script detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera SECRET_KEY, ejecuta migraciones y carga datos de prueba.
+
+### 2. Levantar el backend
+
+**Linux / macOS / Git Bash / WSL:**
 
 ```bash
-bash start.sh      # Linux / macOS / Git Bash / WSL
-# .\start.ps1     # Windows (PowerShell)
+bash start.sh
 ```
 
-**¿Qué hace `start.sh`?**
+**Windows (PowerShell):**
 
-1. Ejecuta TODOS los tests automáticamente
-2. Si **pasan** → levanta el servidor en `http://localhost:8000/api/`
-3. Si **fallan** → muestra el error exacto con explicación y NO levanta el servidor
+```powershell
+.\start.ps1
+```
 
-> **IMPORTANTE:** Usa siempre `bash start.sh` para levantar el backend. Si ejecutas `python manage.py runserver` directamente, no se corren los tests automáticamente y puedes subir código con errores.
+¿Qué hace? Ejecuta todos los tests automáticamente. Si pasan, levanta el servidor. Si fallan, muestra el error con explicación y NO levanta el servidor.
+
+> **IMPORTANTE:** Usa siempre `start.sh` / `start.ps1` para levantar el backend. Si ejecutas `python manage.py runserver` directamente, no se corren los tests y puedes subir código con errores.
+
+## Comandos disponibles
+
+| Acción | Linux / macOS / Git Bash | Windows (PowerShell) |
+| ------ | ------------------------ | -------------------- |
+| Levantar backend (tests + server) | `bash start.sh` | `.\start.ps1` |
+| Solo correr tests | `bash start.sh --test` | `.\start.ps1 -TestOnly` |
+| Tests con máximo detalle | `bash start.sh --verbose` | `.\start.ps1 -Verbose` |
+| Tests + máximo detalle | `bash start.sh --test --verbose` | `.\start.ps1 -TestOnly -Verbose` |
+| Saltar tests (emergencias) | `bash start.sh --skip` | `.\start.ps1 -Skip` |
+| Ejecutar migraciones | `python manage.py migrate` | `python manage.py migrate` |
+| Cargar datos de prueba | `python manage.py seed_rassa_data` | `python manage.py seed_rassa_data` |
+| Limpiar y recargar datos | `python manage.py seed_rassa_data --clear` | `python manage.py seed_rassa_data --clear` |
+| Shell de Django | `python manage.py shell` | `python manage.py shell` |
 
 ## Variables de entorno
 
-Las variables se configuran en el archivo `.env` (creado por `setup.sh`).
+Se configuran en el archivo `.env` (creado por `setup.sh` / `setup.ps1`).
 
 | Variable | Descripción | Ejemplo |
 | -------- | ----------- | ------- |
@@ -55,27 +80,6 @@ Las variables se configuran en el archivo `.env` (creado por `setup.sh`).
 | `ALLOWED_HOSTS` | Hosts permitidos | `localhost,127.0.0.1` |
 | `CORS_ALLOWED_ORIGINS` | Orígenes permitidos para CORS | `http://localhost:5173` |
 
-## Comandos
-
-```bash
-# Encender el backend (corre tests automáticamente)
-bash start.sh
-
-# Solo correr tests (sin levantar server)
-bash start.sh --test
-
-# Test con máximo detalle
-bash start.sh --verbose
-
-# Gestión de la base de datos
-python manage.py migrate
-python manage.py seed_rassa_data
-python manage.py seed_rassa_data --clear  # limpiar y recargar
-
-# Shell de Django
-python manage.py shell
-```
-
 ## Usuarios de prueba
 
 | Usuario | Email | Contraseña | Rol |
@@ -84,6 +88,14 @@ python manage.py shell
 | Vendedor | `vendedor@rassa.com` | `vendedor123` | Vendedor |
 | Juan Pérez | `juan.perez@email.com` | `juan123` | Agricultor |
 | Ana Ramírez | `ana.ramirez@email.com` | `ana123` | Cliente |
+
+## Checklist de verificación
+
+- [ ] `bash setup.sh` / `.\setup.ps1` ejecuta sin errores
+- [ ] `bash start.sh` / `.\start.ps1` levanta el servidor
+- [ ] Los tests pasan antes de que el servidor se levante
+- [ ] `http://localhost:8000/api/` responde
+- [ ] Puedes login con `admin@rassa.com` / `admin123`
 
 ## Documentación
 
@@ -111,10 +123,10 @@ rassa_back/
 ├── docs/
 │   ├── ARQUITECTURA_MODULOS.md
 │   └── USUARIOS_PRUEBA.md
-├── setup.sh                        # Setup interactivo (Linux/macOS/Git Bash)
-├── setup.ps1                       # Setup interactivo (PowerShell)
-├── start.sh                        # Iniciar backend con test automático
-├── start.ps1                       # Iniciar backend (PowerShell)
+├── setup.sh                        # Setup (Linux/macOS/Git Bash)
+├── setup.ps1                       # Setup (PowerShell)
+├── start.sh                        # Levantar backend (Linux/macOS/Git Bash)
+├── start.ps1                       # Levantar backend (PowerShell)
 ├── .env.template
 ├── pyproject.toml
 ├── requirements.txt
