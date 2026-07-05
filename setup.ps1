@@ -113,7 +113,9 @@ function Invoke-Phase1Python {
     $allPaths = @()
 
     try {
-        $paths = @(where.exe python 2>$null) + @(where.exe python3 2>$null) | Select-Object -Unique
+        $paths = @(where.exe python 2>$null) + @(where.exe python3 2>$null) |
+            Where-Object { $_ -notmatch '\\(venv|env)\\' } |
+            Select-Object -Unique
     } catch {
         $paths = @()
     }
@@ -341,15 +343,18 @@ function Invoke-Phase3Deps {
 function Invoke-Phase4Postgres {
     Write-Host "Verificando PostgreSQL..."
 
-    $pgVersions = @(17, 16, 15, 14)
+    $baseDirs = @("C:\Program Files", "C:\Program Files (x86)")
     $pgFound = $false
-    foreach ($ver in $pgVersions) {
-        $pgBin = "C:\Program Files\PostgreSQL\$ver\bin"
-        if (Test-Path "$pgBin\pg_isready.exe") {
-            $env:Path = "$pgBin;$env:Path"
-            $pgFound = $true
-            break
+    foreach ($base in $baseDirs) {
+        for ($ver = 10; $ver -le 99; $ver++) {
+            $pgBin = "$base\PostgreSQL\$ver\bin"
+            if (Test-Path "$pgBin\pg_isready.exe") {
+                $env:Path = "$pgBin;$env:Path"
+                $pgFound = $true
+                break
+            }
         }
+        if ($pgFound) { break }
     }
 
     if (-not (Get-Command pg_isready -ErrorAction SilentlyContinue)) {
@@ -359,12 +364,17 @@ function Invoke-Phase4Postgres {
         return $false
     }
 
-    $pgReady = & pg_isready -q 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Yellow "PostgreSQL está instalado pero no está corriendo."
-        Write-Host ""
-        Write-Host "Iniciá PostgreSQL desde Services (services.msc) o:"
-        Write-Host "  net start postgresql-x64-16"
+    try {
+        $pgReady = & pg_isready -q 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Yellow "PostgreSQL está instalado pero no está corriendo."
+            Write-Host ""
+            Write-Host "Iniciá PostgreSQL desde Services (services.msc) o:"
+            Write-Host "  net start postgresql-x64-16"
+            return $false
+        }
+    } catch {
+        Write-Yellow "PostgreSQL no está disponible."
         return $false
     }
 
@@ -491,6 +501,7 @@ function Invoke-Phase5Env {
     }
 
     Write-EnvFile -SecretKey $secretKey -DatabaseUrl $databaseUrl
+    return $true
 }
 
 function Write-EnvFile {
