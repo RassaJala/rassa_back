@@ -165,14 +165,12 @@ class Command(BaseCommand):
             {
                 "id_rol": 2,
                 "nombre_rol": "Vendedor",
-                "descripcion": ("Personal de la universidad. " "Gestiona pedidos, pagos, mermas y recolección."),
+                "descripcion": ("Personal de la universidad. Gestiona pedidos, pagos, mermas y recolección."),
             },
             {
                 "id_rol": 3,
                 "nombre_rol": "Agricultor",
-                "descripcion": (
-                    "Productor del campo. " "Publica sus productos los lunes " "y coordina la recolección."
-                ),
+                "descripcion": ("Productor del campo. Publica sus productos los lunes y coordina la recolección."),
             },
             {
                 "id_rol": 4,

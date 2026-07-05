@@ -4,7 +4,7 @@
 -r requirements.txt
 
 # Linting
-ruff>=0.5.4,<0.6
+ruff>=0.5.4
 
 # Testing
 pytest>=8.0,<9.0
