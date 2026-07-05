@@ -41,3 +41,12 @@ coverage/
 # Setup artifacts
 .setup_state
 setup.log
+
+# SDD / local planning (no subir — es de cada dev)
+openspec/
+
+# Agent tooling (local)
+.atl/
+
+# Local docs / planning (no subir)
+docs/PROTECCIONES_REPOSITORIO.md

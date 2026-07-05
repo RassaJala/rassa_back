@@ -12,12 +12,12 @@ Variables requeridas:
     - CORS_ALLOWED_ORIGINS: Orígenes CORS permitidos (separados por coma).
 """
 
-import os
+from pathlib import Path
 from datetime import timedelta
 from decouple import config, Csv
 import dj_database_url
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # === SECURITY ===
 SECRET_KEY = config("SECRET_KEY", default="changeme-in-production")
@@ -79,7 +79,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "rassa.wsgi.application"
-ASGI_APPLICATION = "rassa.asgi.application"
 
 # === DATABASE ===
 DATABASE_URL = config("DATABASE_URL", default="sqlite:///db.sqlite3")
@@ -129,9 +128,9 @@ USE_TZ = True
 
 # === STATIC / MEDIA ===
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+MEDIA_ROOT = BASE_DIR / "media"
 
 # === DEFAULT ===
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
