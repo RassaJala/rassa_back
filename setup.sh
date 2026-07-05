@@ -30,6 +30,17 @@ _STATE_FILE="${_STATE_FILE:-$STATE_FILE}"
 
 MIN_PYTHON_VERSION="3.12"
 CURRENT_PHASE=""
+server_pid=""
+
+# ---------------------------------------------------------------------------
+# Cleanup trap
+# ---------------------------------------------------------------------------
+_cleanup() {
+    local code=$?
+    [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null || true
+    exit "$code"
+}
+trap _cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -122,6 +133,8 @@ _version_ge() {
     local -a a1 a2
     read -ra a1 <<< "$v1"
     read -ra a2 <<< "$v2"
+    local i
+    # Pad to 3 components
     while [[ ${#a1[@]} -lt 3 ]]; do a1+=(0); done
     while [[ ${#a2[@]} -lt 3 ]]; do a2+=(0); done
     for i in 0 1 2; do
@@ -229,7 +242,7 @@ _run_phase() {
     else
         echo ""
         echo "$(_red "✗ Fase ${phase//_/.} falló.")"
-        exit 1
+        return 1
     fi
 
     CURRENT_PHASE=""
@@ -280,7 +293,7 @@ _phase_1_python() {
                     pyver=$(echo "$pyline" | sed 's/^[* ]*//' | awk '{print $1}')
                     if [[ -n "$pyver" ]] && [[ -z "${version_to_path[$pyver]:-}" ]]; then
                         local pyp
-                        pyp=$(pyenv which python3 2>/dev/null || echo "$HOME/.pyenv/versions/$pyver/bin/python3")
+                        pyp=$(PYENV_VERSION="$pyver" pyenv which python3 2>/dev/null || echo "$HOME/.pyenv/versions/$pyver/bin/python3")
                         version_to_path[$pyver]="$pyp"
                         all_versions+=("$pyver")
                     fi
@@ -315,7 +328,7 @@ _phase_1_python() {
             echo "$(_yellow "ADVERTENCIA: Python ${MIN_PYTHON_VERSION} está en el límite mínimo.")"
             echo "Se recomienda actualizar a una versión más reciente."
             echo -n "¿Querés continuar de todas formas? [s/N]: "
-            read -r answer
+            [[ -t 0 ]] && read -r answer || answer="n"
             if [[ ! "$answer" =~ ^[sSyY] ]]; then
                 return 1
             fi
@@ -334,7 +347,7 @@ _phase_1_python() {
 
     while true; do
         echo -n "Elegí una opción [1-${#compatible_versions[@]}]: "
-        read -r answer
+        [[ -t 0 ]] && read -r answer || answer="1"
         if [[ "$answer" =~ ^[1-9][0-9]*$ ]]; then
             local idx=$((answer-1))
             if [[ $idx -ge 0 ]] && [[ $idx -lt ${#compatible_versions[@]} ]]; then
@@ -376,7 +389,7 @@ _phase_2_venv() {
         [[ -d ".venv" ]] && venv_dir=".venv"
         echo "$(_yellow "El entorno virtual '${venv_dir}/' ya existe.")"
         echo -n "¿Recrearlo? Se eliminará el actual. [y/N]: "
-        read -r answer
+        [[ -t 0 ]] && read -r answer || answer="n"
         if [[ "$answer" =~ ^[sSyY] ]]; then
             echo "Eliminando ${venv_dir}/ existente..."
             rm -rf venv .venv
@@ -471,7 +484,7 @@ _phase_3_deps() {
         echo "  [2] uv (pyproject.toml)"
         echo ""
         echo -n "Elegí una opción [1/2]: "
-        read -r dep_choice
+        [[ -t 0 ]] && read -r dep_choice || dep_choice="1"
     fi
 
     case "$dep_choice" in
@@ -480,7 +493,7 @@ _phase_3_deps() {
                 echo "$(_yellow "uv no está instalado. Instalando con pip...")"
                 pip install uv
             fi
-    _log "Instalando dependencias con uv..."
+            _log "Instalando dependencias con uv..."
             if ! uv sync 2>&1; then
                 echo "$(_red "Falló la instalación con uv.")"
                 return 1
@@ -572,13 +585,13 @@ _phase_5_env() {
     fi
 
     if [[ -z "$secret_key" || "$secret_key" == "changeme" ]]; then
-    _log "Generando SECRET_KEY segura..."
+        _log "Generando SECRET_KEY segura..."
         _ensure_venv_active
         secret_key=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>/dev/null || true)
         if [[ -z "$secret_key" ]]; then
             echo "$(_yellow "No se pudo generar SECRET_KEY automáticamente.")"
             echo -n "Ingresá una SECRET_KEY manualmente (o Enter para usar 'changeme'): "
-            read -r secret_key
+            [[ -t 0 ]] && read -r secret_key || secret_key="changeme"
             secret_key="${secret_key:-changeme}"
         fi
         _log "$(_green "SECRET_KEY generada.")"
@@ -600,7 +613,7 @@ _phase_5_env() {
     if [[ -f ".env" ]] && grep -qE '^DATABASE_URL=.+' .env 2>/dev/null; then
         echo "DATABASE_URL actual: $(grep '^DATABASE_URL=' .env | cut -d'=' -f2-)"
         echo -n "¿Querés reconfigurar la base de datos? [y/N]: "
-        read -r reconfig
+        [[ -t 0 ]] && read -r reconfig || reconfig="n"
         if [[ ! "$reconfig" =~ ^[sSyY] ]]; then
             echo "Manteniendo configuración actual."
             _write_env_file "$secret_key"
@@ -609,23 +622,23 @@ _phase_5_env() {
     fi
 
     echo -n "Host [${db_host}]: "
-    read -r input
+    [[ -t 0 ]] && read -r input || input=""
     db_host="${input:-$db_host}"
 
     echo -n "Puerto [${db_port}]: "
-    read -r input
+    [[ -t 0 ]] && read -r input || input=""
     db_port="${input:-$db_port}"
 
     echo -n "Nombre de la base de datos [${db_name}]: "
-    read -r input
+    [[ -t 0 ]] && read -r input || input=""
     db_name="${input:-$db_name}"
 
     echo -n "Usuario de PostgreSQL [${db_user}]: "
-    read -r input
+    [[ -t 0 ]] && read -r input || input=""
     db_user="${input:-$db_user}"
 
     echo -n "Contraseña de PostgreSQL: "
-    read -rs db_pass
+    [[ -t 0 ]] && read -rs db_pass || db_pass=""
     echo ""
 
     if [[ -z "$db_pass" ]]; then
@@ -648,7 +661,7 @@ _phase_5_env() {
             echo "  psql -h $db_host -p $db_port -U $db_user -c \"CREATE DATABASE ${db_name};\""
             echo ""
             echo -n "¿Continuar de todas formas? [s/N]: "
-            read -r answer
+            [[ -t 0 ]] && read -r answer || answer="n"
             if [[ ! "$answer" =~ ^[sSyY] ]]; then
                 return 1
             fi
@@ -709,6 +722,7 @@ CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006"
     fi
 
     echo "$env_content" > .env
+    chmod 600 .env 2>/dev/null || true
     _log "$(_green ".env configurado exitosamente.")"
 }
 
@@ -771,7 +785,7 @@ _phase_8_verify() {
 
     _log "Probando arranque del servidor (3 segundos)..."
     python manage.py runserver --noreload 2>&1 &
-    local server_pid=$!
+    server_pid=$!
     sleep 3
 
     local server_ok=false
