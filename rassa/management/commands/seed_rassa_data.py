@@ -16,6 +16,7 @@ from django.db import transaction
 
 from rassa.models import (
     CategoriaProducto,
+    Conversacion,
     Corte,
     DecisionMerma,
     DetallePedido,
@@ -27,12 +28,12 @@ from rassa.models import (
     Integrante,
     LimiteCliente,
     Liquidacion,
+    Localidad,
     Log,
     Mensaje,
     MensajeDocumento,
     Merma,
     Municipio,
-    Localidad,
     Pago,
     PedidoCabecera,
     Persona,
@@ -46,7 +47,6 @@ from rassa.models import (
     TipoPago,
     Unidad,
     Usuario,
-    Conversacion,
 )
 
 
@@ -160,34 +160,24 @@ class Command(BaseCommand):
             {
                 "id_rol": 1,
                 "nombre_rol": "Admin",
-                "descripcion": (
-                    "Administrador del sistema. "
-                    + "Acceso total a todas las funciones."
-                ),
+                "descripcion": ("Administrador del sistema. " + "Acceso total a todas las funciones."),
             },
             {
                 "id_rol": 2,
                 "nombre_rol": "Vendedor",
-                "descripcion": (
-                    "Personal de la universidad. "
-                    "Gestiona pedidos, pagos, mermas y recolección."
-                ),
+                "descripcion": ("Personal de la universidad. " "Gestiona pedidos, pagos, mermas y recolección."),
             },
             {
                 "id_rol": 3,
                 "nombre_rol": "Agricultor",
                 "descripcion": (
-                    "Productor del campo. "
-                    "Publica sus productos los lunes "
-                    "y coordina la recolección."
+                    "Productor del campo. " "Publica sus productos los lunes " "y coordina la recolección."
                 ),
             },
             {
                 "id_rol": 4,
                 "nombre_rol": "Cliente",
-                "descripcion": (
-                    "Comprador. Ve productos, " + "compra y chatea con agricultores."
-                ),
+                "descripcion": ("Comprador. Ve productos, " + "compra y chatea con agricultores."),
             },
         ]
         for r in roles:
@@ -228,9 +218,7 @@ class Command(BaseCommand):
             },
         ]
         for c in cats:
-            CategoriaProducto.objects.update_or_create(
-                id_categoria=c["id_categoria"], defaults=c
-            )
+            CategoriaProducto.objects.update_or_create(id_categoria=c["id_categoria"], defaults=c)
         self.stdout.write("  Categorías: OK")
 
     def _seed_unidades(self):
@@ -295,9 +283,7 @@ class Command(BaseCommand):
             {"id_decision": 4, "decision": "Compostar"},
         ]
         for d in decisiones:
-            DecisionMerma.objects.update_or_create(
-                id_decision=d["id_decision"], defaults=d
-            )
+            DecisionMerma.objects.update_or_create(id_decision=d["id_decision"], defaults=d)
         self.stdout.write("  Decisiones de merma: OK")
 
     def _seed_tipos_pago(self):
@@ -307,9 +293,7 @@ class Command(BaseCommand):
             {"id_tipo_pago": 3, "nombre": "Depósito"},
         ]
         for t in tipos:
-            TipoPago.objects.update_or_create(
-                id_tipo_pago=t["id_tipo_pago"], defaults=t
-            )
+            TipoPago.objects.update_or_create(id_tipo_pago=t["id_tipo_pago"], defaults=t)
         self.stdout.write("  Tipos de pago: OK")
 
     # ------------------------------------------------------------------
@@ -326,9 +310,7 @@ class Command(BaseCommand):
             {"id_municipio": 6, "nombre": "Tarimoro"},
         ]
         for m in municipios:
-            Municipio.objects.update_or_create(
-                id_municipio=m["id_municipio"], defaults=m
-            )
+            Municipio.objects.update_or_create(id_municipio=m["id_municipio"], defaults=m)
         self.stdout.write("  Municipios: OK")
 
     def _seed_localidades(self):
@@ -350,10 +332,8 @@ class Command(BaseCommand):
             {"id_localidad": 15, "nombre": "Centro", "fk_municipio_id": 6},
             {"id_localidad": 16, "nombre": "San José de Horta", "fk_municipio_id": 6},
         ]
-        for l in localidades:
-            Localidad.objects.update_or_create(
-                id_localidad=l["id_localidad"], defaults=l
-            )
+        for loc in localidades:
+            Localidad.objects.update_or_create(id_localidad=loc["id_localidad"], defaults=loc)
         self.stdout.write("  Localidades: OK")
 
     # ------------------------------------------------------------------
@@ -651,9 +631,7 @@ class Command(BaseCommand):
             {"id_familia_usuario": 6, "fk_usuario_id": 9, "fk_familia_id": 3},
         ]
         for r in registros:
-            FamiliaUsuario.objects.update_or_create(
-                id_familia_usuario=r["id_familia_usuario"], defaults=r
-            )
+            FamiliaUsuario.objects.update_or_create(id_familia_usuario=r["id_familia_usuario"], defaults=r)
         self.stdout.write("  Familia-Usuarios: OK")
 
     def _seed_limites_cliente(self):
@@ -663,8 +641,8 @@ class Command(BaseCommand):
             {"id_limite": 3, "fk_usuario_id": 8, "monto": Decimal("750.00")},
             {"id_limite": 4, "fk_usuario_id": 10, "monto": Decimal("400.00")},
         ]
-        for l in limites:
-            LimiteCliente.objects.update_or_create(id_limite=l["id_limite"], defaults=l)
+        for lim in limites:
+            LimiteCliente.objects.update_or_create(id_limite=lim["id_limite"], defaults=lim)
         self.stdout.write("  Límites de cliente: OK")
 
     # ------------------------------------------------------------------
@@ -869,9 +847,7 @@ class Command(BaseCommand):
             },
         ]
         for p in publicaciones:
-            PublicacionSemanal.objects.update_or_create(
-                id_publicacion=p["id_publicacion"], defaults=p
-            )
+            PublicacionSemanal.objects.update_or_create(id_publicacion=p["id_publicacion"], defaults=p)
         self.stdout.write("  Publicaciones semanales: OK")
 
     def _seed_productos_semanales(self):
@@ -1044,9 +1020,7 @@ class Command(BaseCommand):
             },
         ]
         for p in productos:
-            ProductoSemanal.objects.update_or_create(
-                id_producto_semanal=p["id_producto_semanal"], defaults=p
-            )
+            ProductoSemanal.objects.update_or_create(id_producto_semanal=p["id_producto_semanal"], defaults=p)
         self.stdout.write("  Productos semanales: OK")
 
     # ------------------------------------------------------------------
@@ -1157,9 +1131,7 @@ class Command(BaseCommand):
             },
         ]
         for p in pedidos:
-            PedidoCabecera.objects.update_or_create(
-                id_pedido=p["id_pedido"], defaults=p
-            )
+            PedidoCabecera.objects.update_or_create(id_pedido=p["id_pedido"], defaults=p)
         self.stdout.write("  Pedidos cabecera: OK")
 
     def _seed_detalles_pedido(self):
@@ -1437,9 +1409,7 @@ class Command(BaseCommand):
             },
         ]
         for d in detalles:
-            DetallePedido.objects.update_or_create(
-                id_detalle=d["id_detalle"], defaults=d
-            )
+            DetallePedido.objects.update_or_create(id_detalle=d["id_detalle"], defaults=d)
         self.stdout.write("  Detalles de pedido: OK")
 
     # ------------------------------------------------------------------
@@ -1704,9 +1674,7 @@ class Command(BaseCommand):
             },
         ]
         for h in historial:
-            HistorialEstadoPedido.objects.update_or_create(
-                id_historial=h["id_historial"], defaults=h
-            )
+            HistorialEstadoPedido.objects.update_or_create(id_historial=h["id_historial"], defaults=h)
         self.stdout.write("  Historial de estados: OK")
 
     # ------------------------------------------------------------------
@@ -1843,8 +1811,8 @@ class Command(BaseCommand):
                 "dispositivo": "Safari 17 / iOS 18",
             },
         ]
-        for l in logs:
-            Log.objects.update_or_create(id_log=l["id_log"], defaults=l)
+        for log_entry in logs:
+            Log.objects.update_or_create(id_log=log_entry["id_log"], defaults=log_entry)
         self.stdout.write("  Logs: OK")
 
     # ------------------------------------------------------------------
@@ -1864,9 +1832,7 @@ class Command(BaseCommand):
             {"id_conversacion": 9, "nombre": "Familia Hernández", "tipo": True},
         ]
         for c in convs:
-            Conversacion.objects.update_or_create(
-                id_conversacion=c["id_conversacion"], defaults=c
-            )
+            Conversacion.objects.update_or_create(id_conversacion=c["id_conversacion"], defaults=c)
         self.stdout.write("  Conversaciones: OK")
 
     def _seed_integrantes(self):
@@ -2046,9 +2012,7 @@ class Command(BaseCommand):
             },
         ]
         for d in documentos:
-            Documento.objects.update_or_create(
-                id_documento=d["id_documento"], defaults=d
-            )
+            Documento.objects.update_or_create(id_documento=d["id_documento"], defaults=d)
         self.stdout.write("  Documentos: OK")
 
     def _seed_mensajes_documentos(self):
@@ -2058,9 +2022,7 @@ class Command(BaseCommand):
             {"id_mensaje_documento": 3, "fk_mensaje_id": 14, "fk_documento_id": 3},
         ]
         for r in registros:
-            MensajeDocumento.objects.update_or_create(
-                id_mensaje_documento=r["id_mensaje_documento"], defaults=r
-            )
+            MensajeDocumento.objects.update_or_create(id_mensaje_documento=r["id_mensaje_documento"], defaults=r)
         self.stdout.write("  Mensajes-Documentos: OK")
 
     # ------------------------------------------------------------------
@@ -2095,9 +2057,7 @@ class Command(BaseCommand):
             },
         ]
         for i in imagenes:
-            ProductoImagen.objects.update_or_create(
-                id_imagen=i["id_imagen"], defaults=i
-            )
+            ProductoImagen.objects.update_or_create(id_imagen=i["id_imagen"], defaults=i)
         self.stdout.write("  Imágenes de producto: OK")
 
     # ------------------------------------------------------------------
@@ -2162,9 +2122,7 @@ class Command(BaseCommand):
             },
         ]
         for r in recolecciones:
-            Recoleccion.objects.update_or_create(
-                id_recoleccion=r["id_recoleccion"], defaults=r
-            )
+            Recoleccion.objects.update_or_create(id_recoleccion=r["id_recoleccion"], defaults=r)
         self.stdout.write("  Recolecciones: OK")
 
     # ------------------------------------------------------------------
@@ -2272,8 +2230,6 @@ class Command(BaseCommand):
                 "estado": "pagada",
             },
         ]
-        for l in liquidaciones:
-            Liquidacion.objects.update_or_create(
-                id_liquidacion=l["id_liquidacion"], defaults=l
-            )
+        for liq in liquidaciones:
+            Liquidacion.objects.update_or_create(id_liquidacion=liq["id_liquidacion"], defaults=liq)
         self.stdout.write("  Liquidaciones: OK")

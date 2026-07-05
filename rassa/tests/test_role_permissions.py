@@ -8,10 +8,8 @@ Uso:
     python manage.py test rassa.tests.test_role_permissions
 """
 
-from unittest.mock import MagicMock
-
 from django.contrib.auth.models import AnonymousUser, User
-from django.test import TestCase, RequestFactory
+from django.test import RequestFactory, TestCase
 
 from rassa.models import Persona, Rol, Usuario
 from rassa.permissions.role_permissions import (

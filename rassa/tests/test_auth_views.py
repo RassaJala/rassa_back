@@ -6,8 +6,8 @@ rassa.auth_serializers and be importable from rassa.auth_views.
 
 from django.test import TestCase
 
-from rassa.auth_views import CustomTokenObtainPairView
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.auth_views import CustomTokenObtainPairView
 
 
 class CustomTokenObtainPairViewTest(TestCase):

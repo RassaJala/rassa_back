@@ -37,11 +37,11 @@ bash start.sh      # Linux / macOS / Git Bash / WSL
 
 **¿Qué hace `start.sh`?**
 
-1. Corre TODOS los test automáticamente
-2. Si **pasan** → enciende el servidor en `http://localhost:8000/api/`
-3. Si **fallan** → muestra el error exacto con explicación y NO enciende el servidor
+1. Ejecuta TODOS los tests automáticamente
+2. Si **pasan** → levanta el servidor en `http://localhost:8000/api/`
+3. Si **fallan** → muestra el error exacto con explicación y NO levanta el servidor
 
-> **IMPORTANTE:** Usa siempre `bash start.sh` para encender el backend. Si usás `python manage.py runserver` directamente, no se ejecutan los tests automáticamente y podés subir código con errores.
+> **IMPORTANTE:** Usa siempre `bash start.sh` para levantar el backend. Si ejecutas `python manage.py runserver` directamente, no se corren los tests automáticamente y puedes subir código con errores.
 
 ## Variables de entorno
 
@@ -58,10 +58,10 @@ Las variables se configuran en el archivo `.env` (creado por `setup.sh`).
 ## Comandos
 
 ```bash
-# Encender el backend (corre test automáticamente)
+# Encender el backend (corre tests automáticamente)
 bash start.sh
 
-# Solo correr test (sin encender server)
+# Solo correr tests (sin levantar server)
 bash start.sh --test
 
 # Test con máximo detalle
@@ -78,12 +78,12 @@ python manage.py shell
 
 ## Usuarios de prueba
 
-| Usuario     | Email                   | Contraseña    | Rol           |
-| ----------- | ----------------------- | ------------- | ------------- |
-| Admin       | `admin@rassa.com`       | `admin123`    | Administrador |
-| Vendedor    | `vendedor@rassa.com`    | `vendedor123` | Vendedor      |
-| Juan Pérez  | `juan.perez@email.com`  | `juan123`     | Agricultor    |
-| Ana Ramírez | `ana.ramirez@email.com` | `ana123`      | Cliente       |
+| Usuario | Email | Contraseña | Rol |
+| ------- | ----- | ---------- | --- |
+| Admin | `admin@rassa.com` | `admin123` | Administrador |
+| Vendedor | `vendedor@rassa.com` | `vendedor123` | Vendedor |
+| Juan Pérez | `juan.perez@email.com` | `juan123` | Agricultor |
+| Ana Ramírez | `ana.ramirez@email.com` | `ana123` | Cliente |
 
 ## Documentación
 
