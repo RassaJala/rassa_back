@@ -1,5 +1,5 @@
 # ============================================================================
-# Rassa — Iniciar el Backend (PowerShell)
+# Rassa — Iniciar Backend (PowerShell)
 # ============================================================================
 # Ejecuta los test automáticamente. Si pasan, enciende el servidor.
 # Si fallan, muestra el error y NO enciende el servidor.
@@ -55,7 +55,7 @@ Opciones:
   -Help            Muestra esta ayuda
 
 Comportamiento por defecto:
-  1. Verifica que el entorno esté configurado (.env, venv)
+  1. Verifica que el entorno esté configurado (.env, venv, Python, PostgreSQL)
   2. Ejecuta TODOS los test del proyecto
   3. Si pasan -> enciende el servidor en http://localhost:8000
   4. Si fallan -> muestra qué tests fallaron y NO enciende el servidor
@@ -85,7 +85,33 @@ function Activate-Venv {
     foreach ($path in $candidates) {
         $fullPath = Join-Path $script:ScriptDir $path
         if (Test-Path $fullPath) {
-            . $fullPath
+            try {
+                . $fullPath
+            } catch {
+                Write-Red "╔══════════════════════════════════════════════════════╗"
+                Write-Red "║  ERROR — El entorno virtual está corrupto            ║"
+                Write-Red "╚══════════════════════════════════════════════════════╝"
+                Write-Host ""
+                Write-Host "  No se pudo activar el venv."
+                Write-Host "  Solución: Remove-Item -Recurse venv,.venv; .\setup.ps1"
+                Write-Host ""
+                exit 1
+            }
+
+            # Verificar que el venv funciona
+            try {
+                $null = python --version
+            } catch {
+                Write-Red "╔══════════════════════════════════════════════════════╗"
+                Write-Red "║  ERROR — El entorno virtual está corrupto            ║"
+                Write-Red "╚══════════════════════════════════════════════════════╝"
+                Write-Host ""
+                Write-Host "  Python no funciona después de activar el venv."
+                Write-Host "  Solución: Remove-Item -Recurse venv,.venv; .\setup.ps1"
+                Write-Host ""
+                exit 1
+            }
+
             return
         }
     }
@@ -105,6 +131,16 @@ function Activate-Venv {
 
 function Test-Prechecks {
     $failed = $false
+
+    # Verificar Python
+    try {
+        $null = python --version 2>&1
+    } catch {
+        Write-Red "✗ No se encontró Python en el PATH"
+        Write-Host "  Instala Python 3.12+: https://www.python.org/downloads/"
+        Write-Host "  O activa tu venv: .\venv\Scripts\activate"
+        $failed = $true
+    }
 
     $envPath = Join-Path $script:ScriptDir ".env"
     if (-not (Test-Path $envPath)) {
@@ -145,208 +181,219 @@ function Invoke-Tests {
     Push-Location $script:ScriptDir
     try {
         $tmpFile = [System.IO.Path]::GetTempFileName()
-        python manage.py test --verbosity $Verbosity 2>&1 | Tee-Object -FilePath $tmpFile
-        $testExit = $LASTEXITCODE
-        $testOutput = Get-Content $tmpFile -Raw
 
-        Write-Host ""
+        # Trap de limpieza
+        try {
+            python -m pytest --verbosity $Verbosity 2>&1 | Tee-Object -FilePath $tmpFile
+            $testExit = $LASTEXITCODE
+            $testOutput = Get-Content $tmpFile -Raw
 
-        # Contar resultados
-        $total = 0
-        $failedCount = 0
-        $errorCount = 0
-
-        if ($testOutput -match "Ran (\d+)") {
-            $total = [int]$Matches[1]
-        }
-        $failedCount = ([regex]::Matches($testOutput, "(?m)^FAIL:")).Count
-        $errorCount = ([regex]::Matches($testOutput, "(?m)^ERROR:")).Count
-
-        # ============================================================
-        # SI TODO PASÓ
-        # ============================================================
-        if ($testExit -eq 0) {
-            Write-Bold "═══════════════════════════════════════════════════════════"
-            Write-Green "  ✓ TODOS LOS TEST PASARON"
-            Write-Green "    Total: $total tests ejecutados"
-            Write-Green "    Estado: OK"
-            Write-Bold "═══════════════════════════════════════════════════════════"
             Write-Host ""
-            Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-            return $true
-        }
 
-        # ============================================================
-        # SI HAY FALLOS — ANÁLISIS DETALLADO
-        # ============================================================
+            # Contar resultados
+            $total = 0
+            $failedCount = 0
+            $errorCount = 0
 
-        Write-Host ""
-        Write-Red "╔══════════════════════════════════════════════════════════════╗"
-        Write-Red "║  ✗ ALGUNOS TEST FALLARON — EL SERVIDOR NO SE ENCIENDE      ║"
-        Write-Red "╚══════════════════════════════════════════════════════════════╝"
-        Write-Host ""
+            if ($testOutput -match "Ran (\d+)") {
+                $total = [int]$Matches[1]
+            }
+            $failedCount = ([regex]::Matches($testOutput, "(?m)^FAIL:")).Count
+            $errorCount = ([regex]::Matches($testOutput, "(?m)^ERROR:")).Count
 
-        # Resumen numérico
-        Write-Bold "  ┌─────────────────────────────────────┐"
-        Write-Bold "  │  RESUMEN DE LA EJECUCIÓN            │"
-        Write-Bold "  └─────────────────────────────────────┘"
-        Write-Host ""
-        Write-Cyan "    Tests ejecutados:  $total"
-        if ($failedCount -gt 0) {
-            Write-Red "    Tests fallidos:    $failedCount"
-        }
-        if ($errorCount -gt 0) {
-            Write-Red "    Errores graves:    $errorCount"
-        }
-        Write-Host ""
+            # ============================================================
+            # SI TODO PASÓ
+            # ============================================================
+            if ($testExit -eq 0) {
+                Write-Bold "═══════════════════════════════════════════════════════════"
+                Write-Green "  ✓ TODOS LOS TEST PASARON"
+                Write-Green "    Total: $total tests ejecutados"
+                Write-Green "    Estado: OK"
+                Write-Bold "═══════════════════════════════════════════════════════════"
+                Write-Host ""
+                Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+                return $true
+            }
 
-        # ============================================================
-        # DETALLE DE CADA TEST QUE FALLÓ
-        # ============================================================
+            # ============================================================
+            # SI HAY FALLOS — ANÁLISIS DETALLADO
+            # ============================================================
 
-        if ($failedCount -gt 0 -or $errorCount -gt 0) {
+            Write-Host ""
+            Write-Red "╔══════════════════════════════════════════════════════════════╗"
+            Write-Red "║  ✗ ALGUNOS TEST FALLARON — EL SERVIDOR NO SE ENCIENDE      ║"
+            Write-Red "╚══════════════════════════════════════════════════════════════╝"
+            Write-Host ""
+
+            # Resumen numérico
             Write-Bold "  ┌─────────────────────────────────────┐"
-            Write-Bold "  │  DETALLE DE CADA ERROR              │"
+            Write-Bold "  │  RESUMEN DE LA EJECUCIÓN            │"
             Write-Bold "  └─────────────────────────────────────┘"
             Write-Host ""
+            Write-Cyan "    Tests ejecutados:  $total"
+            if ($failedCount -gt 0) {
+                Write-Red "    Tests fallidos:    $failedCount"
+            }
+            if ($errorCount -gt 0) {
+                Write-Red "    Errores graves:    $errorCount"
+            }
+            Write-Host ""
 
-            $failNum = 0
-            $lines = $testOutput -split "`n"
+            # ============================================================
+            # DETALLE DE CADA TEST QUE FALLÓ
+            # ============================================================
 
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-                $line = $lines[$i]
+            if ($failedCount -gt 0 -or $errorCount -gt 0) {
+                Write-Bold "  ┌─────────────────────────────────────┐"
+                Write-Bold "  │  DETALLE DE CADA ERROR              │"
+                Write-Bold "  └─────────────────────────────────────┘"
+                Write-Host ""
 
-                if ($line -match "^(FAIL|ERROR):") {
-                    $failNum++
-                    $testName = $line -replace "^(FAIL|ERROR): ", ""
-                    $isError = $line -match "^ERROR:"
+                $failNum = 0
+                $lines = $testOutput -split "`n"
 
-                    if ($isError) {
-                        Write-Red "  ━━━ ERROR GRAVE #$failNum ━━━━━━━━━━━━━━━━━━━━━━━"
-                    } else {
-                        Write-Red "  ━━━ ERROR #$failNum ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    }
-                    Write-Host ""
-                    Write-Bold "    Test: $testName"
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    $line = $lines[$i]
 
-                    if ($isError) {
-                        Write-Yellow "    (Este es un error GRAVE — el test ni siquiera pudo ejecutarse)"
-                    }
-                    Write-Host ""
+                    if ($line -match "^(FAIL|ERROR):") {
+                        $failNum++
+                        $testName = $line -replace "^(FAIL|ERROR): ", ""
+                        $isError = $line -match "^ERROR:"
 
-                    # Extraer traceback (las siguientes líneas hasta el siguiente FAIL/ERROR/Ran)
-                    $traceback = @()
-                    for ($j = $i + 1; $j -lt $lines.Count; $j++) {
-                        $tl = $lines[$j]
-                        if ($tl -match "^(FAIL|ERROR):" -or $tl -match "^Ran " -or $tl -match "^---") { break }
-                        $traceback += $tl
-                    }
+                        if ($isError) {
+                            Write-Red "  ━━━ ERROR GRAVE #$failNum ━━━━━━━━━━━━━━━━━━━━━━━"
+                        } else {
+                            Write-Red "  ━━━ ERROR #$failNum ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        }
+                        Write-Host ""
+                        Write-Bold "    Test: $testName"
 
-                    if ($traceback.Count -gt 0) {
-                        Write-Cyan "    ¿Qué falló?"
-                        $traceback | Select-Object -First 30 | ForEach-Object {
-                            if ($_ -match "AssertionError|assert|FAIL") {
-                                Write-Red "      $_"
-                            } elseif ($_ -match "Error|Exception|Traceback") {
-                                Write-Red "      $_"
-                            } elseif ($_ -match "File """) {
-                                Write-Host "      $_" -ForegroundColor DarkGray
-                            } else {
-                                Write-Host "      $_"
+                        if ($isError) {
+                            Write-Yellow "    (Este es un error GRAVE — el test ni siquiera pudo ejecutarse)"
+                        }
+                        Write-Host ""
+
+                        # Extraer traceback
+                        $traceback = @()
+                        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+                            $tl = $lines[$j]
+                            if ($tl -match "^(FAIL|ERROR):" -or $tl -match "^Ran " -or $tl -match "^---") { break }
+                            $traceback += $tl
+                        }
+
+                        if ($traceback.Count -gt 0) {
+                            Write-Cyan "    ¿Qué falló?"
+                            $traceback | Select-Object -First 30 | ForEach-Object {
+                                if ($_ -match "AssertionError|assert|FAIL") {
+                                    Write-Red "      $_"
+                                } elseif ($_ -match "Error|Exception|Traceback") {
+                                    Write-Red "      $_"
+                                } elseif ($_ -match "File """) {
+                                    Write-Host "      $_" -ForegroundColor DarkGray
+                                } else {
+                                    Write-Host "      $_"
+                                }
                             }
+                            Write-Host ""
+                        }
+
+                        # Explicación simple
+                        $tracebackText = $traceback -join " "
+                        Write-Cyan "    ¿Qué significa?"
+                        if ($tracebackText -match "AssertionError|assert") {
+                            Write-Host "      El test esperaba un resultado pero obtuvo otro."
+                            Write-Host "      Algo en tu código cambió el comportamiento esperado."
+                        } elseif ($tracebackText -match "ImportError|ModuleNotFoundError") {
+                            Write-Host "      Falta una librería o el import está mal escrito."
+                        } elseif ($tracebackText -match "TypeError") {
+                            Write-Host "      Estás pasando un tipo de dato incorrecto a una función."
+                        } elseif ($tracebackText -match "AttributeError") {
+                            Write-Host "      Estás usando un atributo o método que no existe."
+                        } elseif ($tracebackText -match "IntegrityError|unique") {
+                            Write-Host "      Estás creando un registro duplicado que debería ser único."
+                        } elseif ($tracebackText -match "SyntaxError") {
+                            Write-Host "      Tu código tiene un error de sintaxis (falta ':', paréntesis, etc.)"
+                        } elseif ($tracebackText -match "NameError") {
+                            Write-Host "      Estás usando una variable o función que no existe."
+                        } elseif ($tracebackText -match "OperationalError|connection") {
+                            Write-Host "      No se pudo conectar a la base de datos."
+                            Write-Host "      Verifica que PostgreSQL esté corriendo."
+                        } else {
+                            Write-Host "      Revisa el traceback arriba para entender el problema."
+                        }
+                        Write-Host ""
+
+                        # Archivo con el error
+                        $fileMatch = ($traceback | Where-Object { $_ -match 'File "' } | Select-Object -Last 1)
+                        if ($fileMatch) {
+                            $filePath = [regex]::Match($fileMatch, 'File "([^"]+)"').Groups[1].Value
+                            $lineNum = [regex]::Match($fileMatch, 'line (\d+)').Groups[1].Value
+                            Write-Cyan "    Archivo con el error:"
+                            Write-Host "      $filePath"
+                            if ($lineNum) {
+                                Write-Host "      Línea: $lineNum"
+                            }
+                            Write-Host ""
+                        }
+
+                        # Cómo arreglar
+                        Write-Cyan "    Cómo arreglar:"
+                        if ($tracebackText -match "AssertionError") {
+                            Write-Host "      1. Abre el archivo indicado arriba"
+                            Write-Host "      2. Busca la línea del error"
+                            Write-Host "      3. Compara lo que el test espera vs lo que tu código devuelve"
+                            Write-Host "      4. Corrige tu código para que pase el test"
+                        } elseif ($tracebackText -match "ImportError|ModuleNotFoundError") {
+                            Write-Host "      1. Verifica que el módulo esté en requirements.txt"
+                            Write-Host "      2. Ejecuta: pip install -r requirements.txt"
+                            Write-Host "      3. Revisa que el import en el archivo sea correcto"
+                        } elseif ($tracebackText -match "SyntaxError") {
+                            Write-Host "      1. Abre el archivo indicado"
+                            Write-Host "      2. Busca la línea con el error de sintaxis"
+                            Write-Host "      3. Agrega el ':' o paréntesis que falta"
+                        } elseif ($tracebackText -match "IntegrityError|unique") {
+                            Write-Host "      1. No crees el mismo registro dos veces en el test"
+                            Write-Host "      2. Usa get_or_create() en vez de create()"
+                        } elseif ($tracebackText -match "OperationalError|connection") {
+                            Write-Host "      1. Verifica que PostgreSQL esté corriendo"
+                            Write-Host "      2. Revisa DATABASE_URL en .env"
+                        } else {
+                            Write-Host "      1. Lee el traceback completo arriba"
+                            Write-Host "      2. Busca la línea exacta del error en el archivo"
+                            Write-Host "      3. Corrige el problema"
+                            Write-Host "      4. Vuelve a ejecutar: .\start.ps1"
                         }
                         Write-Host ""
                     }
-
-                    # Explicación simple
-                    $tracebackText = $traceback -join " "
-                    Write-Cyan "    ¿Qué significa?"
-                    if ($tracebackText -match "AssertionError|assert") {
-                        Write-Host "      El test esperaba un resultado pero obtuvo otro."
-                        Write-Host "      Algo en tu código cambió el comportamiento esperado."
-                    } elseif ($tracebackText -match "ImportError|ModuleNotFoundError") {
-                        Write-Host "      Falta una librería o el import está mal escrito."
-                    } elseif ($tracebackText -match "TypeError") {
-                        Write-Host "      Estás pasando un tipo de dato incorrecto a una función."
-                    } elseif ($tracebackText -match "AttributeError") {
-                        Write-Host "      Estás usando un atributo o método que no existe."
-                    } elseif ($tracebackText -match "IntegrityError|unique") {
-                        Write-Host "      Estás creando un registro duplicado que debería ser único."
-                    } elseif ($tracebackText -match "SyntaxError") {
-                        Write-Host "      Tu código tiene un error de sintaxis (falta ':', paréntesis, etc.)"
-                    } elseif ($tracebackText -match "NameError") {
-                        Write-Host "      Estás usando una variable o función que no existe."
-                    } else {
-                        Write-Host "      Revisa el traceback arriba para entender el problema."
-                    }
-                    Write-Host ""
-
-                    # Archivo con el error
-                    $fileMatch = ($traceback | Where-Object { $_ -match 'File "' } | Select-Object -Last 1)
-                    if ($fileMatch) {
-                        $filePath = [regex]::Match($fileMatch, 'File "([^"]+)"').Groups[1].Value
-                        $lineNum = [regex]::Match($fileMatch, 'line (\d+)').Groups[1].Value
-                        Write-Cyan "    Archivo con el error:"
-                        Write-Host "      $filePath"
-                        if ($lineNum) {
-                            Write-Host "      Línea: $lineNum"
-                        }
-                        Write-Host ""
-                    }
-
-                    # Cómo arreglar
-                    Write-Cyan "    Cómo arreglar:"
-                    if ($tracebackText -match "AssertionError") {
-                        Write-Host "      1. Abre el archivo indicado arriba"
-                        Write-Host "      2. Busca la línea del error"
-                        Write-Host "      3. Compara lo que el test espera vs lo que tu código devuelve"
-                        Write-Host "      4. Corrige tu código para que pase el test"
-                    } elseif ($tracebackText -match "ImportError|ModuleNotFoundError") {
-                        Write-Host "      1. Verifica que el módulo esté en requirements.txt"
-                        Write-Host "      2. Ejecuta: pip install -r requirements.txt"
-                        Write-Host "      3. Revisa que el import en el archivo sea correcto"
-                    } elseif ($tracebackText -match "SyntaxError") {
-                        Write-Host "      1. Abre el archivo indicado"
-                        Write-Host "      2. Busca la línea con el error de sintaxis"
-                        Write-Host "      3. Agrega el ':' o paréntesis que falta"
-                    } elseif ($tracebackText -match "IntegrityError|unique") {
-                        Write-Host "      1. No crees el mismo registro dos veces en el test"
-                        Write-Host "      2. Usa get_or_create() en vez de create()"
-                    } else {
-                        Write-Host "      1. Lee el traceback completo arriba"
-                        Write-Host "      2. Busca la línea exacta del error en el archivo"
-                        Write-Host "      3. Corrige el problema"
-                        Write-Host "      4. Vuelve a ejecutar: .\start.ps1"
-                    }
-                    Write-Host ""
                 }
             }
+
+            # ============================================================
+            # INSTRUCCIONES FINALES
+            # ============================================================
+
+            Write-Red "╔══════════════════════════════════════════════════════════════╗"
+            Write-Red "║  EL SERVIDOR NO SE ENCIENDE HASTA QUE TODOS LOS TEST       ║"
+            Write-Red "║  PASEN. Corrige los errores de arriba y vuelve a intentar. ║"
+            Write-Red "╚══════════════════════════════════════════════════════════════╝"
+            Write-Host ""
+            Write-Bold "  Resumen de acciones:"
+            Write-Host ""
+            Write-Host "    1. Lee CADA error de arriba (están explicados)"
+            Write-Host "    2. Abre el archivo indicado en cada error"
+            Write-Host "    3. Corrige el problema"
+            Write-Host "    4. Vuelve a ejecutar: .\start.ps1"
+            Write-Host ""
+            Write-Host "  Si necesitas ver los test sin encender el servidor:" -ForegroundColor DarkGray
+            Write-Host "    .\start.ps1 -TestOnly" -ForegroundColor DarkGray
+            Write-Host "  Si necesitas máximo detalle:" -ForegroundColor DarkGray
+            Write-Host "    .\start.ps1 -TestOnly -Verbose" -ForegroundColor DarkGray
+            Write-Host ""
+
+            return $false
+        } finally {
+            Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
         }
-
-        # ============================================================
-        # INSTRUCCIONES FINALES
-        # ============================================================
-
-        Write-Red "╔══════════════════════════════════════════════════════════════╗"
-        Write-Red "║  EL SERVIDOR NO SE ENCIENDE HASTA QUE TODOS LOS TEST       ║"
-        Write-Red "║  PASEN. Corrige los errores de arriba y vuelve a intentar. ║"
-        Write-Red "╚══════════════════════════════════════════════════════════════╝"
-        Write-Host ""
-        Write-Bold "  Resumen de acciones:"
-        Write-Host ""
-        Write-Host "    1. Lee CADA error de arriba (están explicados)"
-        Write-Host "    2. Abre el archivo indicado en cada error"
-        Write-Host "    3. Corrige el problema"
-        Write-Host "    4. Vuelve a ejecutar: .\start.ps1"
-        Write-Host ""
-        Write-Host "  Si necesitas ver los test sin encender el servidor:" -ForegroundColor DarkGray
-        Write-Host "    .\start.ps1 -TestOnly" -ForegroundColor DarkGray
-        Write-Host "  Si necesitas máximo detalle:" -ForegroundColor DarkGray
-        Write-Host "    .\start.ps1 -TestOnly -Verbose" -ForegroundColor DarkGray
-        Write-Host ""
-
-        Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-        return $false
     } finally {
         Pop-Location
     }
