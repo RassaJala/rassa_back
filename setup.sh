@@ -341,7 +341,7 @@ _phase_1_python() {
     echo "Se encontraron ${#compatible_versions[@]} versiones de Python compatibles:"
     echo ""
     for i in "${!compatible_versions[@]}"; do
-        printf "  [%d] Python %s — %s\n" "$((i+1))" "${compatible_versions[$i]}" "${compatible_paths[$i]}"
+        printf "  [%d] Python %s -> %s\n" "$((i+1))" "${compatible_versions[$i]}" "${compatible_paths[$i]}"
     done
     echo ""
 
@@ -509,12 +509,12 @@ _phase_3_deps() {
                 echo "$(_red "Falló la instalación de dependencias.")"
                 return 1
             fi
-            # Instalar dependencias de desarrollo si existen
+            # Instalar dependencias de desarrollo si existen (no bloqueante)
             if [[ -f "requirements-dev.txt" ]]; then
                 _log "Instalando dependencias de desarrollo..."
                 if ! pip install -r requirements-dev.txt 2>&1; then
-                    echo "$(_red "Falló la instalación de dependencias de desarrollo.")"
-                    return 1
+                    echo "$(_yellow "Aviso: no se pudieron instalar las dependencias de desarrollo.")"
+                    echo "  Podés instalarlas después con: pip install -r requirements-dev.txt"
                 fi
             fi
             ;;
