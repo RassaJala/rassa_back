@@ -273,7 +273,24 @@ _phase_1_python() {
                     version_to_path[$ver]="$pypath"
                     all_versions+=("$ver")
                 fi
-            done < <({ where python 2>/dev/null; where python3 2>/dev/null; } || true)
+            done < <({ where python 2>/dev/null; where python3 2>/dev/null; command -v python 2>/dev/null; } || true)
+
+            # Fallback: Python Launcher (py.exe) — encuentra instalaciones fuera del PATH
+            if command -v py &>/dev/null; then
+                while IFS= read -r pyline; do
+                    [[ -n "$pyline" ]] || continue
+                    local pyver pypath
+                    if [[ "$pyline" =~ ^[[:space:]]*[-*][[:space:]]+([0-9]+\.[0-9]+)-[0-9]+[[:space:]]+(.*[^[:space:]]) ]]; then
+                        pyver="${BASH_REMATCH[1]}"
+                        pypath="${BASH_REMATCH[2]}"
+                        pypath="${pypath% \*}"
+                        if [[ -n "$pyver" ]] && [[ -z "${version_to_path[$pyver]:-}" ]] && [[ -x "$pypath" ]]; then
+                            version_to_path[$pyver]="$pypath"
+                            all_versions+=("$pyver")
+                        fi
+                    fi
+                done < <(py --list-paths 2>/dev/null || true)
+            fi
             ;;
         *)
             while IFS= read -r pypath; do

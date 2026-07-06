@@ -36,6 +36,103 @@ cd rassa_back
 
 El script detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera SECRET_KEY, ejecuta migraciones y carga datos de prueba.
 
+## Instalación manual
+
+Si el script de setup no funciona en tu sistema, seguí estos pasos para configurar el proyecto paso a paso.
+
+### 1. Requisitos previos
+
+- Python 3.12 o superior
+- PostgreSQL instalado y corriendo (puerto 5432)
+- Git
+
+### 2. Clonar el repositorio
+
+```bash
+git clone https://github.com/ObedAlPa/rassa_back.git
+cd rassa_back
+```
+
+### 3. Crear y activar el entorno virtual
+
+**Linux / macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+**Windows (PowerShell):**
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+**Windows (Git Bash):**
+```bash
+python -m venv venv
+source venv/Scripts/activate
+```
+
+> **Nota:** Si `python` no funciona en Windows, probá con el Python Launcher:
+> ```powershell
+> py -m venv venv
+> .\venv\Scripts\Activate.ps1
+> ```
+
+### 4. Instalar dependencias
+
+Con el entorno virtual activo:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+### 5. Configurar variables de entorno
+
+Creá un archivo `.env` en la raíz del proyecto con el siguiente contenido:
+
+```
+SECRET_KEY=django-insecure-<reemplazar con una clave única>
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
+DATABASE_URL=postgres://postgres:contraseña@localhost:5432/rassa_jala_db
+```
+
+Para generar una SECRET_KEY automáticamente:
+
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+### 6. Crear la base de datos
+
+```bash
+psql -U postgres -c "CREATE DATABASE rassa_jala_db;"
+```
+
+### 7. Ejecutar migraciones y cargar datos de prueba
+
+```bash
+python manage.py migrate
+python manage.py seed_rassa_data
+```
+
+### 8. Verificar la instalación
+
+```bash
+python manage.py check --deploy
+```
+
+### 9. Iniciar el servidor
+
+```bash
+python manage.py runserver
+```
+
+La API estará disponible en http://localhost:8000/api/
+
 ### 2. Levantar el backend
 
 **Linux / macOS / Git Bash / WSL:**

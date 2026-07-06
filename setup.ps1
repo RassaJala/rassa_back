@@ -120,6 +120,19 @@ function Invoke-Phase1Python {
         $paths = @()
     }
 
+    # Fallback: Python Launcher (py.exe) — encuentra instalaciones fuera del PATH
+    try {
+        $pyList = & py --list-paths 2>&1
+        foreach ($line in $pyList) {
+            if ($line -match '^\s*[-*]\s+(\d+\.\d+)-\d+\s+(.+)$') {
+                $pyPath = $Matches[2].TrimEnd(' *')
+                if (Test-Path $pyPath -and $pyPath -notin $paths) {
+                    $paths += $pyPath
+                }
+            }
+        }
+    } catch {}
+
     foreach ($pypath in $paths) {
         if (-not $pypath) { continue }
         try {
