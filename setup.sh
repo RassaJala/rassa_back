@@ -196,8 +196,8 @@ _handle_error() {
     echo "$(_red "║  Línea: ${line}                                          ║")"
     echo "$(_red "╚══════════════════════════════════════════════════════╝")"
     echo ""
-    echo "Revisá el log completo en: $LOG_FILE"
-    echo "Corregí el error y volvé a ejecutar: bash setup.sh"
+    echo "Revisa el log completo en: $LOG_FILE"
+    echo "Corrige el error y vuelve a ejecutar: bash setup.sh"
     echo "  (las fases ya completadas se saltean automáticamente)"
     echo ""
     exit "$exit_code"
@@ -273,7 +273,24 @@ _phase_1_python() {
                     version_to_path[$ver]="$pypath"
                     all_versions+=("$ver")
                 fi
-            done < <({ where python 2>/dev/null; where python3 2>/dev/null; } || true)
+            done < <({ where python 2>/dev/null; where python3 2>/dev/null; command -v python 2>/dev/null; } || true)
+
+            # Fallback: Python Launcher (py.exe) — encuentra instalaciones fuera del PATH
+            if command -v py &>/dev/null; then
+                while IFS= read -r pyline; do
+                    [[ -n "$pyline" ]] || continue
+                    local pyver pypath
+                    if [[ "$pyline" =~ ^[[:space:]]*[-*][[:space:]]+([0-9]+\.[0-9]+)-[0-9]+[[:space:]]+(.*[^[:space:]]) ]]; then
+                        pyver="${BASH_REMATCH[1]}"
+                        pypath="${BASH_REMATCH[2]}"
+                        pypath="${pypath% \*}"
+                        if [[ -n "$pyver" ]] && [[ -z "${version_to_path[$pyver]:-}" ]] && [[ -x "$pypath" ]]; then
+                            version_to_path[$pyver]="$pypath"
+                            all_versions+=("$pyver")
+                        fi
+                    fi
+                done < <(py --list-paths 2>/dev/null || true)
+            fi
             ;;
         *)
             while IFS= read -r pypath; do
@@ -478,12 +495,12 @@ _phase_3_deps() {
         echo "$(_yellow "El venv fue creado por uv. Se usará uv automáticamente.")"
         dep_choice=2
     else
-        echo "¿Cómo querés instalar las dependencias?"
+        echo "¿Cómo quieres instalar las dependencias?"
         echo ""
         echo "  [1] pip (requirements.txt)"
         echo "  [2] uv (pyproject.toml)"
         echo ""
-        echo -n "Elegí una opción [1/2]: "
+        echo -n "Elige una opción [1/2]: "
         [[ -t 0 ]] && read -r dep_choice || dep_choice="1"
     fi
 
@@ -561,7 +578,7 @@ _phase_4_postgres() {
         echo "$(_yellow "PostgreSQL está instalado pero no está corriendo o no es accesible.")"
         echo ""
         echo "El script intentó conectar por socket Unix y por TCP (localhost:5432)."
-        echo "Si usás un contenedor (Podman/Docker), asegurate de que esté corriendo y el puerto 5432 esté expuesto."
+        echo "Si usas un contenedor (Podman/Docker), asegúrate de que esté corriendo y el puerto 5432 esté expuesto."
         echo ""
         echo "Para iniciar PostgreSQL:"
         echo ""
@@ -630,7 +647,7 @@ _phase_5_env() {
         secret_key=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())" 2>/dev/null || true)
         if [[ -z "$secret_key" ]]; then
             echo "$(_yellow "No se pudo generar SECRET_KEY automáticamente.")"
-            echo -n "Ingresá una SECRET_KEY manualmente (o Enter para usar 'changeme'): "
+            echo -n "Ingresa una SECRET_KEY manualmente (o Enter para usar 'changeme'): "
             [[ -t 0 ]] && read -r secret_key || secret_key="changeme"
             secret_key="${secret_key:-changeme}"
         fi
@@ -652,7 +669,7 @@ _phase_5_env() {
 
     if [[ -f ".env" ]] && grep -qE '^DATABASE_URL=.+' .env 2>/dev/null; then
         echo "DATABASE_URL actual: $(grep '^DATABASE_URL=' .env | cut -d'=' -f2-)"
-        echo -n "¿Querés reconfigurar la base de datos? [y/N]: "
+        echo -n "¿Quieres reconfigurar la base de datos? [y/N]: "
         [[ -t 0 ]] && read -r reconfig || reconfig="n"
         if [[ ! "$reconfig" =~ ^[sSyY] ]]; then
             echo "Manteniendo configuración actual."
@@ -697,7 +714,7 @@ _phase_5_env() {
             _log "$(_green "Base de datos '${db_name}' creada.")"
         else
             echo "$(_red "No se pudo crear la base de datos.")"
-            echo "Podés crearla manualmente:"
+            echo "Puedes crearla manualmente:"
             echo "  psql -h $db_host -p $db_port -U $db_user -c \"CREATE DATABASE ${db_name};\""
             echo ""
             echo -n "¿Continuar de todas formas? [s/N]: "

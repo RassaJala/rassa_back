@@ -5,7 +5,7 @@
 # .env (SECRET_KEY + DATABASE_URL) → migrate → seed → verify.
 #
 # Plataforma: Windows (PowerShell 5.1+ / PowerShell Core 7+)
-# En Linux/macOS/Git-Bash usá: bash setup.sh
+# En Linux/macOS/Git-Bash usa: bash setup.sh
 #
 # Uso:
 #   .\setup.ps1           # Ejecución completa (salta fases ya completadas)
@@ -58,7 +58,7 @@ Opciones:
 Sin opciones, el script ejecuta solo las fases que no se hayan completado
 anteriormente (según .setup_state).
 
-En Linux/macOS/Git-Bash usá: bash setup.sh
+En Linux/macOS/Git-Bash usa: bash setup.sh
 
 Log: setup.log
 "@
@@ -120,6 +120,19 @@ function Invoke-Phase1Python {
         $paths = @()
     }
 
+    # Fallback: Python Launcher (py.exe) — encuentra instalaciones fuera del PATH
+    try {
+        $pyList = & py --list-paths 2>&1
+        foreach ($line in $pyList) {
+            if ($line -match '^\s*[-*]\s+(\d+\.\d+)-\d+\s+(.+)$') {
+                $pyPath = $Matches[2].TrimEnd(' *')
+                if (Test-Path $pyPath -and $pyPath -notin $paths) {
+                    $paths += $pyPath
+                }
+            }
+        }
+    } catch {}
+
     foreach ($pypath in $paths) {
         if (-not $pypath) { continue }
         try {
@@ -160,7 +173,7 @@ function Invoke-Phase1Python {
     Write-Host ""
 
     while ($true) {
-        $answer = Read-Host "Elegí una opción [1-$($compatible.Count)]"
+        $answer = Read-Host "Elige una opción [1-$($compatible.Count)]"
         try {
             $idx = [int]$answer - 1
             if ($idx -ge 0 -and $idx -lt $compatible.Count) {
@@ -293,14 +306,13 @@ function Invoke-Phase3Deps {
         Write-Yellow "El venv fue creado por uv. Se usará uv automáticamente."
         $depChoice = "2"
     } else {
-        Write-Host "¿Cómo querés instalar las dependencias?"
+        Write-Host "¿Cómo quieres instalar las dependencias?"
         Write-Host ""
         Write-Host "  [1] pip (requirements.txt)"
         Write-Host "  [2] uv (pyproject.toml)"
         Write-Host ""
-
         while ($true) {
-            $depChoice = Read-Host "Elegí una opción [1/2]"
+            $depChoice = Read-Host "Elige una opción [1/2]"
             if ($depChoice -eq '1' -or $depChoice -eq '2') { break }
             Write-Host "Opción no válida."
         }
@@ -399,7 +411,7 @@ function Show-PostgresInstallGuide {
     Write-Host "Para instalar PostgreSQL:"
     Write-Host ""
     Write-Host "  Descargá el instalador oficial: https://www.postgresql.org/download/windows/"
-    Write-Host "  Durante la instalación, anotá el puerto (default: 5432) y la contraseña de postgres."
+    Write-Host "  Durante la instalación, anota el puerto (default: 5432) y la contraseña de postgres."
     Write-Host ""
 }
 
@@ -451,7 +463,7 @@ function Invoke-Phase5Env {
         $envContent = Get-Content .env -Raw
         if ($envContent -match '^DATABASE_URL=(.+)') {
             Write-Host "DATABASE_URL actual: $($Matches[1])"
-            $reconfig = Read-Host "¿Querés reconfigurar la base de datos? [y/N]"
+            $reconfig = Read-Host "¿Quieres reconfigurar la base de datos? [y/N]"
             if ($reconfig -notmatch '^[sSyY]') {
                 Write-Host "Manteniendo configuración actual."
                 Write-EnvFile -SecretKey $secretKey
@@ -496,7 +508,7 @@ function Invoke-Phase5Env {
                 Write-Green "Base de datos '$dbName' creada."
             } else {
                 Write-Red "No se pudo crear la base de datos."
-                Write-Host "Podés crearla manualmente:"
+                Write-Host "Puedes crearla manualmente:"
                 Write-Host "  psql -h $dbHost -p $dbPort -U $dbUser -c `"CREATE DATABASE $dbName;`""
             }
         }
@@ -569,7 +581,7 @@ function Invoke-Phase6Migrate {
     python manage.py migrate --noinput 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Red "Falló la migración. Revisá la conexión a la base de datos en .env"
+        Write-Red "Falló la migración. Revisa la conexión a la base de datos en .env"
         return $false
     }
 

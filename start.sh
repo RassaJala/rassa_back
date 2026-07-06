@@ -168,7 +168,7 @@ _check_postgres() {
     _red "✗ No se pudo conectar a PostgreSQL"
     echo "  Verifica DATABASE_URL en .env"
     echo "  Verifica que PostgreSQL esté corriendo (nativo o contenedor)"
-    echo "  Si usás contenedor: podman ps | grep postgres"
+    echo "  Si usas contenedor: podman ps | grep postgres"
     echo ""
     exit 1
 }
