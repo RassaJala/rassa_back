@@ -12,8 +12,8 @@ Variables requeridas:
     - CORS_ALLOWED_ORIGINS: Orígenes CORS permitidos (separados por coma).
 """
 
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
 
 import dj_database_url
 from decouple import Csv, config

@@ -13,13 +13,13 @@ from django.test import RequestFactory, TestCase
 from rassa.models import Persona, Rol, Usuario
 from rassa.permissions.role_permissions import (
     HasRole,
-    IsOwnerOrAdmin,
     IsAdmin,
-    IsAgricultor,
-    IsVendedor,
-    IsCliente,
     IsAdminOrAgricultor,
     IsAdminOrVendedor,
+    IsAgricultor,
+    IsCliente,
+    IsOwnerOrAdmin,
+    IsVendedor,
 )
 
 
