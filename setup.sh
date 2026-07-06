@@ -494,7 +494,7 @@ _phase_3_deps() {
                 pip install uv
             fi
             _log "Instalando dependencias con uv..."
-            if ! uv sync 2>&1; then
+            if ! uv sync --dev 2>&1; then
                 echo "$(_red "Falló la instalación con uv.")"
                 return 1
             fi
@@ -508,6 +508,14 @@ _phase_3_deps() {
             if ! pip install -r requirements.txt 2>&1; then
                 echo "$(_red "Falló la instalación de dependencias.")"
                 return 1
+            fi
+            # Instalar dependencias de desarrollo si existen
+            if [[ -f "requirements-dev.txt" ]]; then
+                _log "Instalando dependencias de desarrollo..."
+                if ! pip install -r requirements-dev.txt 2>&1; then
+                    echo "$(_red "Falló la instalación de dependencias de desarrollo.")"
+                    return 1
+                fi
             fi
             ;;
     esac
@@ -537,19 +545,41 @@ _phase_4_postgres() {
         return 1
     fi
 
-    if ! pg_isready -q 2>/dev/null; then
-        echo "$(_yellow "PostgreSQL está instalado pero no está corriendo.")"
+    # Try Unix socket first, then TCP (container / remote)
+    local pg_ok=false
+    local pg_via=""
+
+    if pg_isready -q 2>/dev/null; then
+        pg_ok=true
+        pg_via="Unix socket"
+    elif pg_isready -h localhost -q 2>/dev/null; then
+        pg_ok=true
+        pg_via="TCP (localhost:5432)"
+    fi
+
+    if [[ "$pg_ok" != "true" ]]; then
+        echo "$(_yellow "PostgreSQL está instalado pero no está corriendo o no es accesible.")"
+        echo ""
+        echo "El script intentó conectar por socket Unix y por TCP (localhost:5432)."
+        echo "Si usás un contenedor (Podman/Docker), asegurate de que esté corriendo y el puerto 5432 esté expuesto."
+        echo ""
+        echo "Para iniciar PostgreSQL:"
         echo ""
         case "$os_name" in
-            linux)           echo "Iniciá PostgreSQL con: sudo systemctl start postgresql" ;;
-            macos)           echo "Iniciá PostgreSQL con: brew services start postgresql@16" ;;
-            windows-gitbash) echo "Iniciá PostgreSQL desde Services o: net start postgresql-x64-16" ;;
-            windows-wsl)     echo "Iniciá PostgreSQL con: sudo service postgresql start" ;;
+            linux)
+                if command -v dnf &>/dev/null || command -v apt &>/dev/null; then
+                    echo "  sudo systemctl start postgresql"
+                fi
+                ;;
+            macos)           echo "  brew services start postgresql@16" ;;
+            windows-gitbash) echo "  net start postgresql-x64-16  (desde Services)" ;;
+            windows-wsl)     echo "  sudo service postgresql start" ;;
         esac
+        echo ""
         return 1
     fi
 
-    _log "$(_green "PostgreSQL está corriendo.")"
+    _log "$(_green "PostgreSQL está corriendo (${pg_via}).")"
 }
 
 _show_postgres_install_guide() {
@@ -559,7 +589,17 @@ _show_postgres_install_guide() {
     echo ""
     case "$os_name" in
         linux|windows-wsl)
-            echo "  sudo apt update && sudo apt install -y postgresql postgresql-client" ;;
+            if command -v dnf &>/dev/null; then
+                echo "  sudo dnf install postgresql-server postgresql"
+                echo "  sudo postgresql-setup --initdb"
+                echo "  sudo systemctl start postgresql"
+            elif command -v apt &>/dev/null; then
+                echo "  sudo apt update && sudo apt install -y postgresql postgresql-client"
+                echo "  sudo systemctl start postgresql"
+            else
+                echo "  Visitá https://www.postgresql.org/download/"
+            fi
+            ;;
         macos)
             echo "  brew install postgresql@16" ;;
         *)
