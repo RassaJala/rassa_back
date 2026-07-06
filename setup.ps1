@@ -155,7 +155,7 @@ function Invoke-Phase1Python {
     Write-Host ("Se encontraron {0} versiones de Python compatibles:" -f $compatible.Count)
     Write-Host ""
     for ($i = 0; $i -lt $compatible.Count; $i++) {
-        Write-Host ("  [{0}] Python {1} — {2}" -f ($i + 1), $compatible[$i].Version, $compatible[$i].Path)
+        Write-Host ("  [{0}] Python {1} -> {2}" -f ($i + 1), $compatible[$i].Version, $compatible[$i].Path)
     }
     Write-Host ""
 
@@ -331,6 +331,15 @@ function Invoke-Phase3Deps {
         }
     }
 
+    # Dependencias de desarrollo
+    if (Test-Path "requirements-dev.txt") {
+        Write-Host "Instalando dependencias de desarrollo..."
+        pip install -r requirements-dev.txt 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Yellow "⚠ Algunas dependencias de desarrollo fallaron (no bloqueante)"
+        }
+    }
+
     Write-Host ""
     Write-Green "Dependencias instaladas exitosamente."
     return $true
@@ -366,6 +375,10 @@ function Invoke-Phase4Postgres {
 
     try {
         $pgReady = & pg_isready -q 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Yellow "Intentando conexión TCP a localhost..."
+            $pgReady = & pg_isready -h localhost -q 2>$null
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Yellow "PostgreSQL está instalado pero no está corriendo."
             Write-Host ""
