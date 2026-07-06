@@ -167,10 +167,18 @@ _check_postgres() {
 # Extraer traceback de un test específico
 _extract_traceback() {
     local tmp_file="$1"
-    local line_num="$2"
-    sed -n "$((line_num+1)),\$p" "$tmp_file" \
-        | sed '/^---/q' | sed '/^FAIL:/q' | sed '/^ERROR:/q' | sed '/^Ran /q' \
-        | head -30
+    local test_name="$2"
+
+    # Para pytest, el traceback aparece antes de la línea FAILED/ERROR
+    # Buscamos el bloque que contiene el nombre del test
+    local test_file
+    test_file=$(echo "$test_name" | grep -oE '[^:]+\.py' | head -1 || true)
+
+    if [[ -n "$test_file" ]]; then
+        # Buscar el bloque de traceback para este archivo
+        awk "/^_{3,}.*$(basename "$test_file" .py)/,/^_{3,}/" "$tmp_file" \
+            | head -30
+    fi
 }
 
 # Clasificar tipo de error y dar explicación
@@ -275,8 +283,10 @@ _process_failed_test() {
     local fail_num="$4"
     local is_grave="${5:-false}"
 
+    # Parsear formato pytest: "FAILED rassa/tests/test_file.py::test_name - AssertionError"
+    # o "ERROR rassa/tests/test_file.py::test_name"
     local test_name
-    test_name=$(echo "$line_content" | sed 's/^[^:]*: //')
+    test_name=$(echo "$line_content" | sed 's/^FAILED //' | sed 's/^ERROR //' | sed 's/ - .*//')
 
     if [[ "$is_grave" == "true" ]]; then
         _red "  ━━━ ERROR GRAVE #${fail_num} ━━━━━━━━━━━━━━━━━━━━━━━"
@@ -291,7 +301,7 @@ _process_failed_test() {
     echo ""
 
     local traceback
-    traceback=$(_extract_traceback "$tmp_file" "$line_num")
+    traceback=$(_extract_traceback "$tmp_file" "$test_name")
 
     if [[ -n "$traceback" ]]; then
         _cyan "    ¿Qué falló?"
@@ -352,12 +362,21 @@ _run_tests() {
 
     echo ""
 
-    # Extraer total de tests
+    # Extraer total de tests (formato pytest)
     local total=0
-    local ran_line
-    ran_line=$(grep "Ran " "$tmp_output" | tail -1 || true)
-    if [[ -n "$ran_line" ]]; then
-        total=$(echo "$ran_line" | grep -oE 'Ran [0-9]+' | grep -oE '[0-9]+' || echo "0")
+    local passed=0
+    local failed=0
+    local errors=0
+
+    # Buscar línea de resumen: "5 passed, 2 failed in 0.5s" o similar
+    local summary_line
+    summary_line=$(grep -E "=+ .* in [0-9.]+s =+" "$tmp_output" | tail -1 || true)
+
+    if [[ -n "$summary_line" ]]; then
+        passed=$(echo "$summary_line" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
+        failed=$(echo "$summary_line" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
+        errors=$(echo "$summary_line" | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' || echo "0")
+        total=$((passed + failed + errors))
     fi
 
     # ============================================================
@@ -378,8 +397,10 @@ _run_tests() {
     # ============================================================
 
     local failed_count error_count
-    failed_count=$(grep -cE "^FAIL:" "$tmp_output" 2>/dev/null || echo "0")
-    error_count=$(grep -cE "^ERROR:" "$tmp_output" 2>/dev/null || echo "0")
+    failed_count=$(grep -cE "^FAILED" "$tmp_output" 2>/dev/null || true)
+    error_count=$(grep -cE "^ERROR" "$tmp_output" 2>/dev/null || true)
+    failed_count=${failed_count:-0}
+    error_count=${error_count:-0}
 
     echo ""
     _red "╔══════════════════════════════════════════════════════════════╗"
@@ -413,17 +434,21 @@ _run_tests() {
         local fail_num=0
 
         # Procesar FAILs y ERRORs juntos (process substitution para evitar subshell)
-        while IFS=: read -r line_num line_content; do
+        while IFS= read -r line; do
             fail_num=$((fail_num + 1))
+            line_num="${line%%:*}"
+            line_content="${line#*:}"
             _process_failed_test "$tmp_output" "$line_num" "$line_content" "$fail_num" "false"
-        done < <(grep -nE "^(FAIL|ERROR):" "$tmp_output" 2>/dev/null || true)
+        done < <(grep -nE "^FAILED|^ERROR" "$tmp_output" 2>/dev/null || true)
 
         # Marcar errores graves
         if [[ "$error_count" -gt 0 ]]; then
-            while IFS=: read -r line_num line_content; do
+            while IFS= read -r line; do
                 fail_num=$((fail_num + 1))
+                line_num="${line%%:*}"
+                line_content="${line#*:}"
                 _process_failed_test "$tmp_output" "$line_num" "$line_content" "$fail_num" "true"
-            done < <(grep -nE "^ERROR:" "$tmp_output" 2>/dev/null || true)
+            done < <(grep -nE "^ERROR" "$tmp_output" 2>/dev/null || true)
         fi
     fi
 

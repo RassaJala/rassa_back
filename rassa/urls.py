@@ -8,9 +8,16 @@ Endpoints disponibles:
 
 from django.contrib import admin
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from rassa.auth_views import CustomTokenObtainPairView
+from rassa.auth_serializers import CustomTokenObtainPairSerializer
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """Login with Spanish error messages."""
+
+    serializer_class = CustomTokenObtainPairSerializer
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),

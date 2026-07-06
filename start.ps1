@@ -190,16 +190,29 @@ function Invoke-Tests {
 
             Write-Host ""
 
-            # Contar resultados
+            # Contar resultados (formato pytest)
             $total = 0
+            $passedCount = 0
             $failedCount = 0
             $errorCount = 0
 
-            if ($testOutput -match "Ran (\d+)") {
-                $total = [int]$Matches[1]
+            # Buscar línea de resumen: "5 passed, 2 failed in 0.5s" o similar
+            if ($testOutput -match "=+ .* in [0-9.]+s =+") {
+                if ($testOutput -match "(\d+) passed") {
+                    $passedCount = [int]$Matches[1]
+                }
+                if ($testOutput -match "(\d+) failed") {
+                    $failedCount = [int]$Matches[1]
+                }
+                if ($testOutput -match "(\d+) error") {
+                    $errorCount = [int]$Matches[1]
+                }
+                $total = $passedCount + $failedCount + $errorCount
             }
-            $failedCount = ([regex]::Matches($testOutput, "(?m)^FAIL:")).Count
-            $errorCount = ([regex]::Matches($testOutput, "(?m)^ERROR:")).Count
+
+            # Contar líneas FAILED y ERROR (formato pytest)
+            $failedCount = ([regex]::Matches($testOutput, "(?m)^FAILED ")).Count
+            $errorCount = ([regex]::Matches($testOutput, "(?m)^ERROR ")).Count
 
             # ============================================================
             # SI TODO PASÓ
@@ -255,10 +268,11 @@ function Invoke-Tests {
                 for ($i = 0; $i -lt $lines.Count; $i++) {
                     $line = $lines[$i]
 
-                    if ($line -match "^(FAIL|ERROR):") {
+                    if ($line -match "^(FAILED|ERROR) ") {
                         $failNum++
-                        $testName = $line -replace "^(FAIL|ERROR): ", ""
-                        $isError = $line -match "^ERROR:"
+                        # Parsear formato pytest: "FAILED rassa/tests/test_file.py::test_name - AssertionError"
+                        $testName = $line -replace "^(FAILED|ERROR) ", "" -replace " - .*", ""
+                        $isError = $line -match "^ERROR "
 
                         if ($isError) {
                             Write-Red "  ━━━ ERROR GRAVE #$failNum ━━━━━━━━━━━━━━━━━━━━━━━"
@@ -273,12 +287,20 @@ function Invoke-Tests {
                         }
                         Write-Host ""
 
-                        # Extraer traceback
+                        # Extraer traceback (buscar bloque antes de esta línea)
                         $traceback = @()
-                        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+                        $testFile = ($testName -split "::")[0] -replace "\.", "/" -replace "$", ".py"
+
+                        # Buscar el bloque de traceback que contiene el archivo
+                        for ($j = [Math]::Max(0, $i - 30); $j -lt $i; $j++) {
                             $tl = $lines[$j]
-                            if ($tl -match "^(FAIL|ERROR):" -or $tl -match "^Ran " -or $tl -match "^---") { break }
-                            $traceback += $tl
+                            if ($tl -match "^_{3,}" -and $j -gt 0) {
+                                # Inicio de un bloque de traceback
+                                for ($k = $j; $k -lt $i; $k++) {
+                                    $traceback += $lines[$k]
+                                }
+                                break
+                            }
                         }
 
                         if ($traceback.Count -gt 0) {

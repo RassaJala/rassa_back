@@ -1,8 +1,7 @@
 """Tests unitarios para permisos RBAC (Role-Based Access Control).
 
-Verifica que cada permiso (IsAdmin, IsAgricultor, IsVendedor, IsCliente,
-IsAdminOrAgricultor, IsAdminOrVendedor, IsOwnerOrAdmin) correctamente
-bloquea o permite acceso según el rol del usuario autenticado.
+Verifica que HasRole correctly bloquea o permite acceso según el rol
+del usuario autenticado, y que los aliases backward-compatible funcionan.
 
 Uso:
     python manage.py test rassa.tests.test_role_permissions
@@ -13,22 +12,19 @@ from django.test import RequestFactory, TestCase
 
 from rassa.models import Persona, Rol, Usuario
 from rassa.permissions.role_permissions import (
+    HasRole,
+    IsOwnerOrAdmin,
     IsAdmin,
+    IsAgricultor,
+    IsVendedor,
+    IsCliente,
     IsAdminOrAgricultor,
     IsAdminOrVendedor,
-    IsAgricultor,
-    IsCliente,
-    IsOwnerOrAdmin,
-    IsVendedor,
 )
 
 
 def _make_request(user=None):
-    """Crea un request mock con el usuario dado.
-
-    Si user es None, crea un request con AnonymousUser.
-    Si user es un User real de Django, is_authenticated es True por defecto.
-    """
+    """Crea un request mock con el usuario dado."""
     factory = RequestFactory()
     request = factory.get("/test/")
     if user is None:
@@ -66,153 +62,83 @@ def _make_user_with_rol(nombre_rol, email="test@rassa.com"):
     return user, usuario
 
 
-class IsAdminTest(TestCase):
-    """Tests para el permiso IsAdmin."""
+class HasRoleTest(TestCase):
+    """Tests para el permiso genérico HasRole."""
 
-    def test_admin_accesa(self):
+    def test_single_role_match(self):
         user, _ = _make_user_with_rol("Administrador")
-        perm = IsAdmin()
+        perm = HasRole("Administrador")
         request = _make_request(user)
         self.assertTrue(perm.has_permission(request, None))
 
-    def test_agricultor_rechazado(self):
+    def test_single_role_no_match(self):
         user, _ = _make_user_with_rol("Agricultor")
-        perm = IsAdmin()
+        perm = HasRole("Administrador")
         request = _make_request(user)
         self.assertFalse(perm.has_permission(request, None))
 
-    def test_vendedor_rechazado(self):
+    def test_multi_role_match_first(self):
+        user, _ = _make_user_with_rol("Administrador")
+        perm = HasRole("Administrador", "Agricultor")
+        request = _make_request(user)
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_multi_role_match_second(self):
+        user, _ = _make_user_with_rol("Agricultor")
+        perm = HasRole("Administrador", "Agricultor")
+        request = _make_request(user)
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_multi_role_no_match(self):
         user, _ = _make_user_with_rol("Vendedor")
-        perm = IsAdmin()
+        perm = HasRole("Administrador", "Agricultor")
         request = _make_request(user)
         self.assertFalse(perm.has_permission(request, None))
 
-    def test_cliente_rechazado(self):
-        user, _ = _make_user_with_rol("Cliente")
-        perm = IsAdmin()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-    def test_usuario_no_autenticado(self):
-        perm = IsAdmin()
+    def test_unauthenticated(self):
+        perm = HasRole("Administrador")
         request = _make_request(None)
         self.assertFalse(perm.has_permission(request, None))
 
 
-class IsAgricultorTest(TestCase):
-    """Tests para el permiso IsAgricultor."""
+class BackwardCompatAliasesTest(TestCase):
+    """Verifica que los aliases IsAdmin, IsAgricultor, etc. siguen funcionando."""
 
-    def test_agricultor_accesa(self):
-        user, _ = _make_user_with_rol("Agricultor")
-        perm = IsAgricultor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_admin_rechazado(self):
+    def test_admin_alias(self):
         user, _ = _make_user_with_rol("Administrador")
-        perm = IsAgricultor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
+        self.assertTrue(IsAdmin.has_permission(_make_request(user), None))
 
-    def test_vendedor_rechazado(self):
-        user, _ = _make_user_with_rol("Vendedor")
-        perm = IsAgricultor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-
-class IsVendedorTest(TestCase):
-    """Tests para el permiso IsVendedor."""
-
-    def test_vendedor_accesa(self):
-        user, _ = _make_user_with_rol("Vendedor")
-        perm = IsVendedor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_admin_rechazado(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = IsVendedor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-    def test_agricultor_rechazado(self):
+    def test_admin_alias_rejects_other(self):
         user, _ = _make_user_with_rol("Agricultor")
-        perm = IsVendedor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
+        self.assertFalse(IsAdmin.has_permission(_make_request(user), None))
 
+    def test_agricultor_alias(self):
+        user, _ = _make_user_with_rol("Agricultor")
+        self.assertTrue(IsAgricultor.has_permission(_make_request(user), None))
 
-class IsClienteTest(TestCase):
-    """Tests para el permiso IsCliente."""
+    def test_vendedor_alias(self):
+        user, _ = _make_user_with_rol("Vendedor")
+        self.assertTrue(IsVendedor.has_permission(_make_request(user), None))
 
-    def test_cliente_accesa(self):
+    def test_cliente_alias(self):
         user, _ = _make_user_with_rol("Cliente")
-        perm = IsCliente()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
+        self.assertTrue(IsCliente.has_permission(_make_request(user), None))
 
-    def test_admin_rechazado(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = IsCliente()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
+    def test_admin_or_agricultor_alias(self):
+        user1, _ = _make_user_with_rol("Administrador", "admin@rassa.com")
+        user2, _ = _make_user_with_rol("Agricultor", "agri@rassa.com")
+        user3, _ = _make_user_with_rol("Vendedor", "vend@rassa.com")
+        self.assertTrue(IsAdminOrAgricultor.has_permission(_make_request(user1), None))
+        self.assertTrue(IsAdminOrAgricultor.has_permission(_make_request(user2), None))
+        self.assertFalse(IsAdminOrAgricultor.has_permission(_make_request(user3), None))
 
-
-class IsAdminOrAgricultorTest(TestCase):
-    """Tests para el permiso combinado IsAdminOrAgricultor."""
-
-    def test_admin_accesa(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = IsAdminOrAgricultor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_agricultor_accesa(self):
-        user, _ = _make_user_with_rol("Agricultor")
-        perm = IsAdminOrAgricultor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_vendedor_rechazado(self):
-        user, _ = _make_user_with_rol("Vendedor")
-        perm = IsAdminOrAgricultor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-    def test_cliente_rechazado(self):
-        user, _ = _make_user_with_rol("Cliente")
-        perm = IsAdminOrAgricultor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-
-class IsAdminOrVendedorTest(TestCase):
-    """Tests para el permiso combinado IsAdminOrVendedor."""
-
-    def test_admin_accesa(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = IsAdminOrVendedor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_vendedor_accesa(self):
-        user, _ = _make_user_with_rol("Vendedor")
-        perm = IsAdminOrVendedor()
-        request = _make_request(user)
-        self.assertTrue(perm.has_permission(request, None))
-
-    def test_agricultor_rechazado(self):
-        user, _ = _make_user_with_rol("Agricultor")
-        perm = IsAdminOrVendedor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
-
-    def test_cliente_rechazado(self):
-        user, _ = _make_user_with_rol("Cliente")
-        perm = IsAdminOrVendedor()
-        request = _make_request(user)
-        self.assertFalse(perm.has_permission(request, None))
+    def test_admin_or_vendedor_alias(self):
+        user1, _ = _make_user_with_rol("Administrador", "admin2@rassa.com")
+        user2, _ = _make_user_with_rol("Vendedor", "vend2@rassa.com")
+        user3, _ = _make_user_with_rol("Agricultor", "agri2@rassa.com")
+        self.assertTrue(IsAdminOrVendedor.has_permission(_make_request(user1), None))
+        self.assertTrue(IsAdminOrVendedor.has_permission(_make_request(user2), None))
+        self.assertFalse(IsAdminOrVendedor.has_permission(_make_request(user3), None))
 
 
 class IsOwnerOrAdminTest(TestCase):
