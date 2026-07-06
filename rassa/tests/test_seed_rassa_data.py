@@ -12,15 +12,10 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from rassa.models import (
-    CategoriaProducto,
-    Corte,
     DetallePedido,
-    EstadoPedido,
     PedidoCabecera,
-    Persona,
     Producto,
     Rol,
-    Unidad,
     Usuario,
 )
 

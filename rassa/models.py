@@ -125,9 +125,7 @@ class Localidad(models.Model):
 
     id_localidad = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=150)
-    fk_municipio = models.ForeignKey(
-        Municipio, on_delete=models.CASCADE, db_column="fk_municipio"
-    )
+    fk_municipio = models.ForeignKey(Municipio, on_delete=models.CASCADE, db_column="fk_municipio")
 
     class Meta:
         db_table = "localidad"
@@ -192,9 +190,7 @@ class Usuario(models.Model):
         null=True,
         blank=True,
     )
-    fk_persona = models.OneToOneField(
-        Persona, on_delete=models.CASCADE, db_column="fk_persona"
-    )
+    fk_persona = models.OneToOneField(Persona, on_delete=models.CASCADE, db_column="fk_persona")
     telefono = models.CharField(max_length=15)
     correo = models.CharField(max_length=150, unique=True)
     fk_rol = models.ForeignKey(Rol, on_delete=models.PROTECT, db_column="fk_rol")
@@ -242,12 +238,8 @@ class FamiliaUsuario(models.Model):
     """Relación entre un usuario y su familia."""
 
     id_familia_usuario = models.AutoField(primary_key=True)
-    fk_usuario = models.OneToOneField(
-        Usuario, on_delete=models.CASCADE, db_column="fk_usuario"
-    )
-    fk_familia = models.ForeignKey(
-        Familia, on_delete=models.CASCADE, db_column="fk_familia"
-    )
+    fk_usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
+    fk_familia = models.ForeignKey(Familia, on_delete=models.CASCADE, db_column="fk_familia")
     estado = models.BooleanField(default=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -268,9 +260,7 @@ class LimiteCliente(models.Model):
     """Límite de crédito asignado a un cliente."""
 
     id_limite = models.AutoField(primary_key=True)
-    fk_usuario = models.OneToOneField(
-        Usuario, on_delete=models.CASCADE, db_column="fk_usuario"
-    )
+    fk_usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -292,9 +282,7 @@ class Producto(models.Model):
 
     id_producto = models.AutoField(primary_key=True)
     nombre_producto = models.CharField(max_length=150)
-    fk_categoria = models.ForeignKey(
-        CategoriaProducto, on_delete=models.CASCADE, db_column="fk_categoria"
-    )
+    fk_categoria = models.ForeignKey(CategoriaProducto, on_delete=models.CASCADE, db_column="fk_categoria")
     es_perecedero = models.BooleanField(default=False)
     estado = models.BooleanField(default=True)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -353,15 +341,9 @@ class ProductoSemanal(models.Model):
     ]
 
     id_producto_semanal = models.AutoField(primary_key=True)
-    fk_publicacion = models.ForeignKey(
-        PublicacionSemanal, on_delete=models.CASCADE, db_column="fk_publicacion"
-    )
-    fk_producto = models.ForeignKey(
-        Producto, on_delete=models.CASCADE, db_column="fk_producto"
-    )
-    fk_unidad = models.ForeignKey(
-        Unidad, on_delete=models.PROTECT, db_column="fk_unidad"
-    )
+    fk_publicacion = models.ForeignKey(PublicacionSemanal, on_delete=models.CASCADE, db_column="fk_publicacion")
+    fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
+    fk_unidad = models.ForeignKey(Unidad, on_delete=models.PROTECT, db_column="fk_unidad")
     stock = models.PositiveIntegerField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
     foto = models.TextField(blank=True, null=True)
@@ -430,12 +412,8 @@ class DetallePedido(models.Model):
     """Detalle de un pedido (línea de producto con cantidad e importe)."""
 
     id_detalle = models.AutoField(primary_key=True)
-    fk_pedido = models.ForeignKey(
-        PedidoCabecera, on_delete=models.CASCADE, db_column="fk_pedido"
-    )
-    fk_producto_semanal = models.ForeignKey(
-        ProductoSemanal, on_delete=models.CASCADE, db_column="fk_producto_semanal"
-    )
+    fk_pedido = models.ForeignKey(PedidoCabecera, on_delete=models.CASCADE, db_column="fk_pedido")
+    fk_producto_semanal = models.ForeignKey(ProductoSemanal, on_delete=models.CASCADE, db_column="fk_producto_semanal")
     nombre_producto = models.CharField(max_length=150)
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     cantidad = models.PositiveIntegerField()
@@ -510,9 +488,7 @@ class Merma(models.Model):
     cantidad = models.PositiveIntegerField()
     motivo = models.CharField(max_length=300)
     comentarios = models.TextField(blank=True, null=True)
-    fk_decision = models.ForeignKey(
-        DecisionMerma, on_delete=models.PROTECT, db_column="fk_decision"
-    )
+    fk_decision = models.ForeignKey(DecisionMerma, on_delete=models.PROTECT, db_column="fk_decision")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -567,9 +543,7 @@ class Log(models.Model):
     """Registro de auditoría de acciones en el sistema."""
 
     id_log = models.AutoField(primary_key=True)
-    fk_usuario = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, db_column="fk_usuario"
-    )
+    fk_usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, db_column="fk_usuario")
     descripcion = models.TextField()
     ip = models.GenericIPAddressField()
     dispositivo = models.CharField(max_length=200)
@@ -611,12 +585,8 @@ class Integrante(models.Model):
     """Miembro participante en una conversación."""
 
     id_miembro = models.AutoField(primary_key=True)
-    fk_usuario = models.ForeignKey(
-        Usuario, on_delete=models.CASCADE, db_column="fk_usuario"
-    )
-    fk_conversacion = models.ForeignKey(
-        Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion"
-    )
+    fk_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
+    fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -638,12 +608,8 @@ class Mensaje(models.Model):
     """Mensaje enviado dentro de una conversación."""
 
     id_mensaje = models.AutoField(primary_key=True)
-    fk_emisor = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_emisor"
-    )
-    fk_conversacion = models.ForeignKey(
-        Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion"
-    )
+    fk_emisor = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_emisor")
+    fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     contenido = models.TextField(blank=True, null=True)
     leido = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -667,9 +633,7 @@ class Documento(models.Model):
     ]
 
     id_documento = models.AutoField(primary_key=True)
-    fk_usuario = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_usuario"
-    )
+    fk_usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_usuario")
     nombre_documento = models.CharField(max_length=100)
     url_documento = models.TextField()
     tipo_documento = models.CharField(max_length=50, choices=TIPO_CHOICES)
@@ -688,12 +652,8 @@ class MensajeDocumento(models.Model):
     """Relación entre un mensaje y un documento adjunto."""
 
     id_mensaje_documento = models.AutoField(primary_key=True)
-    fk_mensaje = models.ForeignKey(
-        Mensaje, on_delete=models.CASCADE, db_column="fk_mensaje"
-    )
-    fk_documento = models.ForeignKey(
-        Documento, on_delete=models.CASCADE, db_column="fk_documento"
-    )
+    fk_mensaje = models.ForeignKey(Mensaje, on_delete=models.CASCADE, db_column="fk_mensaje")
+    fk_documento = models.ForeignKey(Documento, on_delete=models.CASCADE, db_column="fk_documento")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -720,9 +680,7 @@ class ProductoImagen(models.Model):
     """Imagen de un producto del catálogo."""
 
     id_imagen = models.AutoField(primary_key=True)
-    fk_producto = models.ForeignKey(
-        Producto, on_delete=models.CASCADE, db_column="fk_producto"
-    )
+    fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
     url = models.TextField()
     es_principal = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -752,9 +710,7 @@ class Recoleccion(models.Model):
     fecha_recoleccion = models.DateField()
     hora_inicio = models.TimeField(blank=True, null=True)
     hora_fin = models.TimeField(blank=True, null=True)
-    estado = models.CharField(
-        max_length=20, choices=ESTADO_CHOICES, default="pendiente"
-    )
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="pendiente")
     comentarios = models.TextField(blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -845,9 +801,7 @@ class Liquidacion(models.Model):
         blank=True,
         db_column="fk_pago_liquidacion",
     )
-    estado = models.CharField(
-        max_length=20, choices=ESTADO_CHOICES, default="pendiente"
-    )
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="pendiente")
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:

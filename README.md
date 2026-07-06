@@ -1,6 +1,6 @@
 # Rassa — Backend
 
-API REST para Rassa, una app mobile de e-commerce donde agricultores venden productos directamente.
+API REST para Rassa, una app móvil de e-commerce donde agricultores venden productos directamente.
 
 ## Stack
 
@@ -8,212 +8,128 @@ API REST para Rassa, una app mobile de e-commerce donde agricultores venden prod
 - **PostgreSQL**
 - **JWT Auth** (SimpleJWT)
 - Python 3.12+
-- [uv](https://docs.astral.sh/uv/) o pip para gestión de dependencias
 
 ## Requisitos
 
 - Python 3.12 o superior
 - PostgreSQL
 
-## Instalación
+## Inicio rápido
 
-### Opción rápida — Script interactivo
+### 1. Clonar y configurar
 
-Un solo comando. El script detecta tu sistema operativo y te guía paso a paso:
-
-| Plataforma               | Comando         |
-| ------------------------ | --------------- |
-| **Linux**                | `bash setup.sh` |
-| **macOS**                | `bash setup.sh` |
-| **Windows (Git Bash)**   | `bash setup.sh` |
-| **Windows (WSL)**        | `bash setup.sh` |
-| **Windows (PowerShell)** | `.\setup.ps1`   |
+**Linux / macOS / Git Bash / WSL:**
 
 ```bash
-git clone <repo-url>
-cd Rassaback
-bash setup.sh      # Linux / macOS / Windows (Git Bash / WSL)
-# .\setup.ps1      # Windows (PowerShell)
-```
-
-El script pregunta:
-
-1. Versión de Python a usar
-2. Gestor de dependencias (pip o uv)
-3. Configuración de PostgreSQL (host, puerto, DB, usuario, contraseña)
-4. Genera SECRET_KEY automáticamente
-5. Crea la base de datos si no existe
-6. Ejecuta migraciones y seeds
-
-### Instalación manual
-
-### 1. Clonar el repo
-
-**Opción A — Solo backend:**
-
-```bash
-gh repo clone ObedAlPa/rassa_back
+git clone https://github.com/ObedAlPa/rassa_back.git
 cd rassa_back
+bash setup.sh
 ```
 
-**Opción B — Monorepo (backend + frontend):**
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/ObedAlPa/rassa_back.git
+cd rassa_back
+.\setup.ps1
+```
+
+El script detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera SECRET_KEY, ejecuta migraciones y carga datos de prueba.
+
+### 2. Levantar el backend
+
+**Linux / macOS / Git Bash / WSL:**
 
 ```bash
-mkdir rassa-monorepo && cd rassa-monorepo
-gh repo clone ObedAlPa/rassa_back back
-gh repo clone ObedAlPa/rassa_front front
-cd back
+bash start.sh
 ```
 
-### 2. Instalar dependencias
+**Windows (PowerShell):**
 
-**Con uv:**
-
-```bash
-uv sync
+```powershell
+.\start.ps1
 ```
 
-**Con pip:**
+¿Qué hace? Ejecuta todos los tests automáticamente. Si pasan, levanta el servidor. Si fallan, muestra el error con explicación y NO levanta el servidor.
 
-```bash
-python -m venv venv
-source venv/bin/activate   # Linux / macOS / Git Bash
-# venv\Scripts\activate    # Windows CMD
-# .\venv\Scripts\Activate.ps1  # Windows PowerShell
-pip install -r requirements.txt
-```
+> **IMPORTANTE:** Usa siempre `start.sh` / `start.ps1` para levantar el backend. Si ejecutas `python manage.py runserver` directamente, no se corren los tests y puedes subir código con errores.
 
-**Dependencias de desarrollo (pylint + pylint-django):**
+## Comandos disponibles
 
-```bash
-# uv
-uv sync --all-extras
+| Acción | Linux / macOS / Git Bash | Windows (PowerShell) |
+| ------ | ------------------------ | -------------------- |
+| Levantar backend (tests + server) | `bash start.sh` | `.\start.ps1` |
+| Solo correr tests | `bash start.sh --test` | `.\start.ps1 -TestOnly` |
+| Tests con máximo detalle | `bash start.sh --verbose` | `.\start.ps1 -Verbose` |
+| Tests + máximo detalle | `bash start.sh --test --verbose` | `.\start.ps1 -TestOnly -Verbose` |
+| Saltar tests (emergencias) | `bash start.sh --skip` | `.\start.ps1 -Skip` |
+| Ejecutar migraciones | `python manage.py migrate` | `python manage.py migrate` |
+| Cargar datos de prueba | `python manage.py seed_rassa_data` | `python manage.py seed_rassa_data` |
+| Limpiar y recargar datos | `python manage.py seed_rassa_data --clear` | `python manage.py seed_rassa_data --clear` |
+| Shell de Django | `python manage.py shell` | `python manage.py shell` |
 
-# pip
-pip install -r requirements-dev.txt
-```
+## Variables de entorno
 
-### 3. Configurar PostgreSQL
+Se configuran en el archivo `.env` (creado por `setup.sh` / `setup.ps1`).
 
-Crear la base de datos (comando de sugerencia):
-
-```bash
-# Linux / macOS / Windows (PowerShell)
-psql -h localhost -U postgres -c "CREATE DATABASE rassa_jala_db;"
-```
-
-### 4. Configurar variables de entorno
-
-```bash
-cp .env.template .env
-```
-
-Editar `.env`:
-
-| Variable               | Descripción                  | Ejemplo                                                     |
-| ---------------------- | ---------------------------- | ----------------------------------------------------------- |
-| `SECRET_KEY`           | Clave secreta de Django      | Generar con el comando abajo                                |
-| `DATABASE_URL`         | URL de conexión a PostgreSQL | `postgres://postgres:password@localhost:5432/rassa_jala_db` |
-| `DEBUG`                | Modo debug                   | `True` en desarrollo                                        |
-| `ALLOWED_HOSTS`        | Hosts permitidos             | `localhost,127.0.0.1`                                       |
-| `CORS_ALLOWED_ORIGINS` | Orígenes CORS permitidos     | `http://localhost:8081,http://localhost:19006`              |
-
-Generar `SECRET_KEY`:
-
-```bash
-# uv
-uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-
-# pip
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-```
-
-### 5. Ejecutar migraciones y seeders
-
-```bash
-# uv
-uv run manage.py migrate
-uv run manage.py seed_rassa_data
-
-# pip
-python manage.py migrate
-python manage.py seed_rassa_data
-```
-
-### 6. Iniciar el servidor
-
-```bash
-# uv
-uv run manage.py runserver
-
-# pip
-python manage.py runserver
-```
-
-La API estará disponible en `http://localhost:8000/api/`.
-
-## Comandos útiles
-
-```bash
-# uv
-uv run python manage.py migrate
-uv run python manage.py seed_rassa_data
-uv run python manage.py seed_rassa_data --clear  # limpiar y recargar
-uv run python manage.py runserver
-uv run python manage.py shell
-uv run python manage.py test
-
-# pip (con venv activado)
-python manage.py migrate
-python manage.py seed_rassa_data
-python manage.py runserver
-python manage.py shell
-python manage.py test
-```
-
-## Documentación
-
-| Documento                                                    | Descripción                                        |
-| ------------------------------------------------------------ | -------------------------------------------------- |
-| [docs/ARQUITECTURA_MODULOS.md](docs/ARQUITECTURA_MODULOS.md) | Arquitectura por módulos, endpoints, permisos RBAC |
-| [docs/USUARIOS_PRUEBA.md](docs/USUARIOS_PRUEBA.md)           | Usuarios de prueba, credenciales, catálogos        |
+| Variable | Descripción | Ejemplo |
+| -------- | ----------- | ------- |
+| `SECRET_KEY` | Clave secreta de Django (generada automáticamente) | `django-insecure-abc...` |
+| `DEBUG` | Modo debug (solo `True` en desarrollo) | `True` |
+| `DATABASE_URL` | URL de conexión a PostgreSQL | `postgres://user:pass@localhost:5432/db` |
+| `ALLOWED_HOSTS` | Hosts permitidos | `localhost,127.0.0.1` |
+| `CORS_ALLOWED_ORIGINS` | Orígenes permitidos para CORS | `http://localhost:5173` |
 
 ## Usuarios de prueba
 
-| Usuario     | Email                   | Contraseña    | Rol           |
-| ----------- | ----------------------- | ------------- | ------------- |
-| Admin       | `admin@rassa.com`       | `admin123`    | Administrador |
-| Vendedor    | `vendedor@rassa.com`    | `vendedor123` | Vendedor      |
-| Juan Pérez  | `juan.perez@email.com`  | `juan123`     | Agricultor    |
-| Ana Ramírez | `ana.ramirez@email.com` | `ana123`      | Cliente       |
+| Usuario | Email | Contraseña | Rol |
+| ------- | ----- | ---------- | --- |
+| Admin | `admin@rassa.com` | `admin123` | Administrador |
+| Vendedor | `vendedor@rassa.com` | `vendedor123` | Vendedor |
+| Juan Pérez | `juan.perez@email.com` | `juan123` | Agricultor |
+| Ana Ramírez | `ana.ramirez@email.com` | `ana123` | Cliente |
 
-Ver [docs/USUARIOS_PRUEBA.md](docs/USUARIOS_PRUEBA.md) para la lista completa.
+## Checklist de verificación
+
+- [ ] `bash setup.sh` / `.\setup.ps1` ejecuta sin errores
+- [ ] `bash start.sh` / `.\start.ps1` levanta el servidor
+- [ ] Los tests pasan antes de que el servidor se levante
+- [ ] `http://localhost:8000/api/` responde
+- [ ] Puedes login con `admin@rassa.com` / `admin123`
+
+## Documentación
+
+| Documento | Descripción |
+| --------- | ----------- |
+| [docs/ARQUITECTURA_MODULOS.md](docs/ARQUITECTURA_MODULOS.md) | Arquitectura por módulos, endpoints, permisos RBAC |
+| [docs/USUARIOS_PRUEBA.md](docs/USUARIOS_PRUEBA.md) | Usuarios de prueba, credenciales, catálogos |
 
 ## Estructura del proyecto
 
 ```
-back/
+rassa_back/
 ├── rassa/                          # App principal
 │   ├── models.py                   # 32 modelos del dominio
 │   ├── urls.py                     # Router principal
 │   ├── settings.py                 # Configuración Django
-│   ├── auth/                       # Autenticación JWT
-│   │   ├── serializers.py
-│   │   ├── views.py
-│   │   └── urls.py
+│   ├── auth_views.py               # Autenticación JWT
+│   ├── auth_serializers.py         # Serializadores de auth
 │   ├── permissions/                # Permisos RBAC
 │   │   └── role_permissions.py
+│   ├── tests/                      # Tests del proyecto
 │   └── management/commands/
 │       └── seed_rassa_data.py      # Seeder principal
 ├── db/archive/                     # SQL original (respaldo)
 ├── docs/
 │   ├── ARQUITECTURA_MODULOS.md
 │   └── USUARIOS_PRUEBA.md
-├── setup.sh                        # Setup interactivo (Linux/macOS/Git Bash)
-├── setup.ps1                       # Setup interactivo (PowerShell)
+├── setup.sh                        # Setup (Linux/macOS/Git Bash)
+├── setup.ps1                       # Setup (PowerShell)
+├── start.sh                        # Levantar backend (Linux/macOS/Git Bash)
+├── start.ps1                       # Levantar backend (PowerShell)
 ├── .env.template
-├── .pylintrc
 ├── pyproject.toml
 ├── requirements.txt
+├── requirements-dev.txt
 └── manage.py
 ```
