@@ -130,34 +130,47 @@ _prechecks() {
 # ---------------------------------------------------------------------------
 
 _check_postgres() {
-    # Verificar que DATABASE_URL existe en .env
-    if ! grep -q "^DATABASE_URL=" "$SCRIPT_DIR/.env" 2>/dev/null; then
+    # Extraer DATABASE_URL de .env sin ejecutar el archivo como shell
+    local db_url=""
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        db_url=$(grep -E '^DATABASE_URL=' "$SCRIPT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+        # Limpiar comillas y espacios
+        db_url="${db_url#\"}"; db_url="${db_url%\"}"
+        db_url="${db_url#\'}"; db_url="${db_url%\'}"
+        db_url="${db_url#"${db_url%%[![:space:]]*}"}"
+        db_url="${db_url%"${db_url##*[![:space:]]}"}"
+    fi
+
+    if [[ -z "$db_url" ]]; then
         _red "✗ No se encontró DATABASE_URL en .env"
         echo "  Ejecuta: bash setup.sh"
         echo ""
         exit 1
     fi
 
-    # Intentar conectar con Python
-    if ! python -c "import psycopg2; psycopg2.connect('${DATABASE_URL:-}')" 2>/dev/null; then
-        if command -v pg_isready &>/dev/null; then
-            if ! pg_isready -q 2>/dev/null; then
-                _red "✗ PostgreSQL no está corriendo"
-                echo "  Inicia PostgreSQL:"
-                echo "    Linux:  sudo systemctl start postgresql"
-                echo "    macOS:  brew services start postgresql@16"
-                echo "    WSL:    sudo service postgresql start"
-                echo ""
-                exit 1
-            fi
-        else
-            _red "✗ No se pudo conectar a PostgreSQL"
-            echo "  Verifica DATABASE_URL en .env"
-            echo "  Verifica que PostgreSQL esté corriendo"
+    # Conectar con Python usando variable de entorno (sin interpolación en código)
+    if DATABASE_URL="$db_url" python -c \
+        "import os, psycopg2; psycopg2.connect(os.environ['DATABASE_URL'])" 2>/dev/null; then
+        return 0
+    fi
+
+    # Fallback: verificar con pg_isready
+    if command -v pg_isready &>/dev/null; then
+        if pg_isready -q 2>/dev/null || pg_isready -h localhost -q 2>/dev/null; then
+            _yellow "⚠ PostgreSQL responde pero Python no pudo conectar."
+            echo "  Posibles causas: psycopg2 no instalado, credenciales incorrectas,"
+            echo "  o DATABASE_URL en .env tiene errores."
             echo ""
             exit 1
         fi
     fi
+
+    _red "✗ No se pudo conectar a PostgreSQL"
+    echo "  Verifica DATABASE_URL en .env"
+    echo "  Verifica que PostgreSQL esté corriendo (nativo o contenedor)"
+    echo "  Si usás contenedor: podman ps | grep postgres"
+    echo ""
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
