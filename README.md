@@ -1,6 +1,6 @@
 # Rassa — Backend
 
-API REST para Rassa, una app móvil de e-commerce donde agricultores venden productos directamente.
+API REST para Rassa, una aplicación móvil de e-commerce donde agricultores venden productos directamente.
 
 ## Stack
 
@@ -9,14 +9,9 @@ API REST para Rassa, una app móvil de e-commerce donde agricultores venden prod
 - **JWT Auth** (SimpleJWT)
 - Python 3.12+
 
-## Requisitos
-
-- Python 3.12 o superior
-- PostgreSQL
-
 ## Inicio rápido
 
-### 1. Clonar y configurar
+### Usar el script de setup (recomendado)
 
 **Linux / macOS / Git Bash / WSL:**
 
@@ -34,52 +29,75 @@ cd rassa_back
 .\setup.ps1
 ```
 
-El script detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera SECRET_KEY, ejecuta migraciones y carga datos de prueba.
+El script detecta Python, crea el entorno virtual, instala dependencias, configura PostgreSQL, genera la SECRET_KEY, ejecuta migraciones y carga los datos de prueba.
 
-## Instalación manual
+> **Nota para Windows:** Si el script no encuentra Python, prueba con `py` en vez de `python`. El Python Launcher (`py.exe`) encuentra todas las instalaciones sin importar el PATH.
 
-Si el script de setup no funciona en tu sistema, seguí estos pasos para configurar el proyecto paso a paso.
+### Iniciar el servidor
 
-### 1. Requisitos previos
+**Linux / macOS / Git Bash / WSL:**
+
+```bash
+bash start.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+.\start.ps1
+```
+
+El script ejecuta todos los tests automáticamente. Si pasan, inicia el servidor. Si fallan, muestra el error con una explicación y NO inicia el servidor.
+
+> **Importante:** usa siempre `start.sh` / `start.ps1` para iniciar el backend. Si ejecutas `python manage.py runserver` directamente, los tests no se ejecutan y puedes enviar código con errores.
+
+## Instalación manual paso a paso
+
+Si el script de setup no funciona en tu sistema, sigue estos pasos para configurar el proyecto manualmente.
+
+### Requisitos previos
 
 - Python 3.12 o superior
 - PostgreSQL instalado y corriendo (puerto 5432)
 - Git
 
-### 2. Clonar el repositorio
+### 1. Clonar el repositorio
 
 ```bash
 git clone https://github.com/ObedAlPa/rassa_back.git
 cd rassa_back
 ```
 
-### 3. Crear y activar el entorno virtual
+### 2. Crear y activar el entorno virtual
 
 **Linux / macOS:**
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
 **Windows (Git Bash):**
+
 ```bash
 python -m venv venv
 source venv/Scripts/activate
 ```
 
-> **Nota:** Si `python` no funciona en Windows, probá con el Python Launcher:
+> **Nota:** si `python` no funciona en Windows, usa el Python Launcher:
 > ```powershell
 > py -m venv venv
 > .\venv\Scripts\Activate.ps1
 > ```
 
-### 4. Instalar dependencias
+### 3. Instalar dependencias
 
 Con el entorno virtual activo:
 
@@ -88,9 +106,9 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-### 5. Configurar variables de entorno
+### 4. Configurar variables de entorno
 
-Creá un archivo `.env` en la raíz del proyecto con el siguiente contenido:
+Crea un archivo `.env` en la raíz del proyecto con el siguiente contenido:
 
 ```
 SECRET_KEY=django-insecure-<reemplazar con una clave única>
@@ -106,26 +124,26 @@ Para generar una SECRET_KEY automáticamente:
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
-### 6. Crear la base de datos
+### 5. Crear la base de datos
 
 ```bash
 psql -U postgres -c "CREATE DATABASE rassa_jala_db;"
 ```
 
-### 7. Ejecutar migraciones y cargar datos de prueba
+### 6. Ejecutar migraciones y cargar datos de prueba
 
 ```bash
 python manage.py migrate
 python manage.py seed_rassa_data
 ```
 
-### 8. Verificar la instalación
+### 7. Verificar la instalación
 
 ```bash
 python manage.py check --deploy
 ```
 
-### 9. Iniciar el servidor
+### 8. Iniciar el servidor
 
 ```bash
 python manage.py runserver
@@ -133,30 +151,12 @@ python manage.py runserver
 
 La API estará disponible en http://localhost:8000/api/
 
-### 2. Levantar el backend
-
-**Linux / macOS / Git Bash / WSL:**
-
-```bash
-bash start.sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-.\start.ps1
-```
-
-¿Qué hace? Ejecuta todos los tests automáticamente. Si pasan, levanta el servidor. Si fallan, muestra el error con explicación y NO levanta el servidor.
-
-> **IMPORTANTE:** Usa siempre `start.sh` / `start.ps1` para levantar el backend. Si ejecutas `python manage.py runserver` directamente, no se corren los tests y puedes subir código con errores.
-
 ## Comandos disponibles
 
 | Acción | Linux / macOS / Git Bash | Windows (PowerShell) |
 | ------ | ------------------------ | -------------------- |
-| Levantar backend (tests + server) | `bash start.sh` | `.\start.ps1` |
-| Solo correr tests | `bash start.sh --test` | `.\start.ps1 -TestOnly` |
+| Iniciar backend (tests + server) | `bash start.sh` | `.\start.ps1` |
+| Solo ejecutar tests | `bash start.sh --test` | `.\start.ps1 -TestOnly` |
 | Tests con máximo detalle | `bash start.sh --verbose` | `.\start.ps1 -Verbose` |
 | Tests + máximo detalle | `bash start.sh --test --verbose` | `.\start.ps1 -TestOnly -Verbose` |
 | Saltar tests (emergencias) | `bash start.sh --skip` | `.\start.ps1 -Skip` |
@@ -188,11 +188,11 @@ Se configuran en el archivo `.env` (creado por `setup.sh` / `setup.ps1`).
 
 ## Checklist de verificación
 
-- [ ] `bash setup.sh` / `.\setup.ps1` ejecuta sin errores
-- [ ] `bash start.sh` / `.\start.ps1` levanta el servidor
-- [ ] Los tests pasan antes de que el servidor se levante
+- [ ] `bash setup.sh` / `.\setup.ps1` se ejecuta sin errores
+- [ ] `bash start.sh` / `.\start.ps1` inicia el servidor
+- [ ] Los tests pasan antes de que el servidor se inicie
 - [ ] `http://localhost:8000/api/` responde
-- [ ] Puedes login con `admin@rassa.com` / `admin123`
+- [ ] Puedes iniciar sesión con `admin@rassa.com` / `admin123`
 
 ## Documentación
 
@@ -222,8 +222,8 @@ rassa_back/
 │   └── USUARIOS_PRUEBA.md
 ├── setup.sh                        # Setup (Linux/macOS/Git Bash)
 ├── setup.ps1                       # Setup (PowerShell)
-├── start.sh                        # Levantar backend (Linux/macOS/Git Bash)
-├── start.ps1                       # Levantar backend (PowerShell)
+├── start.sh                        # Iniciar backend (Linux/macOS/Git Bash)
+├── start.ps1                       # Iniciar backend (PowerShell)
 ├── .env.template
 ├── pyproject.toml
 ├── requirements.txt
