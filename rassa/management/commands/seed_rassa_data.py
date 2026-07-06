@@ -8,9 +8,12 @@ Flags:
   --clear   Elimina todos los datos antes de insertar (fresh start).
 """
 
+from datetime import datetime as dt
+
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
@@ -1129,6 +1132,10 @@ class Command(BaseCommand):
             },
         ]
         for p in pedidos:
+            if isinstance(p.get("fecha_expiracion"), str):
+                p["fecha_expiracion"] = timezone.make_aware(
+                    dt.strptime(p["fecha_expiracion"], "%Y-%m-%d %H:%M:%S")
+                )
             PedidoCabecera.objects.update_or_create(id_pedido=p["id_pedido"], defaults=p)
         self.stdout.write("  Pedidos cabecera: OK")
 
