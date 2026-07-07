@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Rassa — Configuración del Entorno de Desarrollo (PowerShell)
 # ============================================================================
 # Setup interactivo: Python → venv → dependencias → PostgreSQL →
@@ -217,14 +217,27 @@ function Show-PythonInstallGuide {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase2Venv {
+    $ErrorActionPreference = "Continue"
     $py = if ($script:PythonCmd) { $script:PythonCmd } else { "python" }
 
     if (Test-Path "venv") {
         Write-Yellow "El entorno virtual 'venv\' ya existe."
         $answer = Read-Host "¿Recrearlo? Se eliminará el actual. [y/N]"
         if ($answer -match '^[sSyY]') {
+            Write-Host "Liberando procesos que puedan retener archivos..."
+            & taskkill /f /im python.exe 2>$null
+            & taskkill /f /im pip.exe 2>$null
+            Start-Sleep -Seconds 1
             Write-Host "Eliminando venv\ existente..."
-            Remove-Item -Recurse -Force venv
+            Remove-Item -Recurse -Force venv -ErrorAction SilentlyContinue
+            if (Test-Path "venv") {
+                Write-Yellow "Usando cmd.exe para eliminar archivos retenidos..."
+                cmd /c "del /f /s /q venv\Scripts\python.exe 2>nul & rmdir /s /q venv 2>nul"
+            }
+            if (Test-Path "venv") {
+                Write-Red "No se pudo eliminar venv\. Cerrá programas que usen Python y reiniciá."
+                return $false
+            }
         } else {
             Write-Host "Usando venv\ existente."
             return
@@ -234,8 +247,20 @@ function Invoke-Phase2Venv {
         Write-Yellow "El entorno virtual '.venv\' ya existe (creado por uv)."
         $answer = Read-Host "¿Recrearlo? Se eliminará el actual. [y/N]"
         if ($answer -match '^[sSyY]') {
+            Write-Host "Liberando procesos que puedan retener archivos..."
+            & taskkill /f /im python.exe 2>$null
+            & taskkill /f /im pip.exe 2>$null
+            Start-Sleep -Seconds 1
             Write-Host "Eliminando .venv\ existente..."
-            Remove-Item -Recurse -Force .venv
+            Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
+            if (Test-Path ".venv") {
+                Write-Yellow "Usando cmd.exe para eliminar archivos retenidos..."
+                cmd /c "del /f /s /q .venv\Scripts\python.exe 2>nul & rmdir /s /q .venv 2>nul"
+            }
+            if (Test-Path ".venv") {
+                Write-Red "No se pudo eliminar .venv\. Cerrá programas que usen Python y reiniciá."
+                return $false
+            }
         } else {
             Write-Host "Usando .venv\ existente."
             return
@@ -291,6 +316,7 @@ function Invoke-EnsureVenvActive {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase3Deps {
+    $ErrorActionPreference = "Continue"
     Invoke-EnsureVenvActive
 
     # Detectar si el venv fue creado por uv
@@ -574,6 +600,7 @@ function Write-EnvFile {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase6Migrate {
+    $ErrorActionPreference = "Continue"
     Invoke-EnsureVenvActive
 
     Write-Host "Aplicando migraciones de Django..."
@@ -595,6 +622,7 @@ function Invoke-Phase6Migrate {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase7Seed {
+    $ErrorActionPreference = "Continue"
     Invoke-EnsureVenvActive
 
     Write-Host "Cargando datos de prueba (32 tablas + seeders)..."
@@ -617,6 +645,7 @@ function Invoke-Phase7Seed {
 # ---------------------------------------------------------------------------
 
 function Invoke-Phase8Verify {
+    $ErrorActionPreference = "Continue"
     Invoke-EnsureVenvActive
 
     Write-Host "Verificando configuración de Django..."

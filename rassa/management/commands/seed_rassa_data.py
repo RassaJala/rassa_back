@@ -1481,6 +1481,8 @@ class Command(BaseCommand):
             },
         ]
         for c in cortes:
+            if isinstance(c.get("creado_en"), str):
+                c["creado_en"] = timezone.make_aware(dt.strptime(c["creado_en"], "%Y-%m-%d %H:%M:%S"))
             Corte.objects.update_or_create(id_corte=c["id_corte"], defaults=c)
         self.stdout.write("  Cortes de caja: OK")
 
@@ -1676,6 +1678,8 @@ class Command(BaseCommand):
             },
         ]
         for h in historial:
+            if isinstance(h.get("creado_en"), str):
+                h["creado_en"] = timezone.make_aware(dt.strptime(h["creado_en"], "%Y-%m-%d %H:%M:%S"))
             HistorialEstadoPedido.objects.update_or_create(id_historial=h["id_historial"], defaults=h)
         self.stdout.write("  Historial de estados: OK")
 
@@ -1986,6 +1990,8 @@ class Command(BaseCommand):
             },
         ]
         for m in mensajes:
+            if isinstance(m.get("creado_en"), str):
+                m["creado_en"] = timezone.make_aware(dt.strptime(m["creado_en"], "%Y-%m-%d %H:%M:%S"))
             Mensaje.objects.update_or_create(id_mensaje=m["id_mensaje"], defaults=m)
         self.stdout.write("  Mensajes: OK")
 
@@ -2167,6 +2173,8 @@ class Command(BaseCommand):
             },
         ]
         for r in recibos:
+            if isinstance(r.get("creado_en"), str):
+                r["creado_en"] = timezone.make_aware(dt.strptime(r["creado_en"], "%Y-%m-%d %H:%M:%S"))
             Recibo.objects.update_or_create(id_recibo=r["id_recibo"], defaults=r)
         self.stdout.write("  Recibos: OK")
 
