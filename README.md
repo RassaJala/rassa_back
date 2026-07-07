@@ -1,4 +1,4 @@
-# Rassa — Backend
+﻿# Rassa — Backend
 
 API REST para Rassa, una aplicación móvil de e-commerce donde agricultores venden productos directamente.
 
@@ -7,7 +7,7 @@ API REST para Rassa, una aplicación móvil de e-commerce donde agricultores ven
 - **Django 5** + **Django REST Framework**
 - **PostgreSQL**
 - **JWT Auth** (SimpleJWT)
-- Python 3.12+
+- Python 3.11+
 
 ## Inicio rápido
 

@@ -14,6 +14,20 @@ $script:FAILURES = @()
 
 # --- Assertion helpers ---
 
+function Parse-PythonVersion {
+    param([string]$Raw)
+    if ($Raw -match 'Python\s+(\d+\.\d+(\.\d+)?)') {
+        return $Matches[1]
+    }
+    if ($Raw -match '[-:]V[:=](\d+\.\d+(\.\d+)?)') {
+        return $Matches[1]
+    }
+    if ($Raw -match '[\\/](\d+\.\d+(\.\d+)?)[\\/]') {
+        return $Matches[1]
+    }
+    return $null
+}
+
 function Assert-Eq {
     param([string]$Label, $Expected, $Actual)
     if ("$Expected" -eq "$Actual") {
@@ -97,6 +111,10 @@ function Test-ParsePythonVersion {
     Assert-True "3.14.6 matches" $result
     Assert-Eq "3.14.6 capture" "3.14.6" $Matches[1]
 
+    $launcherLine = " -V:3.11 *        C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe"
+    $launcherVersion = Parse-PythonVersion $launcherLine
+    Assert-Eq "launcher line capture" "3.11" $launcherVersion
+
     $result = "some random text" -match $pattern
     Assert-False "non-python doesn't match" $result
 }
@@ -117,7 +135,7 @@ function Test-VenvPathFilter {
         "C:\env\myenv\Scripts\python.exe"
     )
 
-    $filtered = $paths | Where-Object { $_ -notmatch '\\(venv|env)\\' }
+    $filtered = $paths | Where-Object { $_ -and $_ -notmatch '(?:^|[\\/])(?:\.?(?:venv)|env)(?:[\\/]|$)' }
 
     Assert-Eq "filtered count" 2 $filtered.Count
     Assert-Contains "keeps system Python" "C:\Python312" $filtered[0]

@@ -3,7 +3,7 @@ name = "rassa-backend"
 version = "0.1.0"
 description = "API REST para Rassa."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "django>=5.0,<5.1",
     "djangorestframework>=3.15,<3.16",
@@ -28,7 +28,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py311"
 exclude = [
     "migrations",
     "__pycache__",

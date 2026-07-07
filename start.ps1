@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Rassa — Iniciar Backend (PowerShell)
 # ============================================================================
 # Ejecuta los test automáticamente. Si pasan, enciende el servidor.
@@ -73,6 +73,25 @@ En Linux/macOS/Git-Bash usa: bash start.sh
 # ---------------------------------------------------------------------------
 # Activación del entorno virtual
 # ---------------------------------------------------------------------------
+
+function Get-PreferredPythonExe {
+    $candidates = @(
+        (Join-Path $script:ScriptDir "venv\Scripts\python.exe"),
+        (Join-Path $script:ScriptDir ".venv\Scripts\python.exe"),
+        (Join-Path $script:ScriptDir "venv\Scripts\python"),
+        (Join-Path $script:ScriptDir ".venv\Scripts\python"),
+        (Join-Path $script:ScriptDir "venv\bin\python"),
+        (Join-Path $script:ScriptDir ".venv\bin\python")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return "python"
+}
 
 function Activate-Venv {
     $candidates = @(
@@ -169,11 +188,13 @@ function Test-Prechecks {
 function Invoke-Tests {
     param([int]$Verbosity = 2)
 
+    $pythonExe = Get-PreferredPythonExe
+
     Write-Bold "═══════════════════════════════════════════════════════════"
     Write-Bold "  FASE 1: Ejecutando suite de tests"
     Write-Bold "═══════════════════════════════════════════════════════════"
     Write-Host ""
-    Write-Host "  Python: $(Get-Command python | Select-Object -ExpandProperty Source)" -ForegroundColor DarkGray
+    Write-Host "  Python: $pythonExe" -ForegroundColor DarkGray
     Write-Host "  Directorio: $script:ScriptDir" -ForegroundColor DarkGray
     Write-Host "  Verbosidad: $Verbosity" -ForegroundColor DarkGray
     Write-Host ""
@@ -184,7 +205,7 @@ function Invoke-Tests {
 
         # Trap de limpieza
         try {
-            python -m pytest --verbosity $Verbosity 2>&1 | Tee-Object -FilePath $tmpFile
+            & $pythonExe -m pytest --verbosity $Verbosity 2>&1 | Tee-Object -FilePath $tmpFile
             $testExit = $LASTEXITCODE
             $testOutput = Get-Content $tmpFile -Raw
 
@@ -426,6 +447,8 @@ function Invoke-Tests {
 # ---------------------------------------------------------------------------
 
 function Start-Server {
+    $pythonExe = Get-PreferredPythonExe
+
     Push-Location $script:ScriptDir
     try {
         Write-Green "╔══════════════════════════════════════════════════════════╗"
@@ -443,7 +466,8 @@ function Start-Server {
         Write-Host "  Presiona Ctrl+C para detener el servidor." -ForegroundColor DarkGray
         Write-Host ""
 
-        python manage.py runserver
+        Write-Host "  Ejecutando: $pythonExe manage.py runserver" -ForegroundColor DarkGray
+        & $pythonExe manage.py runserver
     } finally {
         Pop-Location
     }

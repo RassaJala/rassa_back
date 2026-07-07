@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # ============================================================================
 # Rassa — Configuración del Entorno de Desarrollo
 # ============================================================================
@@ -28,7 +28,7 @@ LOG_FILE="${SCRIPT_DIR}/setup.log"
 STATE_FILE="${SCRIPT_DIR}/.setup_state"
 _STATE_FILE="${_STATE_FILE:-$STATE_FILE}"
 
-MIN_PYTHON_VERSION="3.12"
+MIN_PYTHON_VERSION="3.11"
 CURRENT_PHASE=""
 server_pid=""
 

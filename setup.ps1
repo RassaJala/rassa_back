@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Rassa — Configuración del Entorno de Desarrollo (PowerShell)
 # ============================================================================
 # Setup interactivo: Python → venv → dependencias → PostgreSQL →
@@ -114,7 +114,7 @@ function Invoke-Phase1Python {
 
     try {
         $paths = @(where.exe python 2>$null) + @(where.exe python3 2>$null) |
-            Where-Object { $_ -notmatch '\\(venv|env)\\' } |
+            Where-Object { $_ -and $_ -notmatch '(?:^|[\\/])(?:\.?(?:venv)|env)(?:[\\/]|$)' } |
             Select-Object -Unique
     } catch {
         $paths = @()
@@ -124,7 +124,7 @@ function Invoke-Phase1Python {
     try {
         $pyList = & py --list-paths 2>&1
         foreach ($line in $pyList) {
-            if ($line -match '^\s*[-*]\s+(\d+\.\d+)-\d+\s+(.+)$') {
+            if ($line -match '^\s*[-*]\s*(?:V:)?(\d+\.\d+)(?:-\d+)?\s*\*?\s*(.+)$') {
                 $pyPath = $Matches[2].TrimEnd(' *')
                 if (Test-Path $pyPath -and $pyPath -notin $paths) {
                     $paths += $pyPath
@@ -137,6 +137,9 @@ function Invoke-Phase1Python {
         if (-not $pypath) { continue }
         try {
             $raw = & $pypath --version 2>&1
+            if (-not $raw) {
+                $raw = & $pypath -c "import sys; print(sys.version.split()[0])" 2>&1
+            }
             $ver = Parse-PythonVersion $raw
             if ($ver -and -not $pythonPaths.ContainsKey($ver)) {
                 $pythonPaths[$ver] = $pypath
@@ -187,11 +190,15 @@ function Invoke-Phase1Python {
 }
 
 function Parse-PythonVersion {
-    param([string]$Raw)
-    if ($Raw -match 'Python\s+(\d+\.\d+(\.\d+)?)') {
+    param([object]$Raw)
+    $text = ($Raw | Out-String).Trim()
+    if ($text -match 'Python\s+(\d+\.\d+(\.\d+)?)') {
         return $Matches[1]
     }
-    if ($Raw -match '\\(\d+\.\d+(\.\d+)?)\\') {
+    if ($text -match '[-:]V[:=](\d+\.\d+(\.\d+)?)') {
+        return $Matches[1]
+    }
+    if ($text -match '[\\/](\d+\.\d+(\.\d+)?)[\\/]') {
         return $Matches[1]
     }
     return $null
@@ -227,7 +234,7 @@ function Invoke-Phase2Venv {
             Remove-Item -Recurse -Force venv
         } else {
             Write-Host "Usando venv\ existente."
-            return
+            return $true
         }
     }
     if (Test-Path ".venv") {
@@ -238,7 +245,7 @@ function Invoke-Phase2Venv {
             Remove-Item -Recurse -Force .venv
         } else {
             Write-Host "Usando .venv\ existente."
-            return
+            return $true
         }
     }
 
@@ -322,7 +329,7 @@ function Invoke-Phase3Deps {
         $uvExists = Get-Command uv -ErrorAction SilentlyContinue
         if (-not $uvExists) {
             Write-Yellow "uv no está instalado. Instalando con pip..."
-            pip install uv 2>&1 | Out-Null
+            python -m pip install uv 2>&1 | Out-Null
         }
         Write-Host "Instalando dependencias con uv..."
         uv sync 2>&1
@@ -336,19 +343,36 @@ function Invoke-Phase3Deps {
             return $false
         }
         Write-Host "Instalando dependencias con pip..."
-        pip install -r requirements.txt 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        try {
+            $installOutput = & python -m pip install -r requirements.txt 2>&1
+            $installExit = $LASTEXITCODE
+        } catch {
+            $installOutput = @($_.Exception.Message)
+            $installExit = 1
+        }
+        if ($installExit -ne 0) {
+            $installOutput | ForEach-Object { Write-Host $_ }
             Write-Red "Falló la instalación de dependencias."
             return $false
         }
+        $installOutput | ForEach-Object { Write-Host $_ }
     }
 
     # Dependencias de desarrollo
     if (Test-Path "requirements-dev.txt") {
         Write-Host "Instalando dependencias de desarrollo..."
-        pip install -r requirements-dev.txt 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        try {
+            $devOutput = & python -m pip install -r requirements-dev.txt 2>&1
+            $devExit = $LASTEXITCODE
+        } catch {
+            $devOutput = @($_.Exception.Message)
+            $devExit = 1
+        }
+        if ($devExit -ne 0) {
+            $devOutput | ForEach-Object { Write-Host $_ }
             Write-Yellow "⚠ Algunas dependencias de desarrollo fallaron (no bloqueante)"
+        } else {
+            $devOutput | ForEach-Object { Write-Host $_ }
         }
     }
 
