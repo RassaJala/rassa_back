@@ -7,10 +7,15 @@ Endpoints disponibles:
 """
 
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+
+
+def test_activity_log_view(request):
+    return JsonResponse({"ok": True})
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -23,4 +28,5 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/test/", test_activity_log_view, name="test_activity_log"),
 ]
