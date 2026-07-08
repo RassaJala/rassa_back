@@ -46,6 +46,7 @@ INSTALLED_APPS = (
     + THIRD_PARTY_APPS
     + [
         "rassa.apps.RassaConfig",
+        "logs.apps.LogsConfig",
     ]
 )
 
