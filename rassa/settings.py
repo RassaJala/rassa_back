@@ -45,6 +45,7 @@ INSTALLED_APPS = (
     + THIRD_PARTY_APPS
     + [
         "rassa.apps.RassaConfig",
+        "logs.apps.LogsConfig",
     ]
 )
 
@@ -58,6 +59,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "logs.middleware.ActivityLogMiddleware",
 ]
 
 ROOT_URLCONF = "rassa.urls"
@@ -102,6 +104,13 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
 }
+
+# === LOGGING ===
+EXCLUDED_PATHS = [
+    "/admin/",
+    "/api/token/",
+    "/api/token/refresh/",
+]
 
 # === SIMPLE JWT ===
 SIMPLE_JWT = {
