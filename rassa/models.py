@@ -58,6 +58,7 @@ class Unidad(models.Model):
 
     id_unidad = models.AutoField(primary_key=True)
     tipo = models.CharField(max_length=50)
+    abreviatura = models.CharField(max_length=10, blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 

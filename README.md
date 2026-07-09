@@ -200,6 +200,7 @@ Se configuran en el archivo `.env` (creado por `setup.sh` / `setup.ps1`).
 | --------- | ----------- |
 | [docs/ARQUITECTURA_MODULOS.md](docs/ARQUITECTURA_MODULOS.md) | Arquitectura por módulos, endpoints, permisos RBAC |
 | [docs/USUARIOS_PRUEBA.md](docs/USUARIOS_PRUEBA.md) | Usuarios de prueba, credenciales, catálogos |
+| [docs/API_CATEGORIAS_UNIDADES.md](docs/API_CATEGORIAS_UNIDADES.md) | API backend para categorías y unidades |
 
 ## Estructura del proyecto
 
@@ -219,7 +220,8 @@ rassa_back/
 ├── db/archive/                     # SQL original (respaldo)
 ├── docs/
 │   ├── ARQUITECTURA_MODULOS.md
-│   └── USUARIOS_PRUEBA.md
+│   ├── USUARIOS_PRUEBA.md
+│   └── API_CATEGORIAS_UNIDADES.md
 ├── setup.sh                        # Setup (Linux/macOS/Git Bash)
 ├── setup.ps1                       # Setup (PowerShell)
 ├── start.sh                        # Iniciar backend (Linux/macOS/Git Bash)

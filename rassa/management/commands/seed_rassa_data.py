@@ -223,11 +223,11 @@ class Command(BaseCommand):
 
     def _seed_unidades(self):
         unidades = [
-            {"id_unidad": 1, "tipo": "Kilogramo"},
-            {"id_unidad": 2, "tipo": "Pieza"},
-            {"id_unidad": 3, "tipo": "Manojo"},
-            {"id_unidad": 4, "tipo": "Litro"},
-            {"id_unidad": 5, "tipo": "Docena"},
+            {"id_unidad": 1, "tipo": "Kilogramo", "abreviatura": "kg"},
+            {"id_unidad": 2, "tipo": "Pieza", "abreviatura": "pz"},
+            {"id_unidad": 3, "tipo": "Manojo", "abreviatura": "mnj"},
+            {"id_unidad": 4, "tipo": "Litro", "abreviatura": "lt"},
+            {"id_unidad": 5, "tipo": "Docena", "abreviatura": "dz"},
         ]
         for u in unidades:
             Unidad.objects.update_or_create(id_unidad=u["id_unidad"], defaults=u)
