@@ -105,6 +105,13 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
 }
 
+# === LOGGING ===
+EXCLUDED_PATHS = [
+    "/admin/",
+    "/api/token/",
+    "/api/token/refresh/",
+]
+
 # === SIMPLE JWT ===
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),

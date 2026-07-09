@@ -1,4 +1,6 @@
-from .models import ActivityLog
+from django.conf import settings
+
+from rassa.models import Log, Usuario
 
 RELEVANT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 ACTION_BY_METHOD = {
@@ -12,19 +14,25 @@ ACTION_BY_METHOD = {
 class ActivityLogMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
+        self.excluded_paths = getattr(settings, "EXCLUDED_PATHS", [])
 
     def __call__(self, request):
-        response = self.get_response(request)
-
-        if request.method in RELEVANT_METHODS:
-            user = request.user if getattr(request.user, "is_authenticated", False) else None
-            ActivityLog.objects.create(
-                user=user,
-                action=ACTION_BY_METHOD[request.method],
-                ip_address=request.META.get("REMOTE_ADDR"),
-                user_agent=request.META.get("HTTP_USER_AGENT", ""),
-                http_method=request.method,
-                path=request.path,
+        if (
+            request.method in RELEVANT_METHODS
+            and getattr(request.user, "is_authenticated", False)
+            and not any(request.path.startswith(p) for p in self.excluded_paths)
+        ):
+            usuario = Usuario.objects.filter(fk_user=request.user).first()
+            action = ACTION_BY_METHOD[request.method]
+            qs = request.META.get("QUERY_STRING", "")
+            descripcion = f"{action} {request.method} {request.path}"
+            if qs:
+                descripcion += f"?{qs}"
+            Log.objects.create(
+                fk_usuario=usuario,
+                descripcion=descripcion,
+                ip=request.META.get("REMOTE_ADDR", "0.0.0.0"),
+                dispositivo=request.META.get("HTTP_USER_AGENT", ""),
             )
 
-        return response
+        return self.get_response(request)
