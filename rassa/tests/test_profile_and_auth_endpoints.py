@@ -372,18 +372,14 @@ class ProfileAndAuthEndpointsTest(APITestCase):
 
     def test_get_me_no_profile(self):
         """User without Usuario profile gets 404."""
-        user_no_profile = User.objects.create_user(
-            username="noprofile@test.com", email="noprofile@test.com", password="123pass"
-        )
+        User.objects.create_user(username="noprofile@test.com", email="noprofile@test.com", password="123pass")
         token = self._login(email="noprofile@test.com", password="123pass")
         response = self.client.get(reverse("me"), **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_patch_me_no_profile(self):
         """PATCH /me/ without Usuario profile returns 404."""
-        user_no_profile = User.objects.create_user(
-            username="noprofile2@test.com", email="noprofile2@test.com", password="123pass"
-        )
+        User.objects.create_user(username="noprofile2@test.com", email="noprofile2@test.com", password="123pass")
         token = self._login(email="noprofile2@test.com", password="123pass")
         response = self.client.patch(reverse("me"), {"nombre": "X"}, format="json", **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
