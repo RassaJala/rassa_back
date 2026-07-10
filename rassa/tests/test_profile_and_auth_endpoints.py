@@ -73,7 +73,7 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertTrue(response.data["success"])
         self.assertEqual(response.data["user"]["email"], "newbuyer@rassa.com")
         self.assertEqual(response.data["user"]["role"], "buyer")
-        self.assertEqual(response.data["user"]["first_name"], "Maria")
+        self.assertEqual(response.data["user"]["nombre"], "Maria")
 
         # Verificar en base de datos
         db_usuario = Usuario.objects.get(correo="newbuyer@rassa.com")
@@ -108,7 +108,7 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email"], self.email)
-        self.assertEqual(response.data["first_name"], "Juan")
+        self.assertEqual(response.data["nombre"], "Juan")
         self.assertEqual(response.data["role"], "buyer")
 
     def test_get_profile_unauthenticated(self):
@@ -127,9 +127,9 @@ class ProfileAndAuthEndpointsTest(APITestCase):
 
         response = self.client.patch(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["first_name"], "Juan Carlos")
+        self.assertEqual(response.data["nombre"], "Juan Carlos")
         self.assertEqual(response.data["apellido_materno"], "Ramirez")
-        self.assertEqual(response.data["phone_number"], "1112223333")
+        self.assertEqual(response.data["telefono"], "1112223333")
 
         # Verificar base de datos
         self.usuario.refresh_from_db()

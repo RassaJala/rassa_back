@@ -11,6 +11,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.views import ChangePasswordView, MeView, RegisterView
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -18,8 +19,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
     serializer_class = CustomTokenObtainPairSerializer
 
-
-from rassa.views import RegisterView, MeView, ChangePasswordView
 
 urlpatterns = [
     path("admin/", admin.site.urls),

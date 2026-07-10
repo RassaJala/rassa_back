@@ -21,7 +21,7 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         usuario = serializer.save()
-        
+
         # Devolver el usuario recién creado usando UserSerializer
         user_data = UserSerializer(usuario).data
         return Response(
@@ -62,11 +62,11 @@ class MeView(APIView):
                 {"detail": "El usuario autenticado no tiene un perfil asociado."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        
+
         serializer = ProfileUpdateSerializer(usuario, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated_usuario = serializer.save()
-        
+
         # Devolver los datos actualizados usando UserSerializer
         return Response(UserSerializer(updated_usuario).data, status=status.HTTP_200_OK)
 

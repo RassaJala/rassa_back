@@ -8,8 +8,11 @@ Spanish error messages preserved per spec LOG-5.
 """
 
 from django.contrib.auth.models import User
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from rassa.models import Localidad, Persona, Rol, Usuario
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -58,13 +61,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """Serializer para ver la información detallada del perfil del usuario."""
-    
-    id = serializers.IntegerField(source="fk_user.id", read_only=True)
+
+    id_usuario = serializers.IntegerField(read_only=True)
     email = serializers.EmailField(source="correo", read_only=True)
-    phone_number = serializers.CharField(source="telefono", read_only=True)
+    telefono = serializers.CharField(read_only=True)
     role = serializers.SerializerMethodField()
-    first_name = serializers.CharField(source="fk_persona.nombre", read_only=True)
-    last_name = serializers.CharField(source="fk_persona.apellido_paterno", read_only=True)
+    nombre = serializers.CharField(source="fk_persona.nombre", read_only=True)
+    apellido_paterno = serializers.CharField(source="fk_persona.apellido_paterno", read_only=True)
     apellido_materno = serializers.CharField(source="fk_persona.apellido_materno", read_only=True)
     fecha_nacimiento = serializers.DateField(source="fk_persona.fecha_nacimiento", read_only=True)
     genero = serializers.CharField(source="fk_persona.sexo", read_only=True)
@@ -73,15 +76,14 @@ class UserSerializer(serializers.ModelSerializer):
     localidad_nombre = serializers.SerializerMethodField()
 
     class Meta:
-        from rassa.models import Usuario
         model = Usuario
         fields = [
-            "id",
+            "id_usuario",
             "email",
-            "phone_number",
+            "telefono",
             "role",
-            "first_name",
-            "last_name",
+            "nombre",
+            "apellido_paterno",
             "apellido_materno",
             "fecha_nacimiento",
             "genero",
@@ -124,8 +126,6 @@ class RegisterSerializer(serializers.Serializer):
     fk_localidad = serializers.IntegerField()
 
     def validate_email(self, value):
-        from django.contrib.auth.models import User
-        from rassa.models import Usuario
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Este correo ya está registrado.")
         if Usuario.objects.filter(correo=value).exists():
@@ -133,30 +133,25 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def validate_fk_localidad(self, value):
-        from rassa.models import Localidad
         if not Localidad.objects.filter(id_localidad=value).exists():
             raise serializers.ValidationError("La localidad especificada no existe.")
         return value
 
     def create(self, validated_data):
-        from django.contrib.auth.models import User
-        from django.db import transaction
-        from rassa.models import Persona, Rol, Usuario, Localidad
-
         email = validated_data["email"]
         password = validated_data["password"]
         role_front = validated_data["role"]
-        
+
         role_mapping = {
             "buyer": "Cliente",
             "farmer": "Agricultor",
         }
         db_role_name = role_mapping.get(role_front)
-        
+
         try:
             rol = Rol.objects.get(nombre_rol=db_role_name)
-        except Rol.DoesNotExist:
-            raise serializers.ValidationError({"role": f"El rol {db_role_name} no existe en el sistema."})
+        except Rol.DoesNotExist as err:
+            raise serializers.ValidationError({"role": f"El rol {db_role_name} no existe en el sistema."}) from err
 
         localidad_id = validated_data["fk_localidad"]
         localidad = Localidad.objects.get(id_localidad=localidad_id)
@@ -167,7 +162,7 @@ class RegisterSerializer(serializers.Serializer):
                 email=email,
                 password=password
             )
-            
+
             persona = Persona.objects.create(
                 nombre=validated_data["nombre"],
                 apellido_paterno=validated_data["apellido_paterno"],
@@ -177,7 +172,7 @@ class RegisterSerializer(serializers.Serializer):
                 domicilio=validated_data["domicilio"],
                 fk_localidad=localidad
             )
-            
+
             usuario = Usuario.objects.create(
                 fk_user=user,
                 fk_persona=persona,
@@ -185,7 +180,7 @@ class RegisterSerializer(serializers.Serializer):
                 correo=email,
                 fk_rol=rol
             )
-            
+
         return usuario
 
 
@@ -202,15 +197,11 @@ class ProfileUpdateSerializer(serializers.Serializer):
     fk_localidad = serializers.IntegerField(required=False)
 
     def validate_fk_localidad(self, value):
-        from rassa.models import Localidad
         if not Localidad.objects.filter(id_localidad=value).exists():
             raise serializers.ValidationError("La localidad especificada no existe.")
         return value
 
     def update(self, instance, validated_data):
-        from rassa.models import Localidad
-        from django.db import transaction
-
         persona = instance.fk_persona
 
         with transaction.atomic():
@@ -232,7 +223,7 @@ class ProfileUpdateSerializer(serializers.Serializer):
                 persona.domicilio = validated_data["domicilio"]
             if "fk_localidad" in validated_data:
                 persona.fk_localidad = Localidad.objects.get(id_localidad=validated_data["fk_localidad"])
-            
+
             persona.save()
 
         return instance
