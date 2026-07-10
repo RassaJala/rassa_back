@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,7 +10,7 @@ from rassa.auth_serializers import (
     RegisterSerializer,
     UserSerializer,
 )
-from rassa.models import Log, Usuario
+from rassa.models import Localidad, Log, Municipio, Usuario
 
 
 def _log(user, descripcion, request):
@@ -134,3 +134,50 @@ class AuthHealthView(APIView):
 
     def get(self, request):
         return _ok(message="ok")
+
+
+# ======================================================================
+# Municipios y Localidades (catálogos públicos)
+# ======================================================================
+
+
+class MunicipioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Municipio
+        fields = ["id_municipio", "nombre"]
+
+
+class LocalidadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Localidad
+        fields = ["id_localidad", "nombre", "fk_municipio"]
+
+
+class MunicipioListView(APIView):
+    """Lista todos los municipios (público)."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        municipios = Municipio.objects.all().order_by("nombre")
+        serializer = MunicipioSerializer(municipios, many=True)
+        return _ok(data=serializer.data)
+
+
+class LocalidadPorMunicipioView(APIView):
+    """Lista las localidades de un municipio específico (público)."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        municipio_id = request.query_params.get("municipio_id")
+
+        if not municipio_id:
+            return Response(
+                {"municipio_id": ["El parámetro municipio_id es requerido."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        localidades = Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
+        serializer = LocalidadSerializer(localidades, many=True)
+        return _ok(data=serializer.data)
