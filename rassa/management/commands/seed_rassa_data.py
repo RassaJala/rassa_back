@@ -17,7 +17,6 @@ from django.db import transaction
 from django.utils import timezone
 
 from rassa.models import (
-    Log,
     CategoriaProducto,
     Conversacion,
     Corte,
@@ -32,6 +31,7 @@ from rassa.models import (
     LimiteCliente,
     Liquidacion,
     Localidad,
+    Log,
     Mensaje,
     MensajeDocumento,
     Merma,
