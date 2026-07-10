@@ -28,5 +28,3 @@ urlpatterns = [
     path("api/auth/me/", MeView.as_view(), name="me"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
 ]
-
-
