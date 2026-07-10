@@ -1,0 +1,15 @@
+meta {
+  name: Listar municipios
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/municipios/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
