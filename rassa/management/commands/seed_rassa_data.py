@@ -126,7 +126,6 @@ class Command(BaseCommand):
             Mensaje,
             Integrante,
             Conversacion,
-            Log,
             Merma,
             HistorialEstadoPedido,
             Corte,
