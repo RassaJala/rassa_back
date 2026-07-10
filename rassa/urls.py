@@ -26,7 +26,6 @@ def auth_me(request):
     persona = usuario.fk_persona if usuario else None
 
     if request.method == "PATCH":
-        errors = {}
         if persona:
             if "nombre" in request.data:
                 persona.nombre = request.data["nombre"]
