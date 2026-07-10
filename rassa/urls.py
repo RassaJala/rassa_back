@@ -17,7 +17,14 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.models import Log, Usuario
-from rassa.views import AuthHealthView, ChangePasswordView, MeView, RegisterView
+from rassa.views import (
+    AuthHealthView,
+    ChangePasswordView,
+    LocalidadByMunicipioListView,
+    MeView,
+    MunicipioListView,
+    RegisterView,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,4 +77,6 @@ urlpatterns = [
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
     path("api/logs/", include("logs.urls")),
+    path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
+    path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
 ]

@@ -437,3 +437,63 @@ class ProfileAndAuthEndpointsTest(APITestCase):
             **self._auth_header(token),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    # ==================================================================
+    # CATALOGOS: municipios and localidades
+    # ==================================================================
+
+    def test_list_municipios_success(self):
+        """GET /municipios/ returns list of municipios."""
+        Municipio.objects.create(id_municipio=100, nombre="Test Municipio")
+        token = self._login()
+        response = self.client.get(reverse("municipios"), **self._auth_header(token))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data["data"]
+        self.assertIsInstance(data, list)
+        self.assertTrue(any(m["nombre"] == "Test Municipio" for m in data))
+
+    def test_list_municipios_unauthenticated(self):
+        """GET /municipios/ without token returns 401."""
+        response = self.client.get(reverse("municipios"))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_localidades_success(self):
+        """GET /localidades/?municipio_id=X returns localidades."""
+        token = self._login()
+        response = self.client.get(
+            reverse("localidades"),
+            {"municipio_id": self.localidad.fk_municipio_id},
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data["data"]
+        self.assertIsInstance(data, list)
+        self.assertTrue(any(loc["nombre"] == "Centro" for loc in data))
+
+    def test_list_localidades_missing_param(self):
+        """GET /localidades/ without municipio_id returns 400."""
+        token = self._login()
+        response = self.client.get(reverse("localidades"), **self._auth_header(token))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", response.data)
+        self.assertIn("requerido", response.data["municipio_id"])
+
+    def test_list_localidades_invalid_param(self):
+        """GET /localidades/?municipio_id=abc returns 400."""
+        token = self._login()
+        response = self.client.get(reverse("localidades"), {"municipio_id": "abc"}, **self._auth_header(token))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", response.data)
+        self.assertIn("entero", response.data["municipio_id"])
+
+    def test_list_localidades_unauthenticated(self):
+        """GET /localidades/ without token returns 401."""
+        response = self.client.get(reverse("localidades"), {"municipio_id": 1})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_localidades_nonexistent_municipio(self):
+        """GET /localidades/?municipio_id=99999 returns empty list."""
+        token = self._login()
+        response = self.client.get(reverse("localidades"), {"municipio_id": 99999}, **self._auth_header(token))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["data"], [])
