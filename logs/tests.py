@@ -9,12 +9,8 @@ from rassa.models import Log, Persona, Rol, Usuario
 
 
 def _create_test_user(rol_name="Admin"):
-    user = get_user_model().objects.create_user(
-        username="tester", email="tester@email.com", password="secret123"
-    )
-    rol, _ = Rol.objects.get_or_create(
-        nombre_rol=rol_name, defaults={"descripcion": f"{rol_name} test"}
-    )
+    user = get_user_model().objects.create_user(username="tester", email="tester@email.com", password="secret123")
+    rol, _ = Rol.objects.get_or_create(nombre_rol=rol_name, defaults={"descripcion": f"{rol_name} test"})
     persona = Persona.objects.create(
         nombre="Test",
         apellido_paterno="User",
