@@ -114,7 +114,7 @@
       },
       "tags": [],
       "request": {
-        "url": "{{base_url}}/api/logs/?action=login",
+        "url": "{{base_url}}/api/logs/?descripcion=login",
         "method": "GET",
         "headers": [
           {
@@ -145,7 +145,7 @@
       },
       "tags": [],
       "request": {
-        "url": "{{base_url}}/api/logs/?user=admin",
+        "url": "{{base_url}}/api/logs/?usuario_id=1",
         "method": "GET",
         "headers": [
           {
@@ -176,7 +176,7 @@
       },
       "tags": [],
       "request": {
-        "url": "{{base_url}}/api/logs/?date=2026-07-07",
+        "url": "{{base_url}}/api/logs/?start=2026-07-07&end=2026-07-07",
         "method": "GET",
         "headers": [
           {
@@ -207,7 +207,7 @@
       },
       "tags": [],
       "request": {
-        "url": "{{base_url}}/api/logs/?from_date=2026-07-01&to_date=2026-07-07",
+        "url": "{{base_url}}/api/logs/?start=2026-07-01&end=2026-07-07",
         "method": "GET",
         "headers": [
           {
