@@ -142,18 +142,20 @@ class AuthHealthView(APIView):
 # ======================================================================
 
 
-class MunicipioListView(APIView):
+class MunicipioListView(generics.ListAPIView):
     """List all municipios (requires authentication)."""
 
+    queryset = Municipio.objects.all().order_by("nombre")
+    serializer_class = MunicipioSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request):
-        municipios = Municipio.objects.all().order_by("nombre")
-        serializer = MunicipioSerializer(municipios, many=True)
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
         return _ok(data=serializer.data)
 
 
-class LocalidadByMunicipioView(APIView):
+class LocalidadByMunicipioListView(APIView):
     """List localidades for a given municipio (requires authentication)."""
 
     permission_classes = [permissions.IsAuthenticated]
