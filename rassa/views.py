@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -10,7 +10,8 @@ from rassa.auth_serializers import (
     RegisterSerializer,
     UserSerializer,
 )
-from rassa.models import Log, Usuario
+from rassa.catalogos_serializers import LocalidadSerializer, MunicipioSerializer
+from rassa.models import Localidad, Log, Municipio, Usuario
 
 
 def _log(user, descripcion, request):
@@ -134,3 +135,42 @@ class AuthHealthView(APIView):
 
     def get(self, request):
         return _ok(message="ok")
+
+
+# ======================================================================
+# Municipios y Localidades (catálogos)
+# ======================================================================
+
+
+class MunicipioListView(generics.ListAPIView):
+    """List all municipios (requires authentication)."""
+
+    queryset = Municipio.objects.all().order_by("nombre")
+    serializer_class = MunicipioSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        return _ok(data=response.data)
+
+
+class LocalidadByMunicipioListView(APIView):
+    """List localidades for a given municipio (requires authentication)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        raw = request.query_params.get("municipio_id")
+
+        if not raw:
+            raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
+
+        try:
+            municipio_id = int(raw)
+        except (ValueError, TypeError) as err:
+            raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
+
+        localidades = Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
+        serializer = LocalidadSerializer(localidades, many=True)
+        return _ok(data=serializer.data)
