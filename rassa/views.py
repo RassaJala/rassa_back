@@ -148,11 +148,11 @@ class MunicipioListView(generics.ListAPIView):
     queryset = Municipio.objects.all().order_by("nombre")
     serializer_class = MunicipioSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        return _ok(data=serializer.data)
+        response = super().list(request, *args, **kwargs)
+        return _ok(data=response.data)
 
 
 class LocalidadByMunicipioListView(APIView):
