@@ -112,6 +112,7 @@ EXCLUDED_PATHS = [
     "/api/token/",
     "/api/token/refresh/",
 ]
+ADMIN_ROLE_NAME = "Admin"
 
 # === SIMPLE JWT ===
 SIMPLE_JWT = {
