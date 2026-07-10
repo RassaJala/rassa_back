@@ -8,10 +8,10 @@ Endpoints disponibles:
 
 from django.contrib import admin
 from django.contrib.auth.models import User
-from django.http import JsonResponse
 from django.urls import include, path
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
@@ -20,9 +20,33 @@ from rassa.models import Log, Usuario
 from rassa.views import AuthHealthView, ChangePasswordView, RegisterView
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
 def auth_me(request):
     usuario = Usuario.objects.filter(fk_user=request.user).select_related("fk_persona", "fk_rol").first()
+    persona = usuario.fk_persona if usuario else None
+
+    if request.method == "PATCH":
+        errors = {}
+        if persona:
+            if "nombre" in request.data:
+                persona.nombre = request.data["nombre"]
+            if "apellidos" in request.data:
+                persona.apellido_paterno = request.data["apellidos"]
+            if "fecha_nacimiento" in request.data:
+                persona.fecha_nacimiento = request.data["fecha_nacimiento"]
+            if "direccion" in request.data:
+                persona.domicilio = request.data["direccion"]
+            persona.save()
+        return Response({
+            "id": request.user.id,
+            "nombre": persona.nombre if persona else None,
+            "apellidos": persona.apellido_paterno if persona else None,
+            "email": request.user.email,
+            "fecha_nacimiento": str(persona.fecha_nacimiento) if persona else None,
+            "direccion": persona.domicilio if persona else None,
+        })
+
     data = {
         "id": request.user.id,
         "email": request.user.email,
@@ -33,7 +57,7 @@ def auth_me(request):
             "id_usuario": usuario.id_usuario,
             "telefono": usuario.telefono,
             "rol": usuario.fk_rol.nombre_rol if usuario.fk_rol else None,
-            "nombre": f"{usuario.fk_persona.nombre} {usuario.fk_persona.apellido_paterno}" if usuario.fk_persona else None,
+            "nombre": f"{persona.nombre} {persona.apellido_paterno}" if persona else None,
         })
     return Response(data)
 
@@ -45,19 +69,35 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
         email = request.data.get("email")
+
+        def _get_ip():
+            ip = request.META.get("HTTP_X_FORWARDED_FOR")
+            if ip:
+                return ip.split(",")[0].strip()
+            return request.META.get("REMOTE_ADDR", "0.0.0.0")
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            Log.objects.create(
+                fk_usuario=None,
+                descripcion=f"login_fallido POST /api/token/ email={email}",
+                ip=_get_ip(),
+                dispositivo=request.META.get("HTTP_USER_AGENT", ""),
+            )
+            raise
+
         user = User.objects.filter(email=email).first()
         usuario = Usuario.objects.filter(fk_user=user).first() if user else None
         Log.objects.create(
             fk_usuario=usuario,
             descripcion="login POST /api/token/",
-            ip=request.META.get("REMOTE_ADDR", "0.0.0.0"),
+            ip=_get_ip(),
             dispositivo=request.META.get("HTTP_USER_AGENT", ""),
         )
 
-        return JsonResponse(serializer.validated_data, status=status.HTTP_200_OK)
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 urlpatterns = [
