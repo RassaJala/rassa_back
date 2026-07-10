@@ -6,8 +6,9 @@ Endpoints disponibles:
     - /api/token/refresh/  → Refresh token
 """
 
+import logging
+
 from django.contrib import admin
-from django.contrib.auth.models import User
 from django.urls import include, path
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -15,9 +16,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.models import Log, Usuario
 from rassa.views import AuthHealthView, ChangePasswordView, RegisterView
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(["GET", "PATCH"])
@@ -74,31 +78,32 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         serializer = self.get_serializer(data=request.data)
         email = request.data.get("email")
 
-        def _get_ip():
-            ip = request.META.get("HTTP_X_FORWARDED_FOR")
-            if ip:
-                return ip.split(",")[0].strip()
-            return request.META.get("REMOTE_ADDR", "0.0.0.0")
-
         try:
             serializer.is_valid(raise_exception=True)
         except Exception:
-            Log.objects.create(
-                fk_usuario=None,
-                descripcion=f"login_fallido POST /api/token/ email={email}",
-                ip=_get_ip(),
-                dispositivo=request.META.get("HTTP_USER_AGENT", ""),
-            )
+            try:
+                Log.objects.create(
+                    fk_usuario=None,
+                    descripcion=f"login_fallido POST /api/token/ email={email}",
+                    ip=get_client_ip(request),
+                    dispositivo=request.META.get("HTTP_USER_AGENT", ""),
+                )
+            except Exception as log_exc:
+                logger.warning("Error al guardar log de login fallido: %s", log_exc)
             raise
 
-        user = User.objects.filter(email=email).first()
+        # Use serializer.user (validated during is_valid) instead of re-querying — avoids TOCTOU race
+        user = getattr(serializer, "user", None)
         usuario = Usuario.objects.filter(fk_user=user).first() if user else None
-        Log.objects.create(
-            fk_usuario=usuario,
-            descripcion="login POST /api/token/",
-            ip=_get_ip(),
-            dispositivo=request.META.get("HTTP_USER_AGENT", ""),
-        )
+        try:
+            Log.objects.create(
+                fk_usuario=usuario,
+                descripcion="login POST /api/token/",
+                ip=get_client_ip(request),
+                dispositivo=request.META.get("HTTP_USER_AGENT", ""),
+            )
+        except Exception as log_exc:
+            logger.warning("Error al guardar log de login exitoso: %s", log_exc)
 
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
