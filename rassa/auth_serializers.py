@@ -157,11 +157,7 @@ class RegisterSerializer(serializers.Serializer):
         localidad = Localidad.objects.get(id_localidad=localidad_id)
 
         with transaction.atomic():
-            user = User.objects.create_user(
-                username=email,
-                email=email,
-                password=password
-            )
+            user = User.objects.create_user(username=email, email=email, password=password)
 
             persona = Persona.objects.create(
                 nombre=validated_data["nombre"],
@@ -170,15 +166,11 @@ class RegisterSerializer(serializers.Serializer):
                 fecha_nacimiento=validated_data["fecha_nacimiento"],
                 sexo=validated_data["sexo"],
                 domicilio=validated_data["domicilio"],
-                fk_localidad=localidad
+                fk_localidad=localidad,
             )
 
             usuario = Usuario.objects.create(
-                fk_user=user,
-                fk_persona=persona,
-                telefono=validated_data["telefono"],
-                correo=email,
-                fk_rol=rol
+                fk_user=user, fk_persona=persona, telefono=validated_data["telefono"], correo=email, fk_rol=rol
             )
 
         return usuario
@@ -246,4 +238,3 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data["new_password"])
         user.save()
         return user
-

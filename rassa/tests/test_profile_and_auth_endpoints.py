@@ -24,9 +24,7 @@ class ProfileAndAuthEndpointsTest(APITestCase):
 
         # Crear localidad de prueba
         self.municipio = Municipio.objects.create(nombre="Celaya")
-        self.localidad = Localidad.objects.create(
-            nombre="Centro", fk_municipio=self.municipio
-        )
+        self.localidad = Localidad.objects.create(nombre="Centro", fk_municipio=self.municipio)
 
         # Crear un usuario inicial para probar autenticación
         self.email = "test@rassa.com"

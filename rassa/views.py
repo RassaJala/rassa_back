@@ -90,4 +90,3 @@ class ChangePasswordView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
