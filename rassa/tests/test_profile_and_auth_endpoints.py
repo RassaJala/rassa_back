@@ -475,14 +475,20 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         token = self._login()
         response = self.client.get(reverse("localidades"), **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("municipio_id", response.data)
+        self.assertEqual(
+            response.data["municipio_id"],
+            "El parámetro municipio_id es requerido.",
+        )
 
     def test_list_localidades_invalid_param(self):
         """GET /localidades/?municipio_id=abc returns 400."""
         token = self._login()
         response = self.client.get(reverse("localidades"), {"municipio_id": "abc"}, **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("municipio_id", response.data)
+        self.assertEqual(
+            response.data["municipio_id"],
+            "municipio_id debe ser un número entero válido.",
+        )
 
     def test_list_localidades_unauthenticated(self):
         """GET /localidades/ without token returns 401."""
