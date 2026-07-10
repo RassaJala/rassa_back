@@ -40,8 +40,10 @@ def _make_middleware(get_response=None):
     from logs.middleware import ActivityLogMiddleware
 
     if get_response is None:
+
         def _dummy_response(req):
             return type("Resp", (), {})()
+
         get_response = _dummy_response
     return ActivityLogMiddleware(get_response)
 
