@@ -7,7 +7,6 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from rassa.models import Log, Persona, Rol, Usuario
 
-
 _user_counter = 0
 
 
@@ -41,7 +40,9 @@ def _make_middleware(get_response=None):
     from logs.middleware import ActivityLogMiddleware
 
     if get_response is None:
-        get_response = lambda req: type("Resp", (), {})()
+        def _dummy_response(req):
+            return type("Resp", (), {})()
+        get_response = _dummy_response
     return ActivityLogMiddleware(get_response)
 
 
@@ -115,12 +116,10 @@ class ActivityLogMiddlewareTest(TestCase):
 
     def test_excluded_paths_read_at_call_time(self):
         """excluded_paths should be read from settings on each call, not cached at init."""
-        from django.conf import settings
-
         request = self.factory.post("/admin/test/")
         request.user = self.user
 
-        middleware = _make_middleware()
+        _make_middleware()
         request.path = "/some-path/"
         self.assertEqual(Log.objects.count(), 0)
 
@@ -255,8 +254,12 @@ class LogViewSetTest(TestCase):
         self.assertEqual(response.data["id_log"], log.id_log)
 
     def test_filter_by_descripcion(self):
-        Log.objects.create(fk_usuario=self.admin_usuario, descripcion="create POST /api/items/", ip="1.1.1.1", dispositivo="a")
-        Log.objects.create(fk_usuario=self.admin_usuario, descripcion="delete POST /api/items/", ip="2.2.2.2", dispositivo="b")
+        Log.objects.create(
+            fk_usuario=self.admin_usuario, descripcion="create POST /api/items/", ip="1.1.1.1", dispositivo="a"
+        )
+        Log.objects.create(
+            fk_usuario=self.admin_usuario, descripcion="delete POST /api/items/", ip="2.2.2.2", dispositivo="b"
+        )
         from logs.views import ActivityLogViewSet
 
         request = self.factory.get("/api/logs/?descripcion=create")
@@ -389,7 +392,7 @@ class LoginLogTest(TestCase):
         data = self._login_data()
         request = self.factory.post("/api/token/", data, format="json")
 
-        with patch("rassa.urls.Usuario.objects.filter", wraps=Usuario.objects.filter) as mock_filter:
+        with patch("rassa.urls.Usuario.objects.filter", wraps=Usuario.objects.filter):
             view = CustomTokenObtainPairView.as_view()
             response = view(request)
 
