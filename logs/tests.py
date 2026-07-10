@@ -332,42 +332,44 @@ class AuthMeEndpointTest(TestCase):
 
     def test_unauthenticated_returns_401(self):
         """C1: Verify /api/auth/me/ rejects unauthenticated requests."""
-        request = self.factory.get("/api/auth/me/")
-        from rassa.urls import auth_me
+        from rassa.views import MeView
 
-        response = auth_me(request)
+        request = self.factory.get("/api/auth/me/")
+        response = MeView.as_view()(request)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertIn("detail", response.data)
 
     def test_get_returns_user_data(self):
+        from rassa.views import MeView
+
         request = self.factory.get("/api/auth/me/")
         force_authenticate(request, user=self.user)
-        from rassa.urls import auth_me
-
-        response = auth_me(request)
+        response = MeView.as_view()(request)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["email"], self.user.email)
-        self.assertEqual(response.data["id_usuario"], self.usuario.id_usuario)
+        self.assertEqual(response.data["data"]["email"], self.user.email)
+        self.assertEqual(response.data["data"]["id_usuario"], self.usuario.id_usuario)
 
     def test_patch_updates_profile_and_persists(self):
         """C2: Verify PATCH updates the DB, not just the response."""
+        from rassa.views import MeView
+
         request = self.factory.patch(
             "/api/auth/me/",
-            {"nombre": "Nuevo", "apellidos": "Nombre"},
+            {"nombre": "Nuevo", "apellido_paterno": "NuevoApellido"},
             format="json",
         )
         force_authenticate(request, user=self.user)
-        from rassa.urls import auth_me
-
-        response = auth_me(request)
+        response = MeView.as_view()(request)
+        # MeView wraps data in _ok() -> {"data": ...}
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["nombre"], "Nuevo")
-        self.assertEqual(response.data["apellidos"], "Nombre")
+        self.assertIn("data", response.data)
+        updated = response.data["data"]
+        self.assertEqual(updated["nombre"], "Nuevo")
 
         # Verify persistence in DB
         persona = Persona.objects.get(pk=self.usuario.fk_persona.pk)
         self.assertEqual(persona.nombre, "Nuevo")
-        self.assertEqual(persona.apellido_paterno, "Nombre")
+        self.assertEqual(persona.apellido_paterno, "NuevoApellido")
 
 
 class LoginLogTest(TestCase):
@@ -417,14 +419,14 @@ class LoginLogTest(TestCase):
         view = CustomTokenObtainPairView.as_view()
         response = view(request)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         log = Log.objects.filter(descripcion__startswith="login_fallido").first()
         self.assertIsNotNone(log)
         self.assertIn(self.user.email, log.descripcion)
         self.assertIsNone(log.fk_usuario)
 
     def test_failed_login_db_failure_does_not_mask_error(self):
-        """C3: DB failure on log creation should not swallow original ValidationError."""
+        """C3: DB failure on log creation should not swallow original auth error."""
         from rassa.urls import CustomTokenObtainPairView
 
         data = self._login_data(password="wrongpass")
@@ -434,8 +436,8 @@ class LoginLogTest(TestCase):
             view = CustomTokenObtainPairView.as_view()
             response = view(request)
 
-        # Should still return 400 (ValidationError), not 500
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Should still return 401 (InvalidToken), not 500
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_db_failure_does_not_block_token(self):
         """C7: DB failure on post-login log should not prevent token delivery."""
