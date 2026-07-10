@@ -68,6 +68,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if user is None or not user.check_password(password) or not user.is_active:
             raise InvalidToken("Correo electrónico o contraseña inválidos.")
 
+        self.user = user  # Expose validated user for the view (avoids TOCTOU re-query)
+
         refresh = self.get_token(user)
         return {
             "access": str(refresh.access_token),
