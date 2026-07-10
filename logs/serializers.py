@@ -18,4 +18,4 @@ class LogSerializer(serializers.ModelSerializer):
             "creado_en",
             "estado",
         ]
-        read_only_fields = fields
+        read_only_fields = fields[:]

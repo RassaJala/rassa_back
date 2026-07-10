@@ -121,9 +121,14 @@ class ActivityLogMiddlewareTest(TestCase):
         request = self.factory.post("/admin/test/")
         request.user = self.user
 
-        _make_middleware()
-        request.path = "/some-path/"
-        self.assertEqual(Log.objects.count(), 0)
+        middleware = _make_middleware()
+        # Cambiar path DESPUES de crear el middleware, antes de llamarlo
+        request.path = "/api/some-path/"
+        middleware(request)
+
+        self.assertEqual(Log.objects.count(), 1)
+        log = Log.objects.first()
+        self.assertIn("POST /api/some-path/", log.descripcion)
 
     def test_uses_x_forwarded_for(self):
         request = self.factory.post("/api/alguna/")
