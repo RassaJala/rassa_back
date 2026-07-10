@@ -1,0 +1,29 @@
+meta {
+  name: Patch Me
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/auth/me/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "telefono": "4619998888",
+    "nombre": "Maria Elena",
+    "apellido_paterno": "Garcia Rodriguez",
+    "apellido_materno": "Lopez Martinez",
+    "fecha_nacimiento": "1995-06-15",
+    "sexo": "F",
+    "domicilio": "Av. Reforma 456",
+    "fk_localidad": 1
+  }
+}
