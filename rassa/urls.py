@@ -11,7 +11,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
-from rassa.views import ChangePasswordView, MeView, RegisterView
+from rassa.views import AuthHealthView, ChangePasswordView, MeView, RegisterView
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -27,4 +27,5 @@ urlpatterns = [
     path("api/auth/register/", RegisterView.as_view(), name="register"),
     path("api/auth/me/", MeView.as_view(), name="me"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
+    path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
 ]

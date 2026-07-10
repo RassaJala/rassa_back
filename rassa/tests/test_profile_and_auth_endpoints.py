@@ -383,3 +383,57 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         token = self._login(email="noprofile2@test.com", password="123pass")
         response = self.client.patch(reverse("me"), {"nombre": "X"}, format="json", **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ==================================================================
+    # HEALTH CHECK
+    # ==================================================================
+
+    def test_auth_health_check(self):
+        """GET /auth/health/ returns 200."""
+        response = self.client.get(reverse("auth_health"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["message"], "ok")
+
+    # ==================================================================
+    # TOKEN BLACKLIST on password change
+    # ==================================================================
+
+    def test_change_password_blacklists_refresh_token(self):
+        """Providing refresh_token on change password blacklists it."""
+        token = self._login()
+        refresh_token = self.client.post(
+            reverse("token_obtain_pair"),
+            {"email": self.email, "password": self.password},
+            format="json",
+        ).data.get("refresh")
+
+        response = self.client.post(
+            reverse("change_password"),
+            {
+                "old_password": self.password,
+                "new_password": "newsecurepassword123",
+                "refresh_token": refresh_token,
+            },
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify the blacklisted token can no longer refresh
+        refresh_resp = self.client.post(
+            reverse("token_refresh"),
+            {"refresh": refresh_token},
+            format="json",
+        )
+        self.assertNotEqual(refresh_resp.status_code, status.HTTP_200_OK)
+
+    def test_change_password_without_refresh_token(self):
+        """Change password works without providing refresh_token."""
+        token = self._login()
+        response = self.client.post(
+            reverse("change_password"),
+            {"old_password": self.password, "new_password": "anothernewpassword456"},
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
