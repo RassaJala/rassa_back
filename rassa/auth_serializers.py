@@ -245,13 +245,13 @@ class ProfileUpdateSerializer(serializers.Serializer):
 class ChangePasswordSerializer(serializers.Serializer):
     """Serializer para cambiar la contraseña del usuario.
 
-    Nota: Los tokens JWT existentes no se invalidan automáticamente. Si se
-    requiere invalidación inmediata, debe implementarse una lista negra de
-    tokens (ej: rest_framework_simplejwt.token_blacklist).
+    El refresh token se invalida en la vista (lista negra) para evitar que
+    el token anterior siga funcionando después del cambio de contraseña.
     """
 
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=6)
+    refresh_token = serializers.CharField(write_only=True, required=False)
 
     def validate_old_password(self, value):
         user = self.context["request"].user

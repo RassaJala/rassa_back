@@ -95,7 +95,15 @@ class MeView(APIView):
 
 
 class ChangePasswordView(APIView):
-    """Endpoint para cambiar la contraseña del usuario autenticado."""
+    """Endpoint para cambiar la contraseña del usuario autenticado.
+
+    Si se incluye un `refresh_token` en el cuerpo, se invalida (lista negra)
+    para que el token anterior deje de funcionar.
+
+    Nota: Los tokens access existentes siguen siendo válidos hasta su expiración
+    natural (2 horas por defecto). Para invalidación completa se requiere
+    rotación de tokens del lado del cliente.
+    """
 
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "change_password"
@@ -105,6 +113,24 @@ class ChangePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
+        # Blacklist the refresh token if provided
+        refresh_token_str = request.data.get("refresh_token")
+        if refresh_token_str:
+            try:
+                token = RefreshToken(refresh_token_str)
+                token.blacklist()
+            except Exception:
+                pass  # Invalid token — just skip blacklisting
+
         _log(request.user, "Cambio de contraseña", request)
 
         return _ok(message="Contraseña cambiada exitosamente.")
+
+
+class AuthHealthView(APIView):
+    """Health check para el subsistema de autenticación."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return _ok(message="ok")
