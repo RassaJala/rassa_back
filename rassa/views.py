@@ -154,9 +154,9 @@ class LocalidadSerializer(serializers.ModelSerializer):
 
 
 class MunicipioListView(APIView):
-    """Lista todos los municipios (público)."""
+    """Lista todos los municipios (requiere autenticación)."""
 
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         municipios = Municipio.objects.all().order_by("nombre")
@@ -165,9 +165,9 @@ class MunicipioListView(APIView):
 
 
 class LocalidadPorMunicipioView(APIView):
-    """Lista las localidades de un municipio específico (público)."""
+    """Lista las localidades de un municipio específico (requiere autenticación)."""
 
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         municipio_id = request.query_params.get("municipio_id")
