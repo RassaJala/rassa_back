@@ -36,14 +36,16 @@ def auth_me(request):
             if "direccion" in request.data:
                 persona.domicilio = request.data["direccion"]
             persona.save()
-        return Response({
-            "id": request.user.id,
-            "nombre": persona.nombre if persona else None,
-            "apellidos": persona.apellido_paterno if persona else None,
-            "email": request.user.email,
-            "fecha_nacimiento": str(persona.fecha_nacimiento) if persona else None,
-            "direccion": persona.domicilio if persona else None,
-        })
+        return Response(
+            {
+                "id": request.user.id,
+                "nombre": persona.nombre if persona else None,
+                "apellidos": persona.apellido_paterno if persona else None,
+                "email": request.user.email,
+                "fecha_nacimiento": str(persona.fecha_nacimiento) if persona else None,
+                "direccion": persona.domicilio if persona else None,
+            }
+        )
 
     data = {
         "id": request.user.id,
@@ -51,12 +53,14 @@ def auth_me(request):
         "username": request.user.username,
     }
     if usuario:
-        data.update({
-            "id_usuario": usuario.id_usuario,
-            "telefono": usuario.telefono,
-            "rol": usuario.fk_rol.nombre_rol if usuario.fk_rol else None,
-            "nombre": f"{persona.nombre} {persona.apellido_paterno}" if persona else None,
-        })
+        data.update(
+            {
+                "id_usuario": usuario.id_usuario,
+                "telefono": usuario.telefono,
+                "rol": usuario.fk_rol.nombre_rol if usuario.fk_rol else None,
+                "nombre": f"{persona.nombre} {persona.apellido_paterno}" if persona else None,
+            }
+        )
     return Response(data)
 
 
