@@ -1,5 +1,5 @@
-from rest_framework import generics, permissions, serializers, status
-from rest_framework.exceptions import NotFound
+from rest_framework import generics, permissions, status
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -10,6 +10,7 @@ from rassa.auth_serializers import (
     RegisterSerializer,
     UserSerializer,
 )
+from rassa.catalogos_serializers import LocalidadSerializer, MunicipioSerializer
 from rassa.models import Localidad, Log, Municipio, Usuario
 
 
@@ -137,24 +138,12 @@ class AuthHealthView(APIView):
 
 
 # ======================================================================
-# Municipios y Localidades (catálogos públicos)
+# Municipios y Localidades (catálogos)
 # ======================================================================
 
 
-class MunicipioSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Municipio
-        fields = ["id_municipio", "nombre"]
-
-
-class LocalidadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Localidad
-        fields = ["id_localidad", "nombre", "fk_municipio"]
-
-
 class MunicipioListView(APIView):
-    """Lista todos los municipios (requiere autenticación)."""
+    """List all municipios (requires authentication)."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -164,19 +153,21 @@ class MunicipioListView(APIView):
         return _ok(data=serializer.data)
 
 
-class LocalidadPorMunicipioView(APIView):
-    """Lista las localidades de un municipio específico (requiere autenticación)."""
+class LocalidadByMunicipioView(APIView):
+    """List localidades for a given municipio (requires authentication)."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        municipio_id = request.query_params.get("municipio_id")
+        raw = request.query_params.get("municipio_id")
 
-        if not municipio_id:
-            return Response(
-                {"municipio_id": ["El parámetro municipio_id es requerido."]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not raw:
+            raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
+
+        try:
+            municipio_id = int(raw)
+        except (ValueError, TypeError) as err:
+            raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
 
         localidades = Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
         serializer = LocalidadSerializer(localidades, many=True)
