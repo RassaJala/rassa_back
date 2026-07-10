@@ -12,10 +12,8 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
-from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from rassa.models import Localidad, Persona, Rol, Usuario
 
@@ -195,8 +193,8 @@ class RegisterSerializer(serializers.Serializer):
                     correo=email,
                     fk_rol=rol,
                 )
-        except IntegrityError:
-            raise serializers.ValidationError({"email": "Este correo ya está registrado."})
+        except IntegrityError as err:
+            raise serializers.ValidationError({"email": "Este correo ya está registrado."}) from err
 
         return usuario
 
