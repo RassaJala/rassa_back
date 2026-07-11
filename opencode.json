@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "postgres": {
+      "type": "local",
+      "command": ["bun", "--env-file=.env", "scripts/pg-mcp.ts"],
+      "enabled": true
+    }
+  }
+}
