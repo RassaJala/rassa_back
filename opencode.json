@@ -3,7 +3,7 @@
   "mcp": {
     "postgres": {
       "type": "local",
-      "command": ["bun", "--env-file=.env", "scripts/pg-mcp.ts"],
+      "command": ["bash", "scripts/pg-mcp.sh"],
       "enabled": true
     }
   }
