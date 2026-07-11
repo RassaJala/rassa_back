@@ -17,6 +17,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.models import Log, Usuario
+from rassa.productos_views import (
+    CategoriaListView,
+    ProductoDetailView,
+    ProductoImagenUploadView,
+    ProductoListView,
+    UnidadListView,
+)
 from rassa.views import (
     AuthHealthView,
     ChangePasswordView,
@@ -79,4 +86,9 @@ urlpatterns = [
     path("api/logs/", include("logs.urls")),
     path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
     path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
+    path("api/productos/", ProductoListView.as_view(), name="producto_list"),
+    path("api/productos/<int:pk>/", ProductoDetailView.as_view(), name="producto_detail"),
+    path("api/productos/<int:pk>/imagen/", ProductoImagenUploadView.as_view(), name="producto_imagen"),
+    path("api/categorias/", CategoriaListView.as_view(), name="categoria_list"),
+    path("api/unidades/", UnidadListView.as_view(), name="unidad_list"),
 ]
