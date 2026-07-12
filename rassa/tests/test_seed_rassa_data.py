@@ -16,6 +16,7 @@ from rassa.models import (
     PedidoCabecera,
     Producto,
     Rol,
+    Unidad,
     Usuario,
 )
 
@@ -58,3 +59,25 @@ class SeedRassaDataTest(TestCase):
         self.assertEqual(Usuario.objects.count(), initial_usuarios)
         self.assertEqual(Producto.objects.count(), initial_productos)
         self.assertEqual(PedidoCabecera.objects.count(), initial_pedidos)
+
+    def test_seed_unidades_have_nombre_and_abreviatura(self):
+        """Las unidades del seed exponen nombre y abreviatura para la API."""
+        call_command("seed_rassa_data")
+
+        kilogramo = Unidad.objects.get(id_unidad=1)
+        self.assertEqual(kilogramo.nombre, "Kilogramo")
+        self.assertEqual(kilogramo.abreviatura, "kg")
+
+    def test_create_unidad_after_seed_does_not_duplicate_pk(self):
+        """Tras el seed se puede crear una unidad nueva sin conflicto de ID."""
+        call_command("seed_rassa_data")
+
+        nueva = Unidad.objects.create(
+            nombre="Gramo",
+            abreviatura="g",
+            tipo="Gramo",
+            estado=True,
+        )
+
+        self.assertEqual(nueva.id_unidad, 6)
+        self.assertEqual(Unidad.objects.count(), 6)
