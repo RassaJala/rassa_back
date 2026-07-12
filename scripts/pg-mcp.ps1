@@ -12,10 +12,13 @@ $ErrorActionPreference = "Stop"
 if (-not $env:RASSA_JALA_DB_URL) {
   Write-Host "Error: RASSA_JALA_DB_URL no está definida en el shell." -ForegroundColor Red
   Write-Host ""
-  Write-Host "  Agregala a tu perfil de PowerShell:"
-  Write-Host "    notepad `$PROFILE"
-  Write-Host "    [Environment]::SetEnvironmentVariable('RASSA_JALA_DB_URL', 'postgresql://user:pass@host:5432/db', 'User')"
-  Write-Host "    `$env:RASSA_JALA_DB_URL = 'postgresql://user:pass@host:5432/db'"
+  Write-Host "  Para definirla en el sistema ejecuta el siguiente comando en PowerShell (requiere reiniciar la terminal actual para que se cargue):"
+  Write-Host "    [Environment]::SetEnvironmentVariable('RASSA_JALA_DB_URL', 'postgresql://user:pass@host:5432/rassa_jala_db', 'User') "
+  Write-Host ""
+  Write-Host "  Nota: Solo debes reemplazar los datos de la URL (user:pass@host:5432/db), el texto 'User' del final déjalo tal cual."
+  Write-Host ""
+  Write-Host "  Puedes sobrescribir el valor de la variable anterior ejecutando nuevamente:"
+  Write-Host "    [Environment]::SetEnvironmentVariable('RASSA_JALA_DB_URL', 'postgresql://NUEVO_USUARIO:PAS@HOST:5432/NUEVA_BD', 'User') "
   exit 1
 }
 

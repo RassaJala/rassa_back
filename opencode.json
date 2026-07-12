@@ -1,10 +1,24 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "postgres": {
+    "postgres-linux-bash": {
       "type": "local",
-      "command": ["bash", "scripts/pg-mcp.sh"],
-      "enabled": true
+      "command": [
+        "bash",
+        "scripts/pg-mcp.sh"
+      ],
+      "enabled": false
+    },
+    "postgres-win-pwsh": {
+      "type": "local",
+      "command": [
+        "powershell",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/pg-mcp.ps1"
+      ],
+      "enabled": false
     }
   }
 }
