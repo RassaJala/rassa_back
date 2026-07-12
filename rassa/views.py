@@ -159,7 +159,11 @@ class CatalogViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
         if response.status_code == status.HTTP_201_CREATED:
-            return _ok(data=response.data, message="Registro creado correctamente.", status_code=status.HTTP_201_CREATED)
+            return _ok(
+                data=response.data,
+                message="Registro creado correctamente.",
+                status_code=status.HTTP_201_CREATED,
+            )
         return response
 
     def update(self, request, *args, **kwargs):
