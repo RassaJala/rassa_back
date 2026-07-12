@@ -1,0 +1,15 @@
+meta {
+  name: Ver categoría
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/categorias/{{categoriaId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

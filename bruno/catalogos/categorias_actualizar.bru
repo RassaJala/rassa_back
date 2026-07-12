@@ -1,0 +1,22 @@
+meta {
+  name: Actualizar categoría
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/categorias/{{categoriaId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "nombre": "Frutas y Verduras"
+  }
+}
