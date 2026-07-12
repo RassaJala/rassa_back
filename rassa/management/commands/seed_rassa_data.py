@@ -225,13 +225,13 @@ class Command(BaseCommand):
         if connection.vendor != "postgresql":
             return
 
-        table = model._meta.db_table
-        pk = model._meta.pk.column
+        table = connection.ops.quote_name(model._meta.db_table)
+        pk = connection.ops.quote_name(model._meta.pk.column)
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT setval(pg_get_serial_sequence(%s, %s), "
-                "COALESCE((SELECT MAX(%s) FROM %s), 1), true)",
-                [table, pk, pk, table],
+                f"SELECT setval("
+                f"pg_get_serial_sequence('{model._meta.db_table}', '{model._meta.pk.column}'), "
+                f"COALESCE((SELECT MAX({pk}) FROM {table}), 1), true)"
             )
 
     def _seed_unidades(self):
