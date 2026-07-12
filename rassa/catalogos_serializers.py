@@ -31,18 +31,17 @@ class UnidadSerializer(serializers.ModelSerializer):
         fields = ["id_unidad", "nombre", "abreviatura", "estado", "creado_en"]
         extra_kwargs = {"nombre": {"required": True}, "abreviatura": {"required": True}}
 
-    def create(self, validated_data):
-        if not validated_data.get("nombre"):
-            raise serializers.ValidationError({"nombre": "Este campo es obligatorio."})
-        if not validated_data.get("abreviatura"):
-            raise serializers.ValidationError({"abreviatura": "Este campo es obligatorio."})
+    def _sync_tipo(self, validated_data, instance=None):
+        """Keep legacy `tipo` column aligned with `nombre` for backward compatibility."""
+        if "nombre" in validated_data and validated_data["nombre"]:
+            validated_data["tipo"] = validated_data["nombre"]
+        elif instance and instance.nombre:
+            validated_data["tipo"] = instance.nombre
 
-        validated_data["tipo"] = validated_data["nombre"]
+    def create(self, validated_data):
+        self._sync_tipo(validated_data)
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        if "nombre" in validated_data and validated_data["nombre"]:
-            validated_data["tipo"] = validated_data["nombre"]
-        elif instance.nombre:
-            validated_data["tipo"] = instance.nombre
+        self._sync_tipo(validated_data, instance)
         return super().update(instance, validated_data)
