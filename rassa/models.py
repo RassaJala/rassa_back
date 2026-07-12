@@ -57,7 +57,9 @@ class Unidad(models.Model):
     """Unidades de medida para productos (Kilogramo, Pieza, Manojo, etc.)."""
 
     id_unidad = models.AutoField(primary_key=True)
-    tipo = models.CharField(max_length=50)
+    tipo = models.CharField(max_length=50, blank=True, null=True)
+    nombre = models.CharField(max_length=100, blank=True, null=True)
+    abreviatura = models.CharField(max_length=20, blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -66,7 +68,7 @@ class Unidad(models.Model):
         ordering = ["id_unidad"]
 
     def __str__(self):
-        return str(self.tipo)
+        return str(self.nombre or self.tipo or self.abreviatura or self.id_unidad)
 
 
 class EstadoPedido(models.Model):

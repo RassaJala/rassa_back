@@ -1,0 +1,15 @@
+meta {
+  name: Listar categorías
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/categorias/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
