@@ -35,6 +35,7 @@ En el entorno local puedes usar:
 - baseUrl: http://localhost:8000
 - accessToken: token JWT obtenido del login
 - categoriaId: id de una categoría creada
+- unidadId: id de una unidad creada
 
 ## Ejemplo de payload para crear una unidad
 

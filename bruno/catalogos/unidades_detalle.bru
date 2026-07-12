@@ -1,0 +1,15 @@
+meta {
+  name: Ver unidad
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
