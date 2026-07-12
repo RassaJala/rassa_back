@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from rassa.models import (
@@ -220,16 +220,56 @@ class Command(BaseCommand):
             CategoriaProducto.objects.update_or_create(id_categoria=c["id_categoria"], defaults=c)
         self.stdout.write("  Categorías: OK")
 
+    def _reset_pk_sequence(self, model):
+        """Ajusta la secuencia de PostgreSQL tras insertar IDs fijos."""
+        if connection.vendor != "postgresql":
+            return
+
+        table = model._meta.db_table
+        pk = model._meta.pk.column
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT setval(pg_get_serial_sequence(%s, %s), "
+                "COALESCE((SELECT MAX(%s) FROM %s), 1), true)",
+                [table, pk, pk, table],
+            )
+
     def _seed_unidades(self):
         unidades = [
-            {"id_unidad": 1, "tipo": "Kilogramo"},
-            {"id_unidad": 2, "tipo": "Pieza"},
-            {"id_unidad": 3, "tipo": "Manojo"},
-            {"id_unidad": 4, "tipo": "Litro"},
-            {"id_unidad": 5, "tipo": "Docena"},
+            {
+                "id_unidad": 1,
+                "tipo": "Kilogramo",
+                "nombre": "Kilogramo",
+                "abreviatura": "kg",
+            },
+            {
+                "id_unidad": 2,
+                "tipo": "Pieza",
+                "nombre": "Pieza",
+                "abreviatura": "pz",
+            },
+            {
+                "id_unidad": 3,
+                "tipo": "Manojo",
+                "nombre": "Manojo",
+                "abreviatura": "mj",
+            },
+            {
+                "id_unidad": 4,
+                "tipo": "Litro",
+                "nombre": "Litro",
+                "abreviatura": "L",
+            },
+            {
+                "id_unidad": 5,
+                "tipo": "Docena",
+                "nombre": "Docena",
+                "abreviatura": "doc",
+            },
         ]
         for u in unidades:
             Unidad.objects.update_or_create(id_unidad=u["id_unidad"], defaults=u)
+        self._reset_pk_sequence(Unidad)
         self.stdout.write("  Unidades: OK")
 
     def _seed_estados_pedido(self):
