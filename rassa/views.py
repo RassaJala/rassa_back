@@ -172,12 +172,6 @@ class CatalogViewSet(viewsets.ModelViewSet):
             return _ok(data=response.data, message="Registro actualizado correctamente.")
         return response
 
-    def partial_update(self, request, *args, **kwargs):
-        response = super().partial_update(request, *args, **kwargs)
-        if response.status_code == status.HTTP_200_OK:
-            return _ok(data=response.data, message="Registro actualizado correctamente.")
-        return response
-
 
 class CategoriaProductoViewSet(CatalogViewSet):
     queryset = CategoriaProducto.objects.all().order_by("id_categoria")
