@@ -1,0 +1,15 @@
+meta {
+  name: Eliminar unidad
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

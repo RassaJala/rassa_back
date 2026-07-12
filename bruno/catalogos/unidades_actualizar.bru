@@ -1,0 +1,22 @@
+meta {
+  name: Actualizar unidad
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "abreviatura": "kgm"
+  }
+}
