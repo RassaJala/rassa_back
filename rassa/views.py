@@ -190,14 +190,18 @@ class CatalogViewSet(viewsets.ModelViewSet):
         self.perform_destroy(instance)
         return _ok(message="Registro eliminado correctamente.")
 
+    def perform_destroy(self, instance):
+        instance.estado = False
+        instance.save(update_fields=["estado"])
+
 
 class CategoriaProductoViewSet(CatalogViewSet):
-    queryset = CategoriaProducto.objects.all().order_by("id_categoria")
+    queryset = CategoriaProducto.objects.filter(estado=True).order_by("id_categoria")
     serializer_class = CategoriaProductoSerializer
 
 
 class UnidadViewSet(CatalogViewSet):
-    queryset = Unidad.objects.all().order_by("id_unidad")
+    queryset = Unidad.objects.filter(estado=True).order_by("id_unidad")
     serializer_class = UnidadSerializer
 
 

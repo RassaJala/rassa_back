@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import CategoriaProducto, Persona, Rol, Unidad, Usuario
+from rassa.models import CategoriaProducto, Persona, Producto, ProductoSemanal, PublicacionSemanal, Rol, Unidad, Usuario
 
 
 def _create_user_with_role(nombre_rol, username):
@@ -98,12 +98,48 @@ class CategoryCrudTests(CatalogCrudTestCase):
         )
         self.assertEqual(data["nombre"], "Frutas y Verduras")
 
-    def test_delete_category(self):
+    def test_delete_category_soft_deletes(self):
         self._assert_message_envelope(
             self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria])),
             message="Registro eliminado correctamente.",
         )
-        self.assertFalse(CategoriaProducto.objects.filter(pk=self.category.id_categoria).exists())
+        self.category.refresh_from_db()
+        self.assertFalse(self.category.estado)
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-list")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertNotIn(self.category.id_categoria, ids)
+
+    def test_delete_category_with_linked_products_soft_deletes(self):
+        Producto.objects.create(
+            nombre_producto="Manzana",
+            fk_categoria=self.category,
+            es_perecedero=True,
+            estado=True,
+        )
+        self._assert_message_envelope(
+            self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria])),
+            message="Registro eliminado correctamente.",
+        )
+        self.category.refresh_from_db()
+        self.assertFalse(self.category.estado)
+        self.assertTrue(Producto.objects.filter(fk_categoria=self.category).exists())
+
+    def test_create_category_ignores_client_supplied_id(self):
+        data = self._assert_success_envelope(
+            self.client.post(
+                reverse("categoria-producto-list"),
+                {
+                    "id_categoria": 99999,
+                    "nombre": "Verduras",
+                    "descripcion": "Productos verdes",
+                    "estado": True,
+                },
+                format="json",
+            ),
+            status_code=status.HTTP_201_CREATED,
+            message="Registro creado correctamente.",
+        )
+        self.assertNotEqual(data["id_categoria"], 99999)
 
 
 class UnitCrudTests(CatalogCrudTestCase):
@@ -170,12 +206,59 @@ class UnitCrudTests(CatalogCrudTestCase):
         )
         self.assertEqual(data["abreviatura"], "kgm")
 
-    def test_delete_unit(self):
+    def test_delete_unit_soft_deletes(self):
         self._assert_message_envelope(
             self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad])),
             message="Registro eliminado correctamente.",
         )
-        self.assertFalse(Unidad.objects.filter(pk=self.unit.id_unidad).exists())
+        self.unit.refresh_from_db()
+        self.assertFalse(self.unit.estado)
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-list")))
+        ids = [item["id_unidad"] for item in data["results"]]
+        self.assertNotIn(self.unit.id_unidad, ids)
+
+    def test_delete_unit_with_linked_producto_semanal_soft_deletes(self):
+        publicacion = PublicacionSemanal.objects.create(
+            fecha_publicacion="2026-01-01",
+            semana=1,
+            estado="publicado",
+        )
+        producto = Producto.objects.create(
+            nombre_producto="Manzana",
+            fk_categoria=CategoriaProducto.objects.create(
+                nombre="Frutas",
+                descripcion="Productos frutales",
+                estado=True,
+            ),
+            es_perecedero=True,
+            estado=True,
+        )
+        ProductoSemanal.objects.create(
+            fk_publicacion=publicacion,
+            fk_producto=producto,
+            fk_unidad=self.unit,
+            stock=10,
+            precio="25.00",
+        )
+        self._assert_message_envelope(
+            self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad])),
+            message="Registro eliminado correctamente.",
+        )
+        self.unit.refresh_from_db()
+        self.assertFalse(self.unit.estado)
+        self.assertTrue(ProductoSemanal.objects.filter(fk_unidad=self.unit).exists())
+
+    def test_create_unit_ignores_client_supplied_id(self):
+        data = self._assert_success_envelope(
+            self.client.post(
+                reverse("unidad-list"),
+                {"id_unidad": 99999, "nombre": "Gramo", "abreviatura": "g", "estado": True},
+                format="json",
+            ),
+            status_code=status.HTTP_201_CREATED,
+            message="Registro creado correctamente.",
+        )
+        self.assertNotEqual(data["id_unidad"], 99999)
 
 
 class CatalogAuthErrorTests(APITestCase):
