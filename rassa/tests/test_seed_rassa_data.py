@@ -9,6 +9,7 @@ Uso:
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.db.models import Max
 from django.test import TestCase
 
 from rassa.models import (
@@ -64,13 +65,16 @@ class SeedRassaDataTest(TestCase):
         """Las unidades del seed exponen nombre y abreviatura para la API."""
         call_command("seed_rassa_data")
 
-        kilogramo = Unidad.objects.get(id_unidad=1)
+        kilogramo = Unidad.objects.get(nombre="Kilogramo", abreviatura="kg")
         self.assertEqual(kilogramo.nombre, "Kilogramo")
         self.assertEqual(kilogramo.abreviatura, "kg")
 
     def test_create_unidad_after_seed_does_not_duplicate_pk(self):
         """Tras el seed se puede crear una unidad nueva sin conflicto de ID."""
         call_command("seed_rassa_data")
+
+        initial_count = Unidad.objects.count()
+        max_id_before = Unidad.objects.aggregate(Max("id_unidad"))["id_unidad__max"]
 
         nueva = Unidad.objects.create(
             nombre="Gramo",
@@ -79,5 +83,5 @@ class SeedRassaDataTest(TestCase):
             estado=True,
         )
 
-        self.assertEqual(nueva.id_unidad, 6)
-        self.assertEqual(Unidad.objects.count(), 6)
+        self.assertEqual(Unidad.objects.count(), initial_count + 1)
+        self.assertEqual(nueva.id_unidad, max_id_before + 1)

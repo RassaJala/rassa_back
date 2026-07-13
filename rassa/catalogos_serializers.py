@@ -23,12 +23,14 @@ class CategoriaProductoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CategoriaProducto
         fields = ["id_categoria", "nombre", "descripcion", "estado", "creado_en"]
+        read_only_fields = ["id_categoria", "creado_en"]
 
 
 class UnidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Unidad
         fields = ["id_unidad", "nombre", "abreviatura", "estado", "creado_en"]
+        read_only_fields = ["id_unidad", "creado_en"]
         extra_kwargs = {"nombre": {"required": True}, "abreviatura": {"required": True}}
 
     def _sync_tipo(self, validated_data, instance=None):
