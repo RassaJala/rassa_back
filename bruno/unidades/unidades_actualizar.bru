@@ -1,11 +1,11 @@
 meta {
-  name: Crear unidad
+  name: Actualizar unidad
   type: http
-  seq: 7
+  seq: 4
 }
 
-post {
-  url: {{baseUrl}}/api/unidades/
+patch {
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/
   body: json
   auth: inherit
 }
@@ -17,8 +17,6 @@ headers {
 
 body:json {
   {
-    "nombre": "Kilogramo",
-    "abreviatura": "kg",
-    "estado": true
+    "abreviatura": "kgm"
   }
 }

@@ -31,7 +31,7 @@ def _create_user_with_role(nombre_rol, username):
 
 class CatalogCrudTestCase(APITestCase):
     def setUp(self):
-        self.admin = _create_user_with_role("Administrador", "admin_tester")
+        self.admin = _create_user_with_role("Admin", "admin_tester")
         self.reader = _create_user_with_role("Cliente", "reader_tester")
         self.client.force_authenticate(self.admin)
 

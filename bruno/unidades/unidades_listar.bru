@@ -1,11 +1,11 @@
 meta {
-  name: Eliminar unidad
+  name: Listar unidades
   type: http
-  seq: 10
+  seq: 1
 }
 
-delete {
-  url: {{baseUrl}}/api/unidades/{{unidadId}}/
+get {
+  url: {{baseUrl}}/api/unidades/
   body: none
   auth: inherit
 }

@@ -1,11 +1,11 @@
 meta {
-  name: Listar unidades
+  name: Ver unidad
   type: http
-  seq: 6
+  seq: 3
 }
 
 get {
-  url: {{baseUrl}}/api/unidades/
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/
   body: none
   auth: inherit
 }

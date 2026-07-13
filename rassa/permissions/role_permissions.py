@@ -99,7 +99,7 @@ class IsAdminOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         try:
-            return request.user.usuario.fk_rol.nombre_rol == "Administrador"
+            return request.user.usuario.fk_rol.nombre_rol == ADMIN
         except AttributeError:
             return False
 
