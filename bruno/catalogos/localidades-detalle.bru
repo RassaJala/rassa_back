@@ -1,0 +1,15 @@
+meta {
+  name: Localidades - Detalle
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/localidades/1/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
