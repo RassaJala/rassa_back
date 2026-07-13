@@ -3,13 +3,37 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import CategoriaProducto, Unidad
+from rassa.models import CategoriaProducto, Persona, Rol, Unidad, Usuario
+
+
+def _create_user_with_role(nombre_rol, username):
+    user = get_user_model().objects.create_user(username=username, password="secret123")
+    persona = Persona.objects.create(
+        nombre="Test",
+        apellido_paterno="User",
+        fecha_nacimiento="2000-01-01",
+        sexo="M",
+        domicilio="Calle Falsa 123",
+    )
+    rol, _ = Rol.objects.get_or_create(
+        nombre_rol=nombre_rol,
+        defaults={"descripcion": f"Rol de prueba: {nombre_rol}"},
+    )
+    Usuario.objects.create(
+        fk_user=user,
+        fk_persona=persona,
+        telefono="1234567890",
+        correo=f"{username}@rassa.com",
+        fk_rol=rol,
+    )
+    return user
 
 
 class CatalogCrudTestCase(APITestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username="tester", password="secret123")
-        self.client.force_authenticate(self.user)
+        self.admin = _create_user_with_role("Administrador", "admin_tester")
+        self.reader = _create_user_with_role("Cliente", "reader_tester")
+        self.client.force_authenticate(self.admin)
 
     def _assert_success_envelope(self, response, *, status_code=status.HTTP_200_OK, message=None):
         self.assertEqual(response.status_code, status_code)
@@ -18,6 +42,13 @@ class CatalogCrudTestCase(APITestCase):
         if message is not None:
             self.assertEqual(body.get("message"), message)
         return body["data"]
+
+    def _assert_message_envelope(self, response, *, status_code=status.HTTP_200_OK, message=None):
+        self.assertEqual(response.status_code, status_code)
+        body = response.json()
+        self.assertNotIn("data", body)
+        if message is not None:
+            self.assertEqual(body.get("message"), message)
 
 
 class CategoryCrudTests(CatalogCrudTestCase):
@@ -45,8 +76,9 @@ class CategoryCrudTests(CatalogCrudTestCase):
 
     def test_list_categories(self):
         data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-list")))
-        self.assertGreaterEqual(len(data), 1)
-        self.assertEqual(data[0]["nombre"], self.category.nombre)
+        self.assertGreaterEqual(data["count"], 1)
+        self.assertGreaterEqual(len(data["results"]), 1)
+        self.assertEqual(data["results"][0]["nombre"], self.category.nombre)
 
     def test_retrieve_category(self):
         data = self._assert_success_envelope(
@@ -67,8 +99,10 @@ class CategoryCrudTests(CatalogCrudTestCase):
         self.assertEqual(data["nombre"], "Frutas y Verduras")
 
     def test_delete_category(self):
-        response = self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self._assert_message_envelope(
+            self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria])),
+            message="Registro eliminado correctamente.",
+        )
         self.assertFalse(CategoriaProducto.objects.filter(pk=self.category.id_categoria).exists())
 
 
@@ -95,15 +129,33 @@ class UnitCrudTests(CatalogCrudTestCase):
         self.assertEqual(data["nombre"], "Gramo")
         self.assertEqual(data["abreviatura"], "g")
 
+    def test_create_unit_syncs_tipo_from_nombre(self):
+        self.client.post(
+            reverse("unidad-list"),
+            {"nombre": "Litro", "abreviatura": "L", "estado": True},
+            format="json",
+        )
+        unit = Unidad.objects.get(nombre="Litro")
+        self.assertEqual(unit.tipo, "Litro")
+
+    def test_update_unit_syncs_tipo_when_nombre_changes(self):
+        self.client.patch(
+            reverse("unidad-detail", args=[self.unit.id_unidad]),
+            {"nombre": "Mililitro"},
+            format="json",
+        )
+        self.unit.refresh_from_db()
+        self.assertEqual(self.unit.nombre, "Mililitro")
+        self.assertEqual(self.unit.tipo, "Mililitro")
+
     def test_list_units(self):
         data = self._assert_success_envelope(self.client.get(reverse("unidad-list")))
-        self.assertGreaterEqual(len(data), 1)
-        self.assertEqual(data[0]["nombre"], self.unit.nombre)
+        self.assertGreaterEqual(data["count"], 1)
+        self.assertGreaterEqual(len(data["results"]), 1)
+        self.assertEqual(data["results"][0]["nombre"], self.unit.nombre)
 
     def test_retrieve_unit(self):
-        data = self._assert_success_envelope(
-            self.client.get(reverse("unidad-detail", args=[self.unit.id_unidad]))
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-detail", args=[self.unit.id_unidad])))
         self.assertEqual(data["id_unidad"], self.unit.id_unidad)
         self.assertEqual(data["abreviatura"], self.unit.abreviatura)
 
@@ -119,12 +171,27 @@ class UnitCrudTests(CatalogCrudTestCase):
         self.assertEqual(data["abreviatura"], "kgm")
 
     def test_delete_unit(self):
-        response = self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self._assert_message_envelope(
+            self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad])),
+            message="Registro eliminado correctamente.",
+        )
         self.assertFalse(Unidad.objects.filter(pk=self.unit.id_unidad).exists())
 
 
 class CatalogAuthErrorTests(APITestCase):
+    def setUp(self):
+        self.category = CategoriaProducto.objects.create(
+            nombre="Frutas",
+            descripcion="Productos frutales",
+            estado=True,
+        )
+        self.unit = Unidad.objects.create(
+            nombre="Kilogramo",
+            abreviatura="kg",
+            tipo="Kilogramo",
+            estado=True,
+        )
+
     def test_categories_list_requires_auth(self):
         response = self.client.get(reverse("categoria-producto-list"))
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -135,6 +202,18 @@ class CatalogAuthErrorTests(APITestCase):
             {"nombre": "Frutas", "descripcion": "Productos frutales"},
             format="json",
         )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_categories_update_requires_auth(self):
+        response = self.client.patch(
+            reverse("categoria-producto-detail", args=[self.category.id_categoria]),
+            {"nombre": "Nueva"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_categories_delete_requires_auth(self):
+        response = self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_units_list_requires_auth(self):
@@ -149,8 +228,95 @@ class CatalogAuthErrorTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_units_update_requires_auth(self):
+        response = self.client.patch(
+            reverse("unidad-detail", args=[self.unit.id_unidad]),
+            {"abreviatura": "kgm"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_units_delete_requires_auth(self):
+        response = self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class CatalogPermissionErrorTests(CatalogCrudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.reader)
+        self.category = CategoriaProducto.objects.create(
+            nombre="Frutas",
+            descripcion="Productos frutales",
+            estado=True,
+        )
+        self.unit = Unidad.objects.create(
+            nombre="Kilogramo",
+            abreviatura="kg",
+            tipo="Kilogramo",
+            estado=True,
+        )
+
+    def test_non_admin_can_list_categories(self):
+        response = self.client.get(reverse("categoria-producto-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_non_admin_cannot_create_category(self):
+        response = self.client.post(
+            reverse("categoria-producto-list"),
+            {"nombre": "Verduras", "descripcion": "Productos verdes", "estado": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_non_admin_cannot_update_category(self):
+        response = self.client.patch(
+            reverse("categoria-producto-detail", args=[self.category.id_categoria]),
+            {"nombre": "Nueva"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_non_admin_cannot_delete_category(self):
+        response = self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_non_admin_cannot_create_unit(self):
+        response = self.client.post(
+            reverse("unidad-list"),
+            {"nombre": "Gramo", "abreviatura": "g", "estado": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_non_admin_cannot_update_unit(self):
+        response = self.client.patch(
+            reverse("unidad-detail", args=[self.unit.id_unidad]),
+            {"abreviatura": "kgm"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_non_admin_cannot_delete_unit(self):
+        response = self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
 
 class CatalogValidationErrorTests(CatalogCrudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.category = CategoriaProducto.objects.create(
+            nombre="Frutas",
+            descripcion="Productos frutales",
+            estado=True,
+        )
+        self.unit = Unidad.objects.create(
+            nombre="Kilogramo",
+            abreviatura="kg",
+            tipo="Kilogramo",
+            estado=True,
+        )
+
     def test_create_category_empty_payload(self):
         response = self.client.post(reverse("categoria-producto-list"), {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -170,6 +336,15 @@ class CatalogValidationErrorTests(CatalogCrudTestCase):
         response = self.client.post(
             reverse("categoria-producto-list"),
             {"nombre": "x" * 51, "descripcion": "Demasiado largo", "estado": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", response.json())
+
+    def test_update_category_nombre_too_long(self):
+        response = self.client.patch(
+            reverse("categoria-producto-detail", args=[self.category.id_categoria]),
+            {"nombre": "x" * 51},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -213,6 +388,24 @@ class CatalogValidationErrorTests(CatalogCrudTestCase):
         response = self.client.post(
             reverse("unidad-list"),
             {"nombre": "x" * 101, "abreviatura": "kg", "estado": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", response.json())
+
+    def test_update_unit_abreviatura_too_long(self):
+        response = self.client.patch(
+            reverse("unidad-detail", args=[self.unit.id_unidad]),
+            {"abreviatura": "x" * 21},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("abreviatura", response.json())
+
+    def test_update_unit_nombre_too_long(self):
+        response = self.client.patch(
+            reverse("unidad-detail", args=[self.unit.id_unidad]),
+            {"nombre": "x" * 101},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

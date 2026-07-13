@@ -1,6 +1,8 @@
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -17,6 +19,7 @@ from rassa.catalogos_serializers import (
     UnidadSerializer,
 )
 from rassa.models import CategoriaProducto, Localidad, Log, Municipio, Unidad, Usuario
+from rassa.permissions.role_permissions import IsAdminOrReadOnly
 
 
 def _log(user, descripcion, request):
@@ -142,11 +145,21 @@ class AuthHealthView(APIView):
         return _ok(message="ok")
 
 
+class CatalogPagination(PageNumberPagination):
+    page_size = 20
+
+
 class CatalogViewSet(viewsets.ModelViewSet):
     """ViewSet base para catálogos con respuestas envueltas en un formato consistente."""
 
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None
+    permission_classes = [IsAdminOrReadOnly]
+    pagination_class = CatalogPagination
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -171,6 +184,11 @@ class CatalogViewSet(viewsets.ModelViewSet):
         if response.status_code == status.HTTP_200_OK:
             return _ok(data=response.data, message="Registro actualizado correctamente.")
         return response
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return _ok(message="Registro eliminado correctamente.")
 
 
 class CategoriaProductoViewSet(CatalogViewSet):

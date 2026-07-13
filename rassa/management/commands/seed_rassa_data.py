@@ -229,9 +229,8 @@ class Command(BaseCommand):
         pk = connection.ops.quote_name(model._meta.pk.column)
         with connection.cursor() as cursor:
             cursor.execute(
-                f"SELECT setval("
-                f"pg_get_serial_sequence('{model._meta.db_table}', '{model._meta.pk.column}'), "
-                f"COALESCE((SELECT MAX({pk}) FROM {table}), 1), true)"
+                f"SELECT setval(pg_get_serial_sequence(%s, %s), COALESCE((SELECT MAX({pk}) FROM {table}), 1), true)",
+                [model._meta.db_table, model._meta.pk.column],
             )
 
     def _seed_unidades(self):
