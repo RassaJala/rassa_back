@@ -24,12 +24,13 @@ from rassa.models import Localidad, Persona, Rol, Usuario
 ROLE_MAPPING = {
     "buyer": "Cliente",
     "farmer": "Agricultor",
+    "admin": "Admin",
 }
 
 ROLE_REVERSE_MAPPING = {
     "Cliente": "buyer",
     "Agricultor": "farmer",
-    "Administrador": "admin",
+    "Admin": "admin",
     "Vendedor": "seller",
 }
 
