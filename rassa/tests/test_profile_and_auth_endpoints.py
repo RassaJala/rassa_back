@@ -40,6 +40,10 @@ class ProfileAndAuthEndpointsTest(APITestCase):
             nombre_rol="Agricultor",
             defaults={"descripcion": "Rol Agricultor"},
         )
+        self.rol_seller, _ = Rol.objects.get_or_create(
+            nombre_rol="Vendedor",
+            defaults={"descripcion": "Rol Vendedor"},
+        )
 
         # Crear localidad
         self.municipio = Municipio.objects.create(nombre="Celaya")
@@ -127,6 +131,16 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         response = self.client.post(reverse("register"), data, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["data"]["role"], "farmer")
+
+    def test_register_seller_success(self):
+        """Register as seller."""
+        data = self._register_data(email="seller@rassa.com", role="seller")
+        response = self.client.post(reverse("register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["data"]["role"], "seller")
+        # Verify DB role name
+        db_user = Usuario.objects.get(correo="seller@rassa.com")
+        self.assertEqual(db_user.fk_rol.nombre_rol, "Vendedor")
 
     def test_register_no_apellido_materno(self):
         """Register without apellido_materno."""
