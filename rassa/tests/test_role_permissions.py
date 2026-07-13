@@ -107,7 +107,7 @@ class IsAdminOrReadOnlyTest(TestCase):
     """Tests para el permiso IsAdminOrReadOnly."""
 
     def test_admin_can_write(self):
-        user, _ = _make_user_with_rol("Administrador")
+        user, _ = _make_user_with_rol(ADMIN)
         perm = IsAdminOrReadOnly()
         request = _make_request(user)
         request.method = "POST"
