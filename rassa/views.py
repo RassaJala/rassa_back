@@ -1,6 +1,8 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, status, viewsets
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -10,8 +12,14 @@ from rassa.auth_serializers import (
     RegisterSerializer,
     UserSerializer,
 )
-from rassa.catalogos_serializers import LocalidadSerializer, MunicipioSerializer
-from rassa.models import Localidad, Log, Municipio, Usuario
+from rassa.catalogos_serializers import (
+    CategoriaProductoSerializer,
+    LocalidadSerializer,
+    MunicipioSerializer,
+    UnidadSerializer,
+)
+from rassa.models import CategoriaProducto, Localidad, Log, Municipio, Unidad, Usuario
+from rassa.permissions.role_permissions import IsAdminOrReadOnly
 
 
 def _log(user, descripcion, request):
@@ -135,6 +143,66 @@ class AuthHealthView(APIView):
 
     def get(self, request):
         return _ok(message="ok")
+
+
+class CatalogPagination(PageNumberPagination):
+    page_size = 20
+
+
+class CatalogViewSet(viewsets.ModelViewSet):
+    """ViewSet base para catálogos con respuestas envueltas en un formato consistente."""
+
+    permission_classes = [IsAdminOrReadOnly]
+    pagination_class = CatalogPagination
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        return _ok(data=response.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        return _ok(data=response.data)
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if response.status_code == status.HTTP_201_CREATED:
+            return _ok(
+                data=response.data,
+                message="Registro creado correctamente.",
+                status_code=status.HTTP_201_CREATED,
+            )
+        return response
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            return _ok(data=response.data, message="Registro actualizado correctamente.")
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return _ok(message="Registro eliminado correctamente.")
+
+    def perform_destroy(self, instance):
+        instance.estado = False
+        instance.save(update_fields=["estado"])
+
+
+class CategoriaProductoViewSet(CatalogViewSet):
+    queryset = CategoriaProducto.objects.filter(estado=True).order_by("id_categoria")
+    serializer_class = CategoriaProductoSerializer
+
+
+class UnidadViewSet(CatalogViewSet):
+    queryset = Unidad.objects.filter(estado=True).order_by("id_unidad")
+    serializer_class = UnidadSerializer
 
 
 # ======================================================================

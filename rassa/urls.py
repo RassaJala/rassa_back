@@ -12,6 +12,7 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
@@ -19,14 +20,20 @@ from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.models import Log, Usuario
 from rassa.views import (
     AuthHealthView,
+    CategoriaProductoViewSet,
     ChangePasswordView,
     LocalidadByMunicipioListView,
     MeView,
     MunicipioListView,
     RegisterView,
+    UnidadViewSet,
 )
 
 logger = logging.getLogger(__name__)
+
+router = DefaultRouter()
+router.register(r"api/categorias", CategoriaProductoViewSet, basename="categoria-producto")
+router.register(r"api/unidades", UnidadViewSet, basename="unidad")
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -79,4 +86,5 @@ urlpatterns = [
     path("api/logs/", include("logs.urls")),
     path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
     path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
+    path("", include(router.urls)),
 ]
