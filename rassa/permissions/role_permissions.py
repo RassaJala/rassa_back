@@ -80,6 +80,24 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         return False
 
 
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """Permiso de lectura para autenticados y escritura solo para Administrador.
+
+    Uso:
+        permission_classes = [IsAdminOrReadOnly]
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        try:
+            return request.user.usuario.fk_rol.nombre_rol == "Administrador"
+        except AttributeError:
+            return False
+
+
 # Backward-compatible aliases — prefer HasRole() directly in new code
 IsAdmin = HasRole("Administrador")
 IsAgricultor = HasRole("Agricultor")

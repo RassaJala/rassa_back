@@ -15,6 +15,7 @@ from rassa.permissions.role_permissions import (
     HasRole,
     IsAdmin,
     IsAdminOrAgricultor,
+    IsAdminOrReadOnly,
     IsAdminOrVendedor,
     IsAgricultor,
     IsCliente,
@@ -98,6 +99,37 @@ class HasRoleTest(TestCase):
     def test_unauthenticated(self):
         perm = HasRole("Administrador")
         request = _make_request(None)
+        self.assertFalse(perm.has_permission(request, None))
+
+
+class IsAdminOrReadOnlyTest(TestCase):
+    """Tests para el permiso IsAdminOrReadOnly."""
+
+    def test_admin_can_write(self):
+        user, _ = _make_user_with_rol("Administrador")
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "POST"
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_non_admin_cannot_write(self):
+        user, _ = _make_user_with_rol("Cliente")
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "POST"
+        self.assertFalse(perm.has_permission(request, None))
+
+    def test_authenticated_user_can_read(self):
+        user, _ = _make_user_with_rol("Cliente")
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "GET"
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_unauthenticated_cannot_read(self):
+        perm = IsAdminOrReadOnly()
+        request = _make_request(None)
+        request.method = "GET"
         self.assertFalse(perm.has_permission(request, None))
 
 
