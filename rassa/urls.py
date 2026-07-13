@@ -20,9 +20,11 @@ from rassa.models import Log, Usuario
 from rassa.views import (
     AuthHealthView,
     ChangePasswordView,
-    LocalidadByMunicipioListView,
+    LocalidadByMunicipioListCreateView,
+    LocalidadDetailView,
     MeView,
-    MunicipioListView,
+    MunicipioDetailView,
+    MunicipioListCreateView,
     RegisterView,
 )
 
@@ -77,6 +79,13 @@ urlpatterns = [
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
     path("api/logs/", include("logs.urls")),
-    path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
-    path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
+    path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
+    path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
+    path(
+        "api/municipalities/<int:pk>/localities/",
+        LocalidadByMunicipioListCreateView.as_view(),
+        name="localidades-by-municipio",
+    ),
+    path("api/localidades/", LocalidadByMunicipioListCreateView.as_view(), name="localidades"),
+    path("api/localidades/<int:pk>/", LocalidadDetailView.as_view(), name="localidad-detail"),
 ]

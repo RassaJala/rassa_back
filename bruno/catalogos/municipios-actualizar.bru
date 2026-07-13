@@ -1,0 +1,22 @@
+meta {
+  name: Municipios - Actualizar
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/municipios/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre": "Municipio Actualizado"
+  }
+}
