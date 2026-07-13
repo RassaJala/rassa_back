@@ -10,6 +10,7 @@ from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import AccessToken
 
 from rassa.models import Localidad, Municipio, Persona, Rol, Usuario
 
@@ -96,13 +97,9 @@ class CatalogosCRUDTest(APITestCase):
     # ------------------------------------------------------------------
 
     def _login(self, email, password):
-        """Login and return access token."""
-        resp = self.client.post(
-            reverse("token_obtain_pair"),
-            {"email": email, "password": password},
-            format="json",
-        )
-        return resp.data.get("access", "")
+        """Generate JWT locally without hitting the token endpoint (avoids rate limits)."""
+        user = User.objects.get(email=email)
+        return str(AccessToken.for_user(user))
 
     def _admin_auth(self):
         """Authorization header for admin."""
