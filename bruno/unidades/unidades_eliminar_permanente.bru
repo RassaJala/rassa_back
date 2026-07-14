@@ -1,0 +1,15 @@
+meta {
+  name: Eliminar unidad permanentemente
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/unidades/{{unidadId}}/permanent/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
