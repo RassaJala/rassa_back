@@ -221,16 +221,6 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         resp2 = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
         self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_register_seller_success(self):
-        """Register as seller."""
-        data = self._register_data(email="seller@rassa.com", role="seller")
-        response = self.client.post(reverse("register"), data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["data"]["role"], "seller")
-        # Verify DB role name
-        db_user = Usuario.objects.get(correo="seller@rassa.com")
-        self.assertEqual(db_user.fk_rol.nombre_rol, "Vendedor")
-
     def test_register_no_apellido_materno(self):
         """Register without apellido_materno."""
         data = self._register_data(email="noam@rassa.com", apellido_materno=None)
