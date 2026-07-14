@@ -261,6 +261,157 @@ class UnitCrudTests(CatalogCrudTestCase):
         self.assertNotEqual(data["id_unidad"], 99999)
 
 
+class CategoryTrashTests(CatalogCrudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.category = CategoriaProducto.objects.create(
+            nombre="Frutas",
+            descripcion="Productos frutales",
+            estado=True,
+        )
+
+    def test_trash_list_empty_when_no_deactivated(self):
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-trash")))
+        self.assertEqual(data["count"], 0)
+
+    def test_trash_list_contains_soft_deleted(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-trash")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertIn(self.category.id_categoria, ids)
+
+    def test_trash_does_not_contain_active(self):
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-trash")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertNotIn(self.category.id_categoria, ids)
+
+    def test_restore_category(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self.category.refresh_from_db()
+        self.assertFalse(self.category.estado)
+
+        data = self._assert_success_envelope(
+            self.client.post(reverse("categoria-producto-restore", args=[self.category.id_categoria])),
+            message="Registro restaurado correctamente.",
+        )
+        self.assertTrue(data["estado"])
+        self.category.refresh_from_db()
+        self.assertTrue(self.category.estado)
+
+    def test_restore_category_appears_in_list(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self.client.post(reverse("categoria-producto-restore", args=[self.category.id_categoria]))
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-list")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertIn(self.category.id_categoria, ids)
+
+    def test_restore_category_disappears_from_trash(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self.client.post(reverse("categoria-producto-restore", args=[self.category.id_categoria]))
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-trash")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertNotIn(self.category.id_categoria, ids)
+
+    def test_permanent_delete_category(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self._assert_message_envelope(
+            self.client.post(reverse("categoria-producto-permanent", args=[self.category.id_categoria])),
+            message="Registro eliminado permanentemente.",
+        )
+        self.assertFalse(CategoriaProducto.objects.filter(id_categoria=self.category.id_categoria).exists())
+
+    def test_permanent_delete_removes_from_trash(self):
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        self.client.post(reverse("categoria-producto-permanent", args=[self.category.id_categoria]))
+        data = self._assert_success_envelope(self.client.get(reverse("categoria-producto-trash")))
+        ids = [item["id_categoria"] for item in data["results"]]
+        self.assertNotIn(self.category.id_categoria, ids)
+
+    def test_restore_active_category_returns_404(self):
+        response = self.client.post(reverse("categoria-producto-restore", args=[self.category.id_categoria]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_trash_requires_admin(self):
+        self.client.force_authenticate(self.reader)
+        self.client.delete(reverse("categoria-producto-detail", args=[self.category.id_categoria]))
+        response = self.client.get(reverse("categoria-producto-trash"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_restore_requires_admin(self):
+        self.client.force_authenticate(self.reader)
+        response = self.client.post(reverse("categoria-producto-restore", args=[self.category.id_categoria]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_permanent_requires_admin(self):
+        self.client.force_authenticate(self.reader)
+        response = self.client.post(reverse("categoria-producto-permanent", args=[self.category.id_categoria]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class UnitTrashTests(CatalogCrudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.unit = Unidad.objects.create(
+            nombre="Kilogramo",
+            abreviatura="kg",
+            tipo="Kilogramo",
+            estado=True,
+        )
+
+    def test_trash_list_empty_when_no_deactivated(self):
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-trash")))
+        self.assertEqual(data["count"], 0)
+
+    def test_trash_list_contains_soft_deleted(self):
+        self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-trash")))
+        ids = [item["id_unidad"] for item in data["results"]]
+        self.assertIn(self.unit.id_unidad, ids)
+
+    def test_trash_does_not_contain_active(self):
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-trash")))
+        ids = [item["id_unidad"] for item in data["results"]]
+        self.assertNotIn(self.unit.id_unidad, ids)
+
+    def test_restore_unit(self):
+        self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        self.unit.refresh_from_db()
+        self.assertFalse(self.unit.estado)
+
+        data = self._assert_success_envelope(
+            self.client.post(reverse("unidad-restore", args=[self.unit.id_unidad])),
+            message="Registro restaurado correctamente.",
+        )
+        self.assertTrue(data["estado"])
+        self.unit.refresh_from_db()
+        self.assertTrue(self.unit.estado)
+
+    def test_restore_unit_appears_in_list(self):
+        self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        self.client.post(reverse("unidad-restore", args=[self.unit.id_unidad]))
+        data = self._assert_success_envelope(self.client.get(reverse("unidad-list")))
+        ids = [item["id_unidad"] for item in data["results"]]
+        self.assertIn(self.unit.id_unidad, ids)
+
+    def test_permanent_delete_unit(self):
+        self.client.delete(reverse("unidad-detail", args=[self.unit.id_unidad]))
+        self._assert_message_envelope(
+            self.client.post(reverse("unidad-permanent", args=[self.unit.id_unidad])),
+            message="Registro eliminado permanentemente.",
+        )
+        self.assertFalse(Unidad.objects.filter(id_unidad=self.unit.id_unidad).exists())
+
+    def test_restore_requires_admin(self):
+        self.client.force_authenticate(self.reader)
+        response = self.client.post(reverse("unidad-restore", args=[self.unit.id_unidad]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_permanent_requires_admin(self):
+        self.client.force_authenticate(self.reader)
+        response = self.client.post(reverse("unidad-permanent", args=[self.unit.id_unidad]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
 class CatalogAuthErrorTests(APITestCase):
     def setUp(self):
         self.category = CategoriaProducto.objects.create(

@@ -1,0 +1,15 @@
+meta {
+  name: Restaurar categoría
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/categorias/{{categoriaId}}/restore/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
