@@ -1,0 +1,15 @@
+meta {
+  name: Ver detalle de usuario
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/admin/usuarios/{{usuariosAdminId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
