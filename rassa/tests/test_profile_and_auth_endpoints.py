@@ -77,7 +77,9 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.admin_email = "admin@test.com"
         self.admin_password = "admin123"
         self.admin_user = User.objects.create_user(
-            username=self.admin_email, email=self.admin_email, password=self.admin_password,
+            username=self.admin_email,
+            email=self.admin_email,
+            password=self.admin_password,
         )
         self.admin_persona = Persona.objects.create(
             nombre="Admin",
