@@ -40,6 +40,14 @@ class ProfileAndAuthEndpointsTest(APITestCase):
             nombre_rol="Agricultor",
             defaults={"descripcion": "Rol Agricultor"},
         )
+        self.rol_seller, _ = Rol.objects.get_or_create(
+            nombre_rol="Vendedor",
+            defaults={"descripcion": "Rol Vendedor"},
+        )
+        self.rol_admin, _ = Rol.objects.get_or_create(
+            nombre_rol="Admin",
+            defaults={"descripcion": "Administrador del sistema"},
+        )
 
         # Crear localidad
         self.municipio = Municipio.objects.create(nombre="Celaya")
@@ -65,6 +73,28 @@ class ProfileAndAuthEndpointsTest(APITestCase):
             fk_rol=self.rol_buyer,
         )
 
+        # Admin user for create-farmer tests
+        self.admin_email = "admin@test.com"
+        self.admin_password = "admin123"
+        self.admin_user = User.objects.create_user(
+            username=self.admin_email, email=self.admin_email, password=self.admin_password,
+        )
+        self.admin_persona = Persona.objects.create(
+            nombre="Admin",
+            apellido_paterno="User",
+            fecha_nacimiento="1990-01-01",
+            sexo="M",
+            domicilio="Admin St",
+            fk_localidad=self.localidad,
+        )
+        self.admin_usuario = Usuario.objects.create(
+            fk_user=self.admin_user,
+            fk_persona=self.admin_persona,
+            telefono="0000000000",
+            correo=self.admin_email,
+            fk_rol=self.rol_admin,
+        )
+
     # ------------------------------------------------------------------
     # Helper
     # ------------------------------------------------------------------
@@ -81,6 +111,27 @@ class ProfileAndAuthEndpointsTest(APITestCase):
     def _auth_header(self, token=None):
         """Authorization header dict."""
         return {"HTTP_AUTHORIZATION": f"Bearer {token or self._login()}"}
+
+    def _admin_auth(self):
+        """Authorization header for admin user."""
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    def _create_farmer_data(self, **overrides):
+        """Base payload for admin create-farmer endpoint."""
+        data = {
+            "email": "newfarmer@rassa.com",
+            "password": "securepassword",
+            "telefono": "0987654321",
+            "nombre": "Pedro",
+            "apellido_paterno": "Lopez",
+            "fecha_nacimiento": "1995-05-15",
+            "sexo": "M",
+            "domicilio": "Av. Siempre Viva 742",
+            "fk_localidad": self.localidad.id_localidad,
+        }
+        data.update(overrides)
+        return data
 
     def _register_data(self, **overrides):
         """Base registration payload."""
@@ -121,12 +172,54 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertEqual(db_user.telefono, "0987654321")
         self.assertEqual(db_user.fk_persona.nombre, "Maria")
 
-    def test_register_farmer_success(self):
-        """Register as farmer."""
+    def test_register_farmer_rejected(self):
+        """Farmer role is NOT available in public register (admin-only creation)."""
         data = self._register_data(email="farmer@rassa.com", role="farmer")
         response = self.client.post(reverse("register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_seller_success(self):
+        """Register as seller."""
+        data = self._register_data(email="seller@rassa.com", role="seller")
+        response = self.client.post(reverse("register"), data, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["data"]["role"], "seller")
+        # Verify DB role name
+        db_user = Usuario.objects.get(correo="seller@rassa.com")
+        self.assertEqual(db_user.fk_rol.nombre_rol, "Vendedor")
+
+    def test_admin_create_farmer_success(self):
+        """Admin can create a farmer via /api/auth/create-farmer/."""
+        data = self._create_farmer_data()
+        response = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["message"], "Agricultor creado exitosamente.")
         self.assertEqual(response.data["data"]["role"], "farmer")
+        # Verify DB
+        db_user = Usuario.objects.get(correo="newfarmer@rassa.com")
+        self.assertEqual(db_user.fk_rol.nombre_rol, "Agricultor")
+
+    def test_admin_create_farmer_non_admin_forbidden(self):
+        """Non-admin gets 403 when trying to create a farmer."""
+        data = self._create_farmer_data()
+        response = self.client.post(reverse("create-farmer"), data, format="json", **self._auth_header())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_create_farmer_unauthenticated(self):
+        """Unauthenticated request to create-farmer returns 401."""
+        data = self._create_farmer_data()
+        response = self.client.post(reverse("create-farmer"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_admin_create_farmer_duplicate_email(self):
+        """Admin creating farmer with existing email returns 400."""
+        # First create works
+        data = self._create_farmer_data()
+        resp1 = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp1.status_code, status.HTTP_201_CREATED)
+        # Second with same email fails
+        resp2 = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_register_no_apellido_materno(self):
         """Register without apellido_materno."""

@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from rassa.auth_serializers import (
+    AdminCreateAgricultorSerializer,
     ChangePasswordSerializer,
     ProfileUpdateSerializer,
     RegisterSerializer,
@@ -12,6 +13,7 @@ from rassa.auth_serializers import (
 )
 from rassa.catalogos_serializers import LocalidadSerializer, MunicipioSerializer
 from rassa.models import Localidad, Log, Municipio, Usuario
+from rassa.permissions.role_permissions import HasRole
 
 
 def _log(user, descripcion, request):
@@ -62,6 +64,32 @@ class RegisterView(generics.CreateAPIView):
         return _ok(
             data=user_data,
             message="Registro completado exitosamente.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class AdminCreateAgricultorView(generics.CreateAPIView):
+    """Endpoint exclusivo para que un Admin cree usuarios Agricultor.
+
+    Solo accesible por usuarios con rol Admin.
+    No require que el agricultor se registre por sí mismo.
+    """
+
+    serializer_class = AdminCreateAgricultorSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        usuario = serializer.save()
+
+        _log(request.user, f"Creación de agricultor por admin: {usuario.correo}", request)
+
+        return _ok(
+            data=UserSerializer(usuario).data,
+            message="Agricultor creado exitosamente.",
             status_code=status.HTTP_201_CREATED,
         )
 
