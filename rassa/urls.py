@@ -18,6 +18,7 @@ from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.models import Log, Usuario
 from rassa.views import (
+    AdminCreateAgricultorView,
     AuthHealthView,
     ChangePasswordView,
     LocalidadByMunicipioListView,
@@ -73,6 +74,7 @@ urlpatterns = [
     path("api/token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/register/", RegisterView.as_view(), name="register"),
+    path("api/auth/create-farmer/", AdminCreateAgricultorView.as_view(), name="create-farmer"),
     path("api/auth/me/", MeView.as_view(), name="me"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
