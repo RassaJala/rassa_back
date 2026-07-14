@@ -238,11 +238,11 @@ class UnidadViewSet(CatalogViewSet):
 
 
 class MunicipioListView(generics.ListAPIView):
-    """List all municipios (requires authentication)."""
+    """List all municipios (public — no auth required for registration flow)."""
 
     queryset = Municipio.objects.all().order_by("nombre")
     serializer_class = MunicipioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     pagination_class = None
 
     def list(self, request, *args, **kwargs):
@@ -251,9 +251,9 @@ class MunicipioListView(generics.ListAPIView):
 
 
 class LocalidadByMunicipioListView(APIView):
-    """List localidades for a given municipio (requires authentication)."""
+    """List localidades for a given municipio (public — no auth required for registration flow)."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         raw = request.query_params.get("municipio_id")

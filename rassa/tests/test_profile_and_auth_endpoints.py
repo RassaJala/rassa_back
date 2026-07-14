@@ -548,9 +548,10 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertTrue(any(m["nombre"] == "Test Municipio" for m in data))
 
     def test_list_municipios_unauthenticated(self):
-        """GET /municipios/ without token returns 401."""
+        """GET /municipios/ without token returns public data (registration flow)."""
         response = self.client.get(reverse("municipios"))
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(response.data["data"], list)
 
     def test_list_localidades_success(self):
         """GET /localidades/?municipio_id=X returns localidades."""
@@ -582,9 +583,10 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertIn("entero", response.data["municipio_id"])
 
     def test_list_localidades_unauthenticated(self):
-        """GET /localidades/ without token returns 401."""
-        response = self.client.get(reverse("localidades"), {"municipio_id": 1})
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        """GET /localidades/ without token returns public data (registration flow)."""
+        response = self.client.get(reverse("localidades"), {"municipio_id": self.localidad.fk_municipio_id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(response.data["data"], list)
 
     def test_list_localidades_nonexistent_municipio(self):
         """GET /localidades/?municipio_id=99999 returns empty list."""
