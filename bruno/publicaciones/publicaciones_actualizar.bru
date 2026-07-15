@@ -1,0 +1,16 @@
+meta {
+  name: Actualizar publicación
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}

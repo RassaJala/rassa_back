@@ -1,0 +1,23 @@
+meta {
+  name: Actualizar producto semanal
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/productos/{{productoId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "stock": 20,
+    "precio": "30.00"
+  }
+}
