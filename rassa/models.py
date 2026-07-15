@@ -109,7 +109,7 @@ class DecisionMerma(models.Model):
 
 
 class Municipio(models.Model):
-    """Municipios del estado de Guanajuato."""
+    """Municipios del estado de Nayarit."""
 
     id_municipio = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100)
