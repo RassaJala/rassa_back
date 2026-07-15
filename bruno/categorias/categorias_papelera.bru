@@ -1,0 +1,15 @@
+meta {
+  name: Papelera de categorías
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/categorias/trash/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

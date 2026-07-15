@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -33,7 +34,7 @@ def _log(user, descripcion, request):
 
 
 def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
-    """Standardized success response."""
+    """Standardized success response body with {data, message} envelope."""
     body = {}
     if message:
         body["message"] = message
@@ -150,14 +151,29 @@ class CatalogPagination(PageNumberPagination):
 
 
 class CatalogViewSet(viewsets.ModelViewSet):
-    """ViewSet base para catálogos con respuestas envueltas en un formato consistente."""
+    """ViewSet base para catálogos con respuestas envueltas en un formato consistente.
+
+    Incluye endpoints de papelera:
+        - GET  /{prefix}/trash/           → Lista registros desactivados
+        - POST /{pk}/restore/             → Restaura un registro desactivado
+        - DELETE /{pk}/permanent/          → Eliminación permanente (hard delete)
+    """
 
     permission_classes = [IsAdminOrReadOnly]
     pagination_class = CatalogPagination
     throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    soft_delete_field = "estado"
+
+    def get_queryset(self):
+        model = self.queryset.model
+        if self.action == "trash":
+            return model.objects.filter(estado=False).order_by("-creado_en")
+        if self.action in ("restore", "permanent"):
+            return model.objects.filter(estado=False)
+        return model.objects.filter(estado=True)
 
     def initial(self, request, *args, **kwargs):
-        if self.action in ("create", "update", "partial_update", "destroy"):
+        if self.action in ("create", "update", "partial_update", "destroy", "permanent"):
             self.throttle_scope = "catalog_write"
         super().initial(request, *args, **kwargs)
 
@@ -191,17 +207,38 @@ class CatalogViewSet(viewsets.ModelViewSet):
         return _ok(message="Registro eliminado correctamente.")
 
     def perform_destroy(self, instance):
-        instance.estado = False
-        instance.save(update_fields=["estado"])
+        setattr(instance, self.soft_delete_field, False)
+        instance.save(update_fields=[self.soft_delete_field])
+
+    @action(detail=False, methods=["get"], url_path="trash")
+    def trash(self, request, *args, **kwargs):
+        """Lista registros desactivados (papelera)."""
+        return self.list(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="restore")
+    def restore(self, request, pk=None, *args, **kwargs):
+        """Restaura un registro desactivado."""
+        instance = self.get_object()
+        setattr(instance, self.soft_delete_field, True)
+        instance.save(update_fields=[self.soft_delete_field])
+        serializer = self.get_serializer(instance)
+        return _ok(data=serializer.data, message="Registro restaurado correctamente.")
+
+    @action(detail=True, methods=["post"], url_path="permanent")
+    def permanent(self, request, pk=None, *args, **kwargs):
+        """Eliminación permanente de un registro desactivado."""
+        instance = self.get_object()
+        instance.delete()
+        return _ok(message="Registro eliminado permanentemente.")
 
 
 class CategoriaProductoViewSet(CatalogViewSet):
-    queryset = CategoriaProducto.objects.filter(estado=True).order_by("id_categoria")
+    queryset = CategoriaProducto.objects.all()
     serializer_class = CategoriaProductoSerializer
 
 
 class UnidadViewSet(CatalogViewSet):
-    queryset = Unidad.objects.filter(estado=True).order_by("id_unidad")
+    queryset = Unidad.objects.all()
     serializer_class = UnidadSerializer
 
 
