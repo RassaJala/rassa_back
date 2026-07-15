@@ -309,6 +309,7 @@ class PublicacionSemanal(models.Model):
         ("borrador", "Borrador"),
         ("publicado", "Publicado"),
         ("cerrado", "Cerrado"),
+        ("cancelado", "Cancelado"),
     ]
 
     id_publicacion = models.AutoField(primary_key=True)

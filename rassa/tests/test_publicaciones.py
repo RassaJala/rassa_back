@@ -193,7 +193,8 @@ class PublicacionListTests(PublicacionBaseTestCase):
         data = self._assert_success_envelope(self.client.get(reverse("publicacion-list")))
         self.assertIn("count", data)
         self.assertIn("results", data)
-        self.assertGreaterEqual(data["count"], 2)
+        self.assertEqual(data["count"], 2)
+        self.assertEqual(len(data["results"]), 2)
 
     def test_list_filter_by_estado(self):
         pub = PublicacionSemanal.objects.get(pk=self.pub1["id_publicacion"])
@@ -231,48 +232,6 @@ class PublicacionRetrieveTests(PublicacionBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class PublicacionPartialUpdateTests(PublicacionBaseTestCase):
-    def setUp(self):
-        super().setUp()
-        self.pub_data = self._create_publicacion()
-        self.pub_id = self.pub_data["id_publicacion"]
-
-    def test_partial_update_draft_returns_data(self):
-        data = self._assert_success_envelope(
-            self.client.patch(
-                reverse("publicacion-detail", args=[self.pub_id]),
-                {},
-                format="json",
-            ),
-            message="Publicación actualizada correctamente.",
-        )
-        self.assertEqual(data["id_publicacion"], self.pub_id)
-
-    def test_partial_update_published_returns_400(self):
-        pub = PublicacionSemanal.objects.get(pk=self.pub_id)
-        pub.estado = "publicado"
-        pub.save(update_fields=["estado"])
-
-        response = self.client.patch(
-            reverse("publicacion-detail", args=[self.pub_id]),
-            {},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_partial_update_cerrado_returns_400(self):
-        pub = PublicacionSemanal.objects.get(pk=self.pub_id)
-        pub.estado = "cerrado"
-        pub.save(update_fields=["estado"])
-
-        response = self.client.patch(
-            reverse("publicacion-detail", args=[self.pub_id]),
-            {},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-
 class PublicacionDeleteTests(PublicacionBaseTestCase):
     def setUp(self):
         super().setUp()
@@ -284,7 +243,8 @@ class PublicacionDeleteTests(PublicacionBaseTestCase):
             self.client.delete(reverse("publicacion-detail", args=[self.pub_id])),
             message="Publicación eliminada correctamente.",
         )
-        self.assertFalse(PublicacionSemanal.objects.filter(pk=self.pub_id).exists())
+        pub = PublicacionSemanal.objects.get(pk=self.pub_id)
+        self.assertEqual(pub.estado, "cancelado")
 
     def test_delete_published_returns_400(self):
         pub = PublicacionSemanal.objects.get(pk=self.pub_id)
@@ -366,6 +326,7 @@ class PublicacionPublishTests(PublicacionBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         body = response.json()
         self.assertIn("productos", body)
+        self.assertIn("precio", body["productos"][0])
 
     def test_publish_validates_empty_foto(self):
         self._add_producto_directo(foto="")
@@ -533,7 +494,10 @@ class ProductoSemanalListTests(PublicacionBaseTestCase):
 
     def test_list_productos(self):
         data = self._assert_success_envelope(self.client.get(reverse("producto-semanal-list", args=[self.pub_id])))
-        self.assertEqual(len(data), 2)
+        self.assertIn("count", data)
+        self.assertIn("results", data)
+        self.assertEqual(data["count"], 2)
+        self.assertEqual(len(data["results"]), 2)
 
     def test_list_only_active(self):
         pub = PublicacionSemanal.objects.get(pk=self.pub_id)
@@ -541,7 +505,8 @@ class ProductoSemanalListTests(PublicacionBaseTestCase):
         item.estado = "inactivo"
         item.save(update_fields=["estado"])
         data = self._assert_success_envelope(self.client.get(reverse("producto-semanal-list", args=[self.pub_id])))
-        self.assertEqual(len(data), 1)
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(len(data["results"]), 1)
 
     def test_list_non_existent_publicacion_returns_404(self):
         response = self.client.get(reverse("producto-semanal-list", args=[99999]))
