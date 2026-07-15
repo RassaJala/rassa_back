@@ -1,1 +1,262 @@
-"""Tests para protecciones del usuario Admin.Verifica que un administrador no pueda:  - Cambiarse su propio rol (se bloquearÃ­a del panel admin)  - Desactivarse a sÃ­ mismo  - Desactivar al Ãºltimo administrador activo del sistemaUso:    python manage.py test rassa.tests.test_admin_user_protection"""from django.contrib.auth import get_user_modelfrom django.test import override_settingsfrom django.urls import reversefrom rest_framework import statusfrom rest_framework.test import APITestCasefrom rassa.models import Localidad, Municipio, Persona, Rol, UsuarioUser = get_user_model()@override_settings(    REST_FRAMEWORK={        "DEFAULT_THROTTLE_CLASSES": [],        "DEFAULT_THROTTLE_RATES": {},        "DEFAULT_AUTHENTICATION_CLASSES": (            "rest_framework_simplejwt.authentication.JWTAuthentication",        ),        "DEFAULT_PERMISSION_CLASSES": (            "rest_framework.permissions.IsAuthenticated",        ),        "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",        "PAGE_SIZE": 20,        "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),    })class AdminUserProtectionTest(APITestCase):    """Tests para protecciones de integridad del usuario admin."""    def setUp(self):        self.rol_admin, _ = Rol.objects.get_or_create(            nombre_rol="Admin",            defaults={"descripcion": "Rol Admin"},        )        self.rol_buyer, _ = Rol.objects.get_or_create(            nombre_rol="Cliente",            defaults={"descripcion": "Rol Cliente"},        )        self.rol_seller, _ = Rol.objects.get_or_create(            nombre_rol="Vendedor",            defaults={"descripcion": "Rol Vendedor"},        )        self.municipio = Municipio.objects.create(nombre="Celaya")        self.localidad = Localidad.objects.create(            nombre="Centro", fk_municipio=self.municipio        )        # Admin principal        self.admin_email = "admin@rassa.com"        self.admin_password = "admin1234"        self.admin_user = User.objects.create_user(            username=self.admin_email,            email=self.admin_email,            password=self.admin_password,        )        self.admin_persona = Persona.objects.create(            nombre="Admin",            apellido_paterno="Principal",            fecha_nacimiento="1990-01-01",            sexo="M",            domicilio="Calle Admin 1",            fk_localidad=self.localidad,        )        self.admin_usuario = Usuario.objects.create(            fk_user=self.admin_user,            fk_persona=self.admin_persona,            telefono="1111111111",            correo=self.admin_email,            fk_rol=self.rol_admin,        )        # Segundo admin (para tests de Ãºltimo admin)        self.admin2_email = "admin2@rassa.com"        self.admin2_user = User.objects.create_user(            username=self.admin2_email,            email=self.admin2_email,            password="admin1234",        )        self.admin2_persona = Persona.objects.create(            nombre="Admin",            apellido_paterno="Dos",            fecha_nacimiento="1991-01-01",            sexo="M",            domicilio="Calle Admin 2",            fk_localidad=self.localidad,        )        self.admin2_usuario = Usuario.objects.create(            fk_user=self.admin2_user,            fk_persona=self.admin2_persona,            telefono="2222222222",            correo=self.admin2_email,            fk_rol=self.rol_admin,        )        # Usuario normal        self.user_email = "user@rassa.com"        self.user_user = User.objects.create_user(            username=self.user_email,            email=self.user_email,            password="user1234",        )        self.user_persona = Persona.objects.create(            nombre="Normal",            apellido_paterno="User",            fecha_nacimiento="1995-01-01",            sexo="F",            domicilio="Calle User 1",            fk_localidad=self.localidad,        )        self.user_usuario = Usuario.objects.create(            fk_user=self.user_user,            fk_persona=self.user_persona,            telefono="3333333333",            correo=self.user_email,            fk_rol=self.rol_buyer,        )    # ------------------------------------------------------------------    # Helpers    # ------------------------------------------------------------------    def _login(self, email=None, password=None):        resp = self.client.post(            reverse("token_obtain_pair"),            {                "email": email or self.admin_email,                "password": password or self.admin_password,            },            format="json",        )        return resp.data.get("access", "")    def _auth_header(self, token=None):        return {"HTTP_AUTHORIZATION": f"Bearer {token or self._login()}"}    # ==================================================================    # SELF ROLE CHANGE PREVENTION    # ==================================================================    def test_admin_cannot_change_own_role(self):        """Admin cannot change their own role via partial_update."""        response = self.client.patch(            reverse("admin-usuarios-detail", args=[self.admin_usuario.id_usuario]),            {"role": "buyer"},            format="json",            **self._auth_header(),        )        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)        self.assertIn("propio rol", response.data["detail"])        # Verify role unchanged in DB        self.admin_usuario.refresh_from_db()        self.assertEqual(self.admin_usuario.fk_rol.nombre_rol, "Admin")    def test_admin_can_update_own_non_role_fields(self):        """Admin CAN update their own phone, name, etc. (just not role)."""        response = self.client.patch(            reverse("admin-usuarios-detail", args=[self.admin_usuario.id_usuario]),            {"telefono": "9999999999", "nombre": "AdminActualizado"},            format="json",            **self._auth_header(),        )        self.assertEqual(response.status_code, status.HTTP_200_OK)        self.admin_usuario.refresh_from_db()        self.assertEqual(self.admin_usuario.telefono, "9999999999")        self.assertEqual(self.admin_usuario.fk_persona.nombre, "AdminActualizado")    def test_admin_can_change_other_user_role(self):        """Admin CAN change another user's role."""        response = self.client.patch(            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),            {"role": "seller"},            format="json",            **self._auth_header(),        )        self.assertEqual(response.status_code, status.HTTP_200_OK)        self.user_usuario.refresh_from_db()        self.assertEqual(self.user_usuario.fk_rol.nombre_rol, "Vendedor")    # ==================================================================    # SELF DEACTIVATION PREVENTION    # ==================================================================    def test_admin_cannot_deactivate_self(self):        """Admin cannot deactivate themselves via toggle-estado."""        response = self.client.patch(            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),            format="json",            **self._auth_header(),        )        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)        self.assertIn("propia cuenta", response.data["detail"])        # Verify still active        self.admin_usuario.refresh_from_db()        self.assertTrue(self.admin_usuario.estado)    # ==================================================================    # LAST ADMIN DEACTIVATION PREVENTION    # ==================================================================    def test_admin_cannot_deactivate_last_admin(self):        """No one can deactivate the last active admin."""        # Deactivate second admin so only one remains        self.admin2_usuario.estado = False        self.admin2_usuario.save(update_fields=["estado"])        # admin2 logs in BEFORE deactivation to get a valid JWT        token = self._login(email=self.admin2_email, password="admin1234")        # Now admin2 (inactive usuario, but valid JWT) tries to deactivate admin1        # who is the only active admin        response = self.client.patch(            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),            format="json",            **self._auth_header(token),        )        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)        self.assertIn("Ãºnico administrador", response.data["detail"])        # Verify still active        self.admin_usuario.refresh_from_db()        self.assertTrue(self.admin_usuario.estado)    def test_admin_can_deactivate_when_multiple_admins_exist(self):        """Admin CAN deactivate another admin when 2+ admins are active."""        # Login as admin2, deactivate admin1 (2 admins active)        token = self._login(email=self.admin2_email, password="admin1234")        response = self.client.patch(            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),            format="json",            **self._auth_header(token),        )        self.assertEqual(response.status_code, status.HTTP_200_OK)        self.admin_usuario.refresh_from_db()        self.assertFalse(self.admin_usuario.estado)    def test_admin_can_activate_last_admin(self):        """Activating an admin is always allowed (even if they'd be the only one)."""        self.admin_usuario.estado = False        self.admin_usuario.save(update_fields=["estado"])        response = self.client.patch(            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),            format="json",            **self._auth_header(),        )        self.assertEqual(response.status_code, status.HTTP_200_OK)        self.admin_usuario.refresh_from_db()        self.assertTrue(self.admin_usuario.estado)
+"""Tests para protecciones del usuario Admin.
+
+Verifica que un administrador no pueda:
+  - Cambiarse su propio rol (se bloquearia del panel admin)
+  - Desactivarse a si mismo
+  - Desactivar al ultimo administrador activo del sistema
+
+Uso:
+    python manage.py test rassa.tests.test_admin_user_protection
+"""
+
+from django.contrib.auth import get_user_model
+from django.test import override_settings
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from rassa.models import Localidad, Municipio, Persona, Rol, Usuario
+
+User = get_user_model()
+
+
+@override_settings(
+    REST_FRAMEWORK={
+        "DEFAULT_THROTTLE_CLASSES": [],
+        "DEFAULT_THROTTLE_RATES": {},
+        "DEFAULT_AUTHENTICATION_CLASSES": (
+            "rest_framework_simplejwt.authentication.JWTAuthentication",
+        ),
+        "DEFAULT_PERMISSION_CLASSES": (
+            "rest_framework.permissions.IsAuthenticated",
+        ),
+        "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+        "PAGE_SIZE": 20,
+        "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
+    }
+)
+class AdminUserProtectionTest(APITestCase):
+    """Tests para protecciones de integridad del usuario admin."""
+
+    def setUp(self):
+        self.rol_admin, _ = Rol.objects.get_or_create(
+            nombre_rol="Admin",
+            defaults={"descripcion": "Rol Admin"},
+        )
+        self.rol_buyer, _ = Rol.objects.get_or_create(
+            nombre_rol="Cliente",
+            defaults={"descripcion": "Rol Cliente"},
+        )
+        self.rol_seller, _ = Rol.objects.get_or_create(
+            nombre_rol="Vendedor",
+            defaults={"descripcion": "Rol Vendedor"},
+        )
+
+        self.municipio = Municipio.objects.create(nombre="Celaya")
+        self.localidad = Localidad.objects.create(
+            nombre="Centro", fk_municipio=self.municipio
+        )
+
+        # Admin principal
+        self.admin_email = "admin@rassa.com"
+        self.admin_password = "admin1234"
+        self.admin_user = User.objects.create_user(
+            username=self.admin_email,
+            email=self.admin_email,
+            password=self.admin_password,
+        )
+        self.admin_persona = Persona.objects.create(
+            nombre="Admin",
+            apellido_paterno="Principal",
+            fecha_nacimiento="1990-01-01",
+            sexo="M",
+            domicilio="Calle Admin 1",
+            fk_localidad=self.localidad,
+        )
+        self.admin_usuario = Usuario.objects.create(
+            fk_user=self.admin_user,
+            fk_persona=self.admin_persona,
+            telefono="1111111111",
+            correo=self.admin_email,
+            fk_rol=self.rol_admin,
+        )
+
+        # Segundo admin (para tests de ultimo admin)
+        self.admin2_email = "admin2@rassa.com"
+        self.admin2_user = User.objects.create_user(
+            username=self.admin2_email,
+            email=self.admin2_email,
+            password="admin1234",
+        )
+        self.admin2_persona = Persona.objects.create(
+            nombre="Admin",
+            apellido_paterno="Dos",
+            fecha_nacimiento="1991-01-01",
+            sexo="M",
+            domicilio="Calle Admin 2",
+            fk_localidad=self.localidad,
+        )
+        self.admin2_usuario = Usuario.objects.create(
+            fk_user=self.admin2_user,
+            fk_persona=self.admin2_persona,
+            telefono="2222222222",
+            correo=self.admin2_email,
+            fk_rol=self.rol_admin,
+        )
+
+        # Usuario normal
+        self.user_email = "user@rassa.com"
+        self.user_user = User.objects.create_user(
+            username=self.user_email,
+            email=self.user_email,
+            password="user1234",
+        )
+        self.user_persona = Persona.objects.create(
+            nombre="Normal",
+            apellido_paterno="User",
+            fecha_nacimiento="1995-01-01",
+            sexo="F",
+            domicilio="Calle User 1",
+            fk_localidad=self.localidad,
+        )
+        self.user_usuario = Usuario.objects.create(
+            fk_user=self.user_user,
+            fk_persona=self.user_persona,
+            telefono="3333333333",
+            correo=self.user_email,
+            fk_rol=self.rol_buyer,
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _login(self, email=None, password=None):
+        resp = self.client.post(
+            reverse("token_obtain_pair"),
+            {
+                "email": email or self.admin_email,
+                "password": password or self.admin_password,
+            },
+            format="json",
+        )
+        return resp.data.get("access", "")
+
+    def _auth_header(self, token=None):
+        return {"HTTP_AUTHORIZATION": f"Bearer {token or self._login()}"}
+
+    # ==================================================================
+    # SELF ROLE CHANGE PREVENTION
+    # ==================================================================
+
+    def test_admin_cannot_change_own_role(self):
+        """Admin cannot change their own role via partial_update."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.admin_usuario.id_usuario]),
+            {"role": "buyer"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("propio rol", response.data["detail"])
+
+        # Verify role unchanged in DB
+        self.admin_usuario.refresh_from_db()
+        self.assertEqual(self.admin_usuario.fk_rol.nombre_rol, "Admin")
+
+    def test_admin_can_update_own_non_role_fields(self):
+        """Admin CAN update their own phone, name, etc. (just not role)."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.admin_usuario.id_usuario]),
+            {"telefono": "9999999999", "nombre": "AdminActualizado"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.admin_usuario.refresh_from_db()
+        self.assertEqual(self.admin_usuario.telefono, "9999999999")
+        self.assertEqual(self.admin_usuario.fk_persona.nombre, "AdminActualizado")
+
+    def test_admin_can_change_other_user_role(self):
+        """Admin CAN change another user's role."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"role": "seller"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.fk_rol.nombre_rol, "Vendedor")
+
+    # ==================================================================
+    # SELF DEACTIVATION PREVENTION
+    # ==================================================================
+
+    def test_admin_cannot_deactivate_self(self):
+        """Admin cannot deactivate themselves via toggle-estado."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("propia cuenta", response.data["detail"])
+
+        # Verify still active
+        self.admin_usuario.refresh_from_db()
+        self.assertTrue(self.admin_usuario.estado)
+
+    # ==================================================================
+    # LAST ADMIN DEACTIVATION PREVENTION
+    # ==================================================================
+
+    def test_admin_cannot_deactivate_last_admin(self):
+        """No one can deactivate the last active admin."""
+        # Deactivate second admin so only one remains
+        self.admin2_usuario.estado = False
+        self.admin2_usuario.save(update_fields=["estado"])
+
+        # admin2 logs in BEFORE deactivation to get a valid JWT
+        token = self._login(email=self.admin2_email, password="admin1234")
+
+        # Now admin2 (inactive usuario, but valid JWT) tries to deactivate admin1
+        # who is the only active admin
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nico administrador", response.data["detail"])
+
+        # Verify still active
+        self.admin_usuario.refresh_from_db()
+        self.assertTrue(self.admin_usuario.estado)
+
+    def test_admin_can_deactivate_when_multiple_admins_exist(self):
+        """Admin CAN deactivate another admin when 2+ admins are active."""
+        # Login as admin2, deactivate admin1 (2 admins active)
+        token = self._login(email=self.admin2_email, password="admin1234")
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.admin_usuario.refresh_from_db()
+        self.assertFalse(self.admin_usuario.estado)
+
+    def test_admin_can_activate_last_admin(self):
+        """Activating an admin is always allowed (even if they'd be the only one)."""
+        self.admin_usuario.estado = False
+        self.admin_usuario.save(update_fields=["estado"])
+
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.admin_usuario.refresh_from_db()
+        self.assertTrue(self.admin_usuario.estado)
