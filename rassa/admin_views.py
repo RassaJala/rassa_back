@@ -81,6 +81,13 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        admin_usuario = request.user.usuario
+        if usuario.id_usuario == admin_usuario.id_usuario and "role" in request.data:
+            return Response(
+                {"detail": "No puedes cambiar tu propio rol de administrador."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = AdminUserUpdateSerializer(usuario, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
@@ -113,6 +120,16 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
                 {"detail": "No puedes desactivar tu propia cuenta de administrador."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if usuario.estado and usuario.fk_rol.nombre_rol == ADMIN:
+            admin_count = Usuario.objects.filter(
+                fk_rol__nombre_rol=ADMIN, estado=True
+            ).count()
+            if admin_count <= 1:
+                return Response(
+                    {"detail": "No se puede desactivar al único administrador activo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         usuario.estado = not usuario.estado
         usuario.save(update_fields=["estado"])
