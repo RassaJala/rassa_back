@@ -46,18 +46,14 @@ class PublicacionBaseTestCase(APITestCase):
         self.cliente = _create_user_with_role("Cliente", "cliente_test")
         self.client.force_authenticate(self.agricultor)
 
-        self.categoria = CategoriaProducto.objects.create(
-            nombre="Frutas", descripcion="Frutas", estado=True
-        )
+        self.categoria = CategoriaProducto.objects.create(nombre="Frutas", descripcion="Frutas", estado=True)
         self.producto = Producto.objects.create(
             nombre_producto="Manzana",
             fk_categoria=self.categoria,
             es_perecedero=True,
             estado=True,
         )
-        self.unidad = Unidad.objects.create(
-            nombre="Kilogramo", abreviatura="kg", tipo="Kilogramo", estado=True
-        )
+        self.unidad = Unidad.objects.create(nombre="Kilogramo", abreviatura="kg", tipo="Kilogramo", estado=True)
 
     def _assert_success_envelope(self, response, *, status_code=status.HTTP_200_OK, message=None):
         self.assertEqual(response.status_code, status_code)
@@ -117,9 +113,7 @@ class PublicacionAuthTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_partial_update_requires_auth(self):
-        response = self.client.patch(
-            reverse("publicacion-detail", args=[1]), {"estado": "publicado"}, format="json"
-        )
+        response = self.client.patch(reverse("publicacion-detail", args=[1]), {"estado": "publicado"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_destroy_requires_auth(self):
@@ -155,9 +149,7 @@ class PublicacionPermissionTests(PublicacionBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_non_agricultor_cannot_partial_update(self):
-        response = self.client.patch(
-            reverse("publicacion-detail", args=[self.pub_id]), {}, format="json"
-        )
+        response = self.client.patch(reverse("publicacion-detail", args=[self.pub_id]), {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_non_agricultor_cannot_destroy(self):
@@ -208,15 +200,11 @@ class PublicacionListTests(PublicacionBaseTestCase):
         pub.estado = "publicado"
         pub.save(update_fields=["estado"])
 
-        data = self._assert_success_envelope(
-            self.client.get(reverse("publicacion-list"), {"estado": "publicado"})
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("publicacion-list"), {"estado": "publicado"}))
         for item in data["results"]:
             self.assertEqual(item["estado"], "publicado")
 
-        data = self._assert_success_envelope(
-            self.client.get(reverse("publicacion-list"), {"estado": "borrador"})
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("publicacion-list"), {"estado": "borrador"}))
         for item in data["results"]:
             self.assertEqual(item["estado"], "borrador")
 
@@ -228,9 +216,7 @@ class PublicacionRetrieveTests(PublicacionBaseTestCase):
         self.pub_id = self.pub_data["id_publicacion"]
 
     def test_retrieve_publicacion(self):
-        data = self._assert_success_envelope(
-            self.client.get(reverse("publicacion-detail", args=[self.pub_id]))
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("publicacion-detail", args=[self.pub_id])))
         self.assertEqual(data["id_publicacion"], self.pub_id)
         self.assertEqual(data["estado"], "borrador")
 
@@ -298,9 +284,7 @@ class PublicacionDeleteTests(PublicacionBaseTestCase):
             self.client.delete(reverse("publicacion-detail", args=[self.pub_id])),
             message="Publicación eliminada correctamente.",
         )
-        self.assertFalse(
-            PublicacionSemanal.objects.filter(pk=self.pub_id).exists()
-        )
+        self.assertFalse(PublicacionSemanal.objects.filter(pk=self.pub_id).exists())
 
     def test_delete_published_returns_400(self):
         pub = PublicacionSemanal.objects.get(pk=self.pub_id)
@@ -469,9 +453,7 @@ class ProductoSemanalAuthTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_partial_update_requires_auth(self):
-        response = self.client.patch(
-            reverse("producto-semanal-detail", args=[1, 1]), {}, format="json"
-        )
+        response = self.client.patch(reverse("producto-semanal-detail", args=[1, 1]), {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_destroy_requires_auth(self):
@@ -550,9 +532,7 @@ class ProductoSemanalListTests(PublicacionBaseTestCase):
         self._create_producto_semanal(self.pub_id, stock=5, precio="30.00")
 
     def test_list_productos(self):
-        data = self._assert_success_envelope(
-            self.client.get(reverse("producto-semanal-list", args=[self.pub_id]))
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("producto-semanal-list", args=[self.pub_id])))
         self.assertEqual(len(data), 2)
 
     def test_list_only_active(self):
@@ -560,9 +540,7 @@ class ProductoSemanalListTests(PublicacionBaseTestCase):
         item = pub.productosemanal_set.first()
         item.estado = "inactivo"
         item.save(update_fields=["estado"])
-        data = self._assert_success_envelope(
-            self.client.get(reverse("producto-semanal-list", args=[self.pub_id]))
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("producto-semanal-list", args=[self.pub_id])))
         self.assertEqual(len(data), 1)
 
     def test_list_non_existent_publicacion_returns_404(self):
@@ -624,9 +602,7 @@ class ProductoSemanalDeleteTests(PublicacionBaseTestCase):
 
     def test_delete_producto_soft_deletes(self):
         self._assert_message_envelope(
-            self.client.delete(
-                reverse("producto-semanal-detail", args=[self.pub_id, self.item_id])
-            ),
+            self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, self.item_id])),
             message="Producto eliminado correctamente.",
         )
         item = ProductoSemanal.objects.get(pk=self.item_id)
@@ -635,13 +611,9 @@ class ProductoSemanalDeleteTests(PublicacionBaseTestCase):
     def test_delete_producto_in_published_returns_400(self):
         self._create_producto_semanal(self.pub_id)
         self.client.post(reverse("publicacion-publish", args=[self.pub_id]))
-        response = self.client.delete(
-            reverse("producto-semanal-detail", args=[self.pub_id, self.item_id])
-        )
+        response = self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, self.item_id]))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_delete_non_existent_returns_404(self):
-        response = self.client.delete(
-            reverse("producto-semanal-detail", args=[self.pub_id, 99999])
-        )
+        response = self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, 99999]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
