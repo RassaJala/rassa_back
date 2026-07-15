@@ -25,12 +25,14 @@ ROLE_MAPPING = {
     "buyer": "Cliente",
     "farmer": "Agricultor",
     "admin": "Admin",
+    "seller": "Vendedor",
 }
 
 ROLE_REVERSE_MAPPING = {
     "Cliente": "buyer",
     "Agricultor": "farmer",
     "Admin": "admin",
+    "Vendedor": "seller",
 }
 
 # ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=150)
     password = serializers.CharField(write_only=True, min_length=6)
     telefono = serializers.CharField(max_length=20)
-    role = serializers.ChoiceField(choices=[("buyer", "Comprador"), ("farmer", "Agricultor")])
+    role = serializers.ChoiceField(choices=[("buyer", "Comprador"), ("farmer", "Agricultor"), ("seller", "Vendedor")])
     nombre = serializers.CharField(max_length=100)
     apellido_paterno = serializers.CharField(max_length=100)
     apellido_materno = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
