@@ -70,16 +70,16 @@ class PublicacionViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         try:
             publicacion = self.get_queryset().get(pk=pk)
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
         serializer = PublicacionSerializer(publicacion)
         return _ok(data=serializer.data)
 
     def partial_update(self, request, pk=None):
         try:
             publicacion = self.get_queryset().get(pk=pk)
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
 
         if publicacion.estado != 'borrador':
             return Response(
@@ -97,8 +97,8 @@ class PublicacionViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         try:
             publicacion = self.get_queryset().get(pk=pk)
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
 
         if publicacion.estado != 'borrador':
             return Response(
@@ -113,8 +113,8 @@ class PublicacionViewSet(viewsets.ViewSet):
     def publish(self, request, pk=None):
         try:
             publicacion = self.get_queryset().get(pk=pk)
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
 
         if publicacion.estado != 'borrador':
             return Response(
@@ -158,8 +158,8 @@ class PublicacionViewSet(viewsets.ViewSet):
     def close(self, request, pk=None):
         try:
             publicacion = self.get_queryset().get(pk=pk)
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
 
         if publicacion.estado != 'publicado':
             return Response(
@@ -182,8 +182,8 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
             return PublicacionSemanal.objects.get(
                 pk=pub_id, fk_agricultor=request.user.usuario
             )
-        except PublicacionSemanal.DoesNotExist:
-            raise NotFound('Publicación no encontrada.')
+        except PublicacionSemanal.DoesNotExist as err:
+            raise NotFound('Publicación no encontrada.') from err
 
     def list(self, request, pub_id=None):
         publicacion = self._get_publicacion(pub_id, request)
@@ -218,8 +218,8 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
         try:
             item = publicacion.productosemanal_set.get(pk=pk)
-        except ProductoSemanal.DoesNotExist:
-            raise NotFound('Producto no encontrado.')
+        except ProductoSemanal.DoesNotExist as err:
+            raise NotFound('Producto no encontrado.') from err
 
         serializer = ProductoSemanalSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -236,8 +236,8 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
         try:
             item = publicacion.productosemanal_set.get(pk=pk)
-        except ProductoSemanal.DoesNotExist:
-            raise NotFound('Producto no encontrado.')
+        except ProductoSemanal.DoesNotExist as err:
+            raise NotFound('Producto no encontrado.') from err
 
         item.estado = 'inactivo'
         item.save(update_fields=['estado'])
