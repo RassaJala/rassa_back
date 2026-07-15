@@ -33,8 +33,8 @@ def _log(user, descripcion, request):
     )
 
 
-def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
-    """Standardized success response."""
+def ok_response(data=None, message=None, status_code=status.HTTP_200_OK):
+    """Standardized success response body with {data, message} envelope."""
     body = {}
     if message:
         body["message"] = message
@@ -68,7 +68,7 @@ class RegisterView(generics.CreateAPIView):
 
         _log(user, f"Registro de usuario: {usuario.correo} (rol: {usuario.fk_rol})", request)
 
-        return _ok(
+        return ok_response(
             data=user_data,
             message="Registro completado exitosamente.",
             status_code=status.HTTP_201_CREATED,
@@ -90,7 +90,7 @@ class MeView(APIView):
     def get(self, request):
         usuario = self.get_object()
         serializer = UserSerializer(usuario)
-        return _ok(data=serializer.data)
+        return ok_response(data=serializer.data)
 
     def patch(self, request):
         usuario = self.get_object()
@@ -101,7 +101,7 @@ class MeView(APIView):
 
         _log(request.user, f"Actualización de perfil: {usuario.correo}", request)
 
-        return _ok(data=UserSerializer(updated_usuario).data, message="Perfil actualizado exitosamente.")
+        return ok_response(data=UserSerializer(updated_usuario).data, message="Perfil actualizado exitosamente.")
 
 
 class ChangePasswordView(APIView):
@@ -134,7 +134,7 @@ class ChangePasswordView(APIView):
 
         _log(request.user, "Cambio de contraseña", request)
 
-        return _ok(message="Contraseña cambiada exitosamente.")
+        return ok_response(message="Contraseña cambiada exitosamente.")
 
 
 class AuthHealthView(APIView):
@@ -143,7 +143,7 @@ class AuthHealthView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        return _ok(message="ok")
+        return ok_response(message="ok")
 
 
 class CatalogPagination(PageNumberPagination):
@@ -179,16 +179,16 @@ class CatalogViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
+        return ok_response(data=response.data)
 
     def retrieve(self, request, *args, **kwargs):
         response = super().retrieve(request, *args, **kwargs)
-        return _ok(data=response.data)
+        return ok_response(data=response.data)
 
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
         if response.status_code == status.HTTP_201_CREATED:
-            return _ok(
+            return ok_response(
                 data=response.data,
                 message="Registro creado correctamente.",
                 status_code=status.HTTP_201_CREATED,
@@ -198,13 +198,13 @@ class CatalogViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
-            return _ok(data=response.data, message="Registro actualizado correctamente.")
+            return ok_response(data=response.data, message="Registro actualizado correctamente.")
         return response
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         self.perform_destroy(instance)
-        return _ok(message="Registro eliminado correctamente.")
+        return ok_response(message="Registro eliminado correctamente.")
 
     def perform_destroy(self, instance):
         setattr(instance, self.soft_delete_field, False)
@@ -222,14 +222,14 @@ class CatalogViewSet(viewsets.ModelViewSet):
         setattr(instance, self.soft_delete_field, True)
         instance.save(update_fields=[self.soft_delete_field])
         serializer = self.get_serializer(instance)
-        return _ok(data=serializer.data, message="Registro restaurado correctamente.")
+        return ok_response(data=serializer.data, message="Registro restaurado correctamente.")
 
     @action(detail=True, methods=["post"], url_path="permanent")
     def permanent(self, request, pk=None, *args, **kwargs):
         """Eliminación permanente de un registro desactivado."""
         instance = self.get_object()
         instance.delete()
-        return _ok(message="Registro eliminado permanentemente.")
+        return ok_response(message="Registro eliminado permanentemente.")
 
 
 class CategoriaProductoViewSet(CatalogViewSet):
@@ -257,7 +257,7 @@ class MunicipioListView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
+        return ok_response(data=response.data)
 
 
 class LocalidadByMunicipioListView(APIView):
@@ -278,4 +278,4 @@ class LocalidadByMunicipioListView(APIView):
 
         localidades = Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
         serializer = LocalidadSerializer(localidades, many=True)
-        return _ok(data=serializer.data)
+        return ok_response(data=serializer.data)
