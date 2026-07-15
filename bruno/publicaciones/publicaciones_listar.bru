@@ -1,0 +1,15 @@
+meta {
+  name: Listar publicaciones
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/publicaciones/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
