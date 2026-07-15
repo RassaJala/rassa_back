@@ -9,6 +9,7 @@ class MunicipioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Municipio
         fields = ["id_municipio", "nombre"]
+        read_only_fields = ["estado"]
 
     def validate_nombre(self, value):
         if not value or not value.strip():
@@ -24,6 +25,14 @@ class LocalidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Localidad
         fields = ["id_localidad", "nombre", "municipio_id"]
+        read_only_fields = ["fk_municipio", "estado"]
+
+    def validate_nombre(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("El nombre no puede estar vacío.")
+        if len(value) > 100:
+            raise serializers.ValidationError("El nombre no puede tener más de 100 caracteres.")
+        return value.strip()
 
 
 class CategoriaProductoSerializer(serializers.ModelSerializer):
