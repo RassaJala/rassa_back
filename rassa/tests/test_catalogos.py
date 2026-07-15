@@ -172,6 +172,7 @@ class CatalogosCRUDTest(APITestCase):
                 **self._admin_auth(),
             )
             self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("nombre", resp.data)
 
     def test_municipio_create_name_too_long(self):
         """Creating municipio with name over 100 chars returns 400."""
@@ -182,6 +183,7 @@ class CatalogosCRUDTest(APITestCase):
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
 
     # --- DETAIL ---
 
@@ -561,6 +563,68 @@ class CatalogosCRUDTest(APITestCase):
     # Localidad create validation (4.8)
     # ==================================================================
 
+    def test_localidad_create_empty_name(self):
+        """Creating localidad with empty/whitespace name returns 400."""
+        for empty_val in ["", "   "]:
+            resp = self.client.post(
+                reverse("localidades-by-municipio", kwargs={"pk": self.municipio.id_municipio}),
+                {"nombre": empty_val},
+                format="json",
+                **self._admin_auth(),
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("nombre", resp.data)
+
+    def test_localidad_create_name_too_long(self):
+        """Creating localidad with name over 100 chars returns 400."""
+        resp = self.client.post(
+            reverse("localidades-by-municipio", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": "A" * 101},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_localidad_create_via_nested_nonexistent_municipio(self):
+        """POST /api/municipios/99999/localidades/ returns 400."""
+        resp = self.client.post(
+            reverse("localidades-by-municipio", kwargs={"pk": 99999}),
+            {"nombre": "Nowhere"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio", resp.data)
+
+    def test_localidad_create_via_nested_soft_deleted_municipio(self):
+        """POST /api/municipios/{soft-deleted}/localidades/ returns 400."""
+        temp = Municipio.objects.create(nombre="DeletedMuni")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("localidades-by-municipio", kwargs={"pk": temp.id_municipio}),
+            {"nombre": "Nowhere"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio", resp.data)
+
+    def test_localidad_create_backward_compat_soft_deleted_municipio(self):
+        """POST /api/localidades/?municipio_id={soft-deleted} returns 400."""
+        temp = Municipio.objects.create(nombre="DeletedMuni")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("localidades") + f"?municipio_id={temp.id_municipio}",
+            {"nombre": "Nowhere"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", resp.data)
+
     def test_localidad_create_backward_compat_missing_param(self):
         """POST /api/localidades/ without municipio_id returns 400."""
         resp = self.client.post(
@@ -581,6 +645,7 @@ class CatalogosCRUDTest(APITestCase):
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", resp.data)
 
     def test_localidad_create_backward_compat_nonexistent_municipio(self):
         """POST /api/localidades/?municipio_id=99999 returns 400."""
@@ -591,6 +656,7 @@ class CatalogosCRUDTest(APITestCase):
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", resp.data)
 
     # ==================================================================
     # Soft-delete isolation (4.9)
