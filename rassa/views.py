@@ -355,9 +355,7 @@ class LocalidadByMunicipioListCreateView(CatalogListCreateView):
         pk = self.kwargs.get("pk")
         if pk is not None:
             if not Municipio.objects.filter(pk=pk, estado=True).exists():
-                raise ValidationError(
-                    {"municipio": "El municipio especificado no existe o fue eliminado."}
-                )
+                raise ValidationError({"municipio": "El municipio especificado no existe o fue eliminado."})
             serializer.save(fk_municipio_id=pk)
             return
         raw = self.request.query_params.get("municipio_id")
