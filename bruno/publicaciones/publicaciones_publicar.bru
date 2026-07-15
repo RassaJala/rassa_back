@@ -1,0 +1,15 @@
+meta {
+  name: Publicar publicación
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/publish/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

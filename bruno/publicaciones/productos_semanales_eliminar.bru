@@ -1,0 +1,15 @@
+meta {
+  name: Eliminar producto semanal
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/productos/{{productoId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
