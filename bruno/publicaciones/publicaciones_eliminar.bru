@@ -1,0 +1,15 @@
+meta {
+  name: Eliminar publicación
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
