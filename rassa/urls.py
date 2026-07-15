@@ -17,6 +17,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.views import (
     AuthHealthView,
@@ -87,4 +88,5 @@ urlpatterns = [
     path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
     path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
     path("", include(router.urls)),
+    path("", include(publicacion_urls)),
 ]
