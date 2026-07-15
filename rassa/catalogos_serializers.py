@@ -20,11 +20,10 @@ class MunicipioSerializer(serializers.ModelSerializer):
 
 class LocalidadSerializer(serializers.ModelSerializer):
     municipio_id = serializers.IntegerField(source="fk_municipio_id", read_only=True)
-    fk_municipio = serializers.PrimaryKeyRelatedField(queryset=Municipio.objects.all(), write_only=True, required=False)
 
     class Meta:
         model = Localidad
-        fields = ["id_localidad", "nombre", "municipio_id", "fk_municipio"]
+        fields = ["id_localidad", "nombre", "municipio_id"]
 
 
 class CategoriaProductoSerializer(serializers.ModelSerializer):

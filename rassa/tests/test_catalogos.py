@@ -230,14 +230,16 @@ class CatalogosCRUDTest(APITestCase):
     # --- DELETE ---
 
     def test_municipio_delete_admin_success(self):
-        """Admin can DELETE a municipio."""
+        """Admin can soft-delete a municipio (estado=False)."""
         temp = Municipio.objects.create(nombre="Temp")
         resp = self.client.delete(
             reverse("municipio-detail", kwargs={"pk": temp.id_municipio}),
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(Municipio.objects.filter(pk=temp.id_municipio).exists())
+        # Soft-delete: record still exists, but estado=False
+        temp.refresh_from_db()
+        self.assertFalse(temp.estado)
 
     def test_municipio_delete_nonadmin_forbidden(self):
         """Non-admin gets 403 when deleting a municipio."""
@@ -344,14 +346,16 @@ class CatalogosCRUDTest(APITestCase):
     # --- DELETE ---
 
     def test_localidad_delete_admin_success(self):
-        """Admin can DELETE a localidad."""
+        """Admin can soft-delete a localidad (estado=False)."""
         temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
         resp = self.client.delete(
             reverse("localidad-detail", kwargs={"pk": temp.id_localidad}),
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(Localidad.objects.filter(pk=temp.id_localidad).exists())
+        # Soft-delete: record still exists, but estado=False
+        temp.refresh_from_db()
+        self.assertFalse(temp.estado)
 
     def test_localidad_delete_nonadmin_forbidden(self):
         """Non-admin gets 403 when deleting a localidad."""
@@ -504,3 +508,109 @@ class CatalogosCRUDTest(APITestCase):
             **self._nonadmin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ==================================================================
+    # PATCH tests (4.7)
+    # ==================================================================
+
+    def test_municipio_patch_admin_success(self):
+        """Admin can PATCH a municipio (partial update)."""
+        resp = self.client.patch(
+            reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": "Celaya Patch"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.municipio.refresh_from_db()
+        self.assertEqual(self.municipio.nombre, "Celaya Patch")
+
+    def test_municipio_patch_nonadmin_forbidden(self):
+        """Non-admin gets 403 when PATCHing a municipio."""
+        resp = self.client.patch(
+            reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": "Hacked"},
+            format="json",
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_localidad_patch_admin_success(self):
+        """Admin can PATCH a localidad (partial update)."""
+        resp = self.client.patch(
+            reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+            {"nombre": "Centro Patch"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.localidad.refresh_from_db()
+        self.assertEqual(self.localidad.nombre, "Centro Patch")
+
+    def test_localidad_patch_nonadmin_forbidden(self):
+        """Non-admin gets 403 when PATCHing a localidad."""
+        resp = self.client.patch(
+            reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+            {"nombre": "Hacked"},
+            format="json",
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ==================================================================
+    # Localidad create validation (4.8)
+    # ==================================================================
+
+    def test_localidad_create_backward_compat_missing_param(self):
+        """POST /api/localidades/ without municipio_id returns 400."""
+        resp = self.client.post(
+            reverse("localidades"),
+            {"nombre": "No Municipio"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("municipio_id", resp.data)
+
+    def test_localidad_create_backward_compat_bad_param(self):
+        """POST /api/localidades/?municipio_id=abc returns 400."""
+        resp = self.client.post(
+            reverse("localidades") + "?municipio_id=abc",
+            {"nombre": "Bad Municipio"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_localidad_create_backward_compat_nonexistent_municipio(self):
+        """POST /api/localidades/?municipio_id=99999 returns 400."""
+        resp = self.client.post(
+            reverse("localidades") + "?municipio_id=99999",
+            {"nombre": "Nowhere"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ==================================================================
+    # Soft-delete isolation (4.9)
+    # ==================================================================
+
+    def test_soft_deleted_municipio_excluded_from_list(self):
+        """Soft-deleted municipio should not appear in list."""
+        temp = Municipio.objects.create(nombre="TempParaBorrar")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.get(reverse("municipios"), **self._admin_auth())
+        names = [m["nombre"] for m in resp.data["data"]]
+        self.assertNotIn("TempParaBorrar", names)
+
+    def test_soft_deleted_localidad_excluded_from_list(self):
+        """Soft-deleted localidad should not appear in list."""
+        temp = Localidad.objects.create(nombre="TempParaBorrar", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        url = reverse("localidades-by-municipio", kwargs={"pk": self.municipio.id_municipio})
+        resp = self.client.get(url, **self._admin_auth())
+        names = [loc["nombre"] for loc in resp.data["data"]]
+        self.assertNotIn("TempParaBorrar", names)

@@ -14,13 +14,8 @@ headers {
   Authorization: Bearer {{accessToken}}
   Content-Type: application/json
 }
-
 body:json {
   {
     "nombre": "Nuevo Municipio"
   }
-}
-
-vars:pre-request {
-  baseUrl: http://localhost:8000
 }
