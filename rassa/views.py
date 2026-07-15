@@ -231,7 +231,8 @@ class CatalogListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         model_name = type(serializer.instance).__name__ if serializer.instance else "Registro"
-        _log(request.user, f"{model_name} creado: {getattr(serializer.instance, 'nombre', '')} (id={serializer.instance.pk})", request)
+        nombre = getattr(serializer.instance, 'nombre', '')
+        _log(request.user, f"{model_name} creado: {nombre} (id={serializer.instance.pk})", request)
         return _ok(
             data=serializer.data,
             message=self.create_message,
