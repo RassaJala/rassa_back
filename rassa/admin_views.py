@@ -122,9 +122,7 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
             )
 
         if usuario.estado and usuario.fk_rol.nombre_rol == ADMIN:
-            admin_count = Usuario.objects.filter(
-                fk_rol__nombre_rol=ADMIN, estado=True
-            ).count()
+            admin_count = Usuario.objects.filter(fk_rol__nombre_rol=ADMIN, estado=True).count()
             if admin_count <= 1:
                 return Response(
                     {"detail": "No se puede desactivar al único administrador activo."},
