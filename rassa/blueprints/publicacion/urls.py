@@ -11,7 +11,6 @@ publicacion_list = PublicacionViewSet.as_view(
 publicacion_detail = PublicacionViewSet.as_view(
     {
         "get": "retrieve",
-        "patch": "partial_update",
         "delete": "destroy",
     }
 )
