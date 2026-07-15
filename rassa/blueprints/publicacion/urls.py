@@ -50,5 +50,9 @@ urlpatterns = [
     path("api/publicaciones/<int:pk>/close/", publicacion_close, name="publicacion-close"),
     path("api/publicaciones/<int:pub_id>/productos/", producto_list, name="producto-semanal-list"),
     path("api/publicaciones/<int:pub_id>/productos/<int:pk>/", producto_detail, name="producto-semanal-detail"),
-    path("api/publicaciones/<int:pub_id>/productos/<int:pk>/restore/", producto_restore, name="producto-semanal-restore"),
+    path(
+        "api/publicaciones/<int:pub_id>/productos/<int:pk>/restore/",
+        producto_restore,
+        name="producto-semanal-restore",
+    ),
 ]
