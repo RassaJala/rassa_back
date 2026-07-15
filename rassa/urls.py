@@ -89,7 +89,7 @@ urlpatterns = [
     path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
     path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
     path(
-        "api/municipalities/<int:pk>/localities/",
+        "api/municipios/<int:pk>/localidades/",
         LocalidadByMunicipioListCreateView.as_view(),
         name="localidades-by-municipio",
     ),

@@ -31,7 +31,6 @@ ROLE_REVERSE_MAPPING = {
     "Cliente": "buyer",
     "Agricultor": "farmer",
     "Admin": "admin",
-    "Vendedor": "seller",
 }
 
 # ---------------------------------------------------------------------------

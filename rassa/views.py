@@ -206,16 +206,16 @@ class UnidadViewSet(CatalogViewSet):
 
 
 # ======================================================================
-# Municipios y Localidades (catálogos)
+# Base views for catalog CRUD with admin-only writes + soft-delete
 # ======================================================================
 
 
-class MunicipioListCreateView(generics.ListCreateAPIView):
-    """List and create municipios (admin-only for write)."""
+class CatalogListCreateView(generics.ListCreateAPIView):
+    """Base ListCreate with admin-only writes, _ok wrapping, audit logging, and throttling."""
 
-    queryset = Municipio.objects.all().order_by("nombre")
-    serializer_class = MunicipioSerializer
     pagination_class = None
+    throttle_classes = [UserRateThrottle]
+    create_message = "Registro creado exitosamente."
 
     def get_permissions(self):
         if self.request.method in permissions.SAFE_METHODS:
@@ -230,18 +230,20 @@ class MunicipioListCreateView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
+        model_name = type(serializer.instance).__name__ if serializer.instance else "Registro"
+        _log(request.user, f"{model_name} creado: {getattr(serializer.instance, 'nombre', '')} (id={serializer.instance.pk})", request)
         return _ok(
             data=serializer.data,
-            message="Municipio creado exitosamente.",
+            message=self.create_message,
             status_code=status.HTTP_201_CREATED,
         )
 
 
-class MunicipioDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Retrieve, update, or delete a municipio (admin-only for write)."""
+class CatalogDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Base detail view with admin-only writes, _ok wrapping, soft-delete, audit logging."""
 
-    queryset = Municipio.objects.all()
-    serializer_class = MunicipioSerializer
+    throttle_classes = [UserRateThrottle]
+    update_message = "Registro actualizado exitosamente."
 
     def get_permissions(self):
         if self.request.method in permissions.SAFE_METHODS:
@@ -259,76 +261,78 @@ class MunicipioDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        return _ok(data=serializer.data, message="Municipio actualizado exitosamente.")
+        model_name = type(instance).__name__
+        _log(request.user, f"{model_name} actualizado: {instance.nombre} (id={instance.pk})", request)
+        return _ok(data=serializer.data, message=self.update_message)
+
+    def perform_destroy(self, instance):
+        instance.estado = False
+        instance.save(update_fields=["estado"])
+        model_name = type(instance).__name__
+        _log(self.request.user, f"{model_name} eliminado (soft): {instance.nombre} (id={instance.pk})", self.request)
 
 
-class LocalidadByMunicipioListCreateView(generics.ListCreateAPIView):
+# ======================================================================
+# Municipios y Localidades (catálogos)
+# ======================================================================
+
+
+class MunicipioListCreateView(CatalogListCreateView):
+    """List and create municipios (admin-only for write)."""
+
+    queryset = Municipio.objects.filter(estado=True).order_by("nombre")
+    serializer_class = MunicipioSerializer
+    create_message = "Municipio creado exitosamente."
+
+
+class MunicipioDetailView(CatalogDetailView):
+    """Retrieve, update, or soft-delete a municipio (admin-only for write)."""
+
+    queryset = Municipio.objects.filter(estado=True)
+    serializer_class = MunicipioSerializer
+    update_message = "Municipio actualizado exitosamente."
+
+
+class LocalidadByMunicipioListCreateView(CatalogListCreateView):
     """List and create localidades — via nested URL or backward compat query param."""
 
     serializer_class = LocalidadSerializer
-    pagination_class = None
-
-    def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
+    create_message = "Localidad creada exitosamente."
 
     def get_queryset(self):
+        base = Localidad.objects.filter(estado=True)
         pk = self.kwargs.get("pk")
         if pk is not None:
-            return Localidad.objects.filter(fk_municipio_id=pk).order_by("nombre")
+            return base.filter(fk_municipio_id=pk).order_by("nombre")
         raw = self.request.query_params.get("municipio_id")
         if raw is not None:
             try:
                 municipio_id = int(raw)
             except (ValueError, TypeError) as err:
                 raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
-            return Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
+            return base.filter(fk_municipio_id=municipio_id).order_by("nombre")
         raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
 
     def perform_create(self, serializer):
         pk = self.kwargs.get("pk")
         if pk is not None:
             serializer.save(fk_municipio_id=pk)
-        else:
-            municipio_id = self.request.query_params.get("municipio_id")
-            serializer.save(fk_municipio_id=municipio_id)
-
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        return _ok(
-            data=serializer.data,
-            message="Localidad creada exitosamente.",
-            status_code=status.HTTP_201_CREATED,
-        )
+            return
+        raw = self.request.query_params.get("municipio_id")
+        if raw is None:
+            raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
+        try:
+            municipio_id = int(raw)
+        except (ValueError, TypeError) as err:
+            raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
+        if not Municipio.objects.filter(pk=municipio_id).exists():
+            raise ValidationError({"municipio_id": "El municipio especificado no existe."})
+        serializer.save(fk_municipio_id=municipio_id)
 
 
-class LocalidadDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Retrieve, update, or delete a localidad (admin-only for write)."""
+class LocalidadDetailView(CatalogDetailView):
+    """Retrieve, update, or soft-delete a localidad (admin-only for write)."""
 
-    queryset = Localidad.objects.all()
+    queryset = Localidad.objects.filter(estado=True)
     serializer_class = LocalidadSerializer
-
-    def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return _ok(data=serializer.data)
-
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop("partial", False)
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        return _ok(data=serializer.data, message="Localidad actualizada exitosamente.")
+    update_message = "Localidad actualizada exitosamente."
