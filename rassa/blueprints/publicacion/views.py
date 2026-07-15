@@ -44,9 +44,11 @@ class PublicacionViewSet(viewsets.ViewSet):
         return [ScopedRateThrottle()]
 
     def get_queryset(self):
-        return PublicacionSemanal.objects.filter(
-            fk_agricultor=self.request.user.usuario
-        ).prefetch_related("productosemanal_set").order_by("-creado_en")
+        return (
+            PublicacionSemanal.objects.filter(fk_agricultor=self.request.user.usuario)
+            .prefetch_related("productosemanal_set")
+            .order_by("-creado_en")
+        )
 
     @property
     def paginator(self):
