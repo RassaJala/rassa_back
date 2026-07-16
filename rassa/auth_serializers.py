@@ -24,19 +24,19 @@ from rassa.models import Localidad, Persona, Rol, Usuario
 ROLE_MAPPING = {
     "buyer": "Cliente",
     "farmer": "Agricultor",
-    "admin": "Admin",
     "seller": "Vendedor",
+    "admin": "Admin",
 }
 
 ROLE_REVERSE_MAPPING = {
     "Cliente": "buyer",
     "Agricultor": "farmer",
-    "Admin": "admin",
     "Vendedor": "seller",
+    "Admin": "admin",
 }
 
 # ---------------------------------------------------------------------------
-# Shared validators
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 
@@ -45,6 +45,56 @@ def validate_fk_localidad(self, value):
     if not Localidad.objects.filter(id_localidad=value).exists():
         raise serializers.ValidationError("La localidad especificada no existe.")
     return value
+
+
+def _create_usuario_db(validated_data, email, password, rol):
+    """Shared DB creation logic for RegisterSerializer and AdminCreateAgricultorSerializer.
+
+    Creates User + Persona + Usuario in a single transaction.
+    """
+    localidad_id = validated_data["fk_localidad"]
+    try:
+        localidad = Localidad.objects.get(id_localidad=localidad_id)
+    except Localidad.DoesNotExist as err:
+        raise serializers.ValidationError({"fk_localidad": "La localidad especificada no existe."}) from err
+
+    apellido_materno = validated_data.get("apellido_materno")
+    if apellido_materno == "":
+        apellido_materno = None
+
+    try:
+        with transaction.atomic():
+            user = User.objects.create_user(username=email, email=email, password=password)
+            persona = Persona.objects.create(
+                nombre=validated_data["nombre"],
+                apellido_paterno=validated_data["apellido_paterno"],
+                apellido_materno=apellido_materno,
+                fecha_nacimiento=validated_data["fecha_nacimiento"],
+                sexo=validated_data["sexo"],
+                domicilio=validated_data["domicilio"],
+                fk_localidad=localidad,
+            )
+            usuario = Usuario.objects.create(
+                fk_user=user,
+                fk_persona=persona,
+                telefono=validated_data["telefono"],
+                correo=email,
+                fk_rol=rol,
+            )
+    except IntegrityError as err:
+        err_msg = str(err)
+        # Inspect the constraint name to give accurate feedback — not all
+        # unique constraints are on the email field.
+        if "correo" in err_msg or "email" in err_msg or "username" in err_msg or "auth_user" in err_msg:
+            raise serializers.ValidationError({"email": "Este correo ya está registrado."}) from err
+        if "telefono" in err_msg:
+            raise serializers.ValidationError({"telefono": "Este teléfono ya está registrado."}) from err
+        # Unknown constraint — surface a generic error so the caller isn't misled
+        raise serializers.ValidationError(
+            {"non_field_errors": ["Error de integridad al crear el usuario. Contacte al administrador."]}
+        ) from err
+
+    return usuario
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +179,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=150)
     password = serializers.CharField(write_only=True, min_length=6)
     telefono = serializers.CharField(max_length=20)
-    role = serializers.ChoiceField(choices=[("buyer", "Comprador"), ("farmer", "Agricultor"), ("seller", "Vendedor")])
+    role = serializers.ChoiceField(choices=[("buyer", "Comprador"), ("seller", "Vendedor")])
     nombre = serializers.CharField(max_length=100)
     apellido_paterno = serializers.CharField(max_length=100)
     apellido_materno = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
@@ -160,47 +210,51 @@ class RegisterSerializer(serializers.Serializer):
         role_front = validated_data["role"]
         db_role_name = ROLE_MAPPING[role_front]
 
-        # Fetch rol (cached catalog — unlikely to change, but guard anyway)
         try:
             rol = Rol.objects.get(nombre_rol=db_role_name)
         except Rol.DoesNotExist as err:
             raise serializers.ValidationError({"role": f"El rol {db_role_name} no existe en el sistema."}) from err
 
-        localidad_id = validated_data["fk_localidad"]
+        return _create_usuario_db(validated_data, email, password, rol)
+
+
+class AdminCreateAgricultorSerializer(serializers.Serializer):
+    """Serializer para que un Admin cree un usuario Agricultor.
+
+    No incluye campo `role` — siempre crea un Agricultor.
+    Solo accesible via el endpoint protegido por HasRole('Admin').
+    """
+
+    email = serializers.EmailField(max_length=150)
+    password = serializers.CharField(write_only=True, min_length=6)
+    telefono = serializers.CharField(max_length=20)
+    nombre = serializers.CharField(max_length=100)
+    apellido_paterno = serializers.CharField(max_length=100)
+    apellido_materno = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    fecha_nacimiento = serializers.DateField()
+    sexo = serializers.ChoiceField(choices=[("M", "Masculino"), ("F", "Femenino"), ("O", "Otro")])
+    domicilio = serializers.CharField(max_length=300)
+    fk_localidad = serializers.IntegerField()
+
+    # Reuses RegisterSerializer validators — keeps validation consistent
+    # across public and admin flows. If RegisterSerializer.validate_email
+    # changes, this follows automatically since it references the bound method.
+    validate_email = RegisterSerializer.validate_email
+    validate_password = RegisterSerializer.validate_password
+    validate_fk_localidad = validate_fk_localidad
+
+    def create(self, validated_data):
+        email = validated_data["email"]
+        password = validated_data["password"]
 
         try:
-            localidad = Localidad.objects.get(id_localidad=localidad_id)
-        except Localidad.DoesNotExist as err:
-            raise serializers.ValidationError({"fk_localidad": "La localidad especificada no existe."}) from err
+            rol = Rol.objects.get(nombre_rol="Agricultor")
+        except Rol.DoesNotExist as err:
+            raise serializers.ValidationError(
+                {"non_field_errors": ["El rol Agricultor no existe en el sistema."]}
+            ) from err
 
-        # Normalize apellido_materno: blank → None
-        apellido_materno = validated_data.get("apellido_materno")
-        if apellido_materno == "":
-            apellido_materno = None
-
-        try:
-            with transaction.atomic():
-                user = User.objects.create_user(username=email, email=email, password=password)
-                persona = Persona.objects.create(
-                    nombre=validated_data["nombre"],
-                    apellido_paterno=validated_data["apellido_paterno"],
-                    apellido_materno=apellido_materno,
-                    fecha_nacimiento=validated_data["fecha_nacimiento"],
-                    sexo=validated_data["sexo"],
-                    domicilio=validated_data["domicilio"],
-                    fk_localidad=localidad,
-                )
-                usuario = Usuario.objects.create(
-                    fk_user=user,
-                    fk_persona=persona,
-                    telefono=validated_data["telefono"],
-                    correo=email,
-                    fk_rol=rol,
-                )
-        except IntegrityError as err:
-            raise serializers.ValidationError({"email": "Este correo ya está registrado."}) from err
-
-        return usuario
+        return _create_usuario_db(validated_data, email, password, rol)
 
 
 class ProfileUpdateSerializer(serializers.Serializer):
