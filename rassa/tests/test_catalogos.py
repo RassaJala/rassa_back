@@ -96,18 +96,18 @@ class CatalogosCRUDTest(APITestCase):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _login(self, email, password):
+    def _make_token(self, email):
         """Generate JWT locally without hitting the token endpoint (avoids rate limits)."""
         user = User.objects.get(email=email)
         return str(AccessToken.for_user(user))
 
     def _admin_auth(self):
         """Authorization header for admin."""
-        return {"HTTP_AUTHORIZATION": f"Bearer {self._login('admin@test.com', 'admin123')}"}
+        return {"HTTP_AUTHORIZATION": f"Bearer {self._make_token('admin@test.com')}"}
 
     def _nonadmin_auth(self):
         """Authorization header for non-admin."""
-        return {"HTTP_AUTHORIZATION": f"Bearer {self._login('agri@test.com', 'agri123')}"}
+        return {"HTTP_AUTHORIZATION": f"Bearer {self._make_token('agri@test.com')}"}
 
     # ==================================================================
     # Municipio CRUD
@@ -576,10 +576,10 @@ class CatalogosCRUDTest(APITestCase):
             self.assertIn("nombre", resp.data)
 
     def test_localidad_create_name_too_long(self):
-        """Creating localidad with name over 100 chars returns 400."""
+        """Creating localidad with name over model max_length returns 400."""
         resp = self.client.post(
             reverse("localidades-by-municipio", kwargs={"pk": self.municipio.id_municipio}),
-            {"nombre": "A" * 101},
+            {"nombre": "A" * 151},
             format="json",
             **self._admin_auth(),
         )
@@ -680,3 +680,168 @@ class CatalogosCRUDTest(APITestCase):
         resp = self.client.get(url, **self._admin_auth())
         names = [loc["nombre"] for loc in resp.data["data"]]
         self.assertNotIn("TempParaBorrar", names)
+
+    # ==================================================================
+    # UPDATE/PATCH validation (Review PR #39 — WARNING 7)
+    # ==================================================================
+
+    def test_municipio_update_empty_name(self):
+        """PUT with empty/whitespace name returns 400."""
+        for empty_val in ["", "   "]:
+            resp = self.client.put(
+                reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+                {"nombre": empty_val},
+                format="json",
+                **self._admin_auth(),
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("nombre", resp.data)
+
+    def test_municipio_update_name_too_long(self):
+        """PUT with name over model max_length returns 400."""
+        resp = self.client.put(
+            reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": "A" * 101},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_municipio_patch_empty_name(self):
+        """PATCH with empty name returns 400."""
+        resp = self.client.patch(
+            reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": ""},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_localidad_update_empty_name(self):
+        """PUT localidad with empty/whitespace name returns 400."""
+        for empty_val in ["", "   "]:
+            resp = self.client.put(
+                reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+                {"nombre": empty_val},
+                format="json",
+                **self._admin_auth(),
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("nombre", resp.data)
+
+    def test_localidad_update_name_too_long(self):
+        """PUT localidad with name over model max_length returns 400."""
+        resp = self.client.put(
+            reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+            {"nombre": "A" * 151},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_localidad_patch_empty_name(self):
+        """PATCH localidad with empty name returns 400."""
+        resp = self.client.patch(
+            reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+            {"nombre": ""},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    # ==================================================================
+    # Soft-deleted records via detail (Review PR #39 — WARNING 7)
+    # ==================================================================
+
+    def test_soft_deleted_municipio_detail_returns_404(self):
+        """GET soft-deleted municipio detail returns 404."""
+        temp = Municipio.objects.create(nombre="Temp")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.get(
+            reverse("municipio-detail", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_soft_deleted_municipio_update_returns_404(self):
+        """PUT soft-deleted municipio returns 404."""
+        temp = Municipio.objects.create(nombre="Temp")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.put(
+            reverse("municipio-detail", kwargs={"pk": temp.id_municipio}),
+            {"nombre": "Nuevo"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_soft_deleted_municipio_delete_returns_404(self):
+        """DELETE soft-deleted municipio returns 404."""
+        temp = Municipio.objects.create(nombre="Temp")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.delete(
+            reverse("municipio-detail", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ==================================================================
+    # Restore endpoint (Review PR #39 — WARNING 8)
+    # ==================================================================
+
+    def test_municipio_restore_admin_success(self):
+        """Admin can restore a soft-deleted municipio."""
+        temp = Municipio.objects.create(nombre="Temp")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("municipio-restore", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        temp.refresh_from_db()
+        self.assertTrue(temp.estado)
+
+    def test_municipio_restore_nonadmin_forbidden(self):
+        """Non-admin gets 403 when restoring a municipio."""
+        temp = Municipio.objects.create(nombre="Temp")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("municipio-restore", kwargs={"pk": temp.id_municipio}),
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_localidad_restore_admin_success(self):
+        """Admin can restore a soft-deleted localidad."""
+        temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("localidad-restore", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        temp.refresh_from_db()
+        self.assertTrue(temp.estado)
+
+    def test_localidad_restore_nonadmin_forbidden(self):
+        """Non-admin gets 403 when restoring a localidad."""
+        temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.post(
+            reverse("localidad-restore", kwargs={"pk": temp.id_localidad}),
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

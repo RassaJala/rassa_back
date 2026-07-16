@@ -25,9 +25,11 @@ from rassa.views import (
     ChangePasswordView,
     LocalidadByMunicipioListCreateView,
     LocalidadDetailView,
+    LocalidadRestoreView,
     MeView,
     MunicipioDetailView,
     MunicipioListCreateView,
+    MunicipioRestoreView,
     RegisterView,
     UnidadViewSet,
 )
@@ -89,6 +91,7 @@ urlpatterns = [
     path("api/logs/", include("logs.urls")),
     path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
     path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
+    path("api/municipios/<int:pk>/restore/", MunicipioRestoreView.as_view(), name="municipio-restore"),
     path(
         "api/municipios/<int:pk>/localidades/",
         LocalidadByMunicipioListCreateView.as_view(),
@@ -96,6 +99,7 @@ urlpatterns = [
     ),
     path("api/localidades/", LocalidadByMunicipioListCreateView.as_view(), name="localidades"),
     path("api/localidades/<int:pk>/", LocalidadDetailView.as_view(), name="localidad-detail"),
+    path("api/localidades/<int:pk>/restore/", LocalidadRestoreView.as_view(), name="localidad-restore"),
     path("", include(router.urls)),
     path("", include(publicacion_urls)),
 ]
