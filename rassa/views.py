@@ -83,21 +83,25 @@ class AdminCreateAgricultorView(generics.CreateAPIView):
     """
 
     serializer_class = AdminCreateAgricultorSerializer
+    permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
     throttle_scope = "admin_write"
-
-    def get_permissions(self):
-        """HasRole is parameterized — must be instantiated here, not in permission_classes."""
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         usuario = serializer.save()
 
+        # Generate JWT so the farmer can access the system immediately
+        user = usuario.fk_user
+        refresh = RefreshToken.for_user(user)
+        user_data = UserSerializer(usuario).data
+        user_data["access"] = str(refresh.access_token)
+        user_data["refresh"] = str(refresh)
+
         _log(request.user, f"Creación de agricultor por admin: {usuario.correo}", request)
 
         return _ok(
-            data=UserSerializer(usuario).data,
+            data=user_data,
             message="Agricultor creado exitosamente.",
             status_code=status.HTTP_201_CREATED,
         )
