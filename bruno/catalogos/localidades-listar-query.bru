@@ -1,0 +1,15 @@
+meta {
+  name: Localidades - Listar por municipio (query param)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/localidades/?municipio_id=1
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
