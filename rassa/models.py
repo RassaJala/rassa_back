@@ -113,6 +113,7 @@ class Municipio(models.Model):
 
     id_municipio = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100)
+    estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "municipio"
@@ -128,6 +129,7 @@ class Localidad(models.Model):
     id_localidad = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=150)
     fk_municipio = models.ForeignKey(Municipio, on_delete=models.CASCADE, db_column="fk_municipio")
+    estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "localidad"

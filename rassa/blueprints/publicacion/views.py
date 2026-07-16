@@ -10,7 +10,8 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import ProductoSemanal, PublicacionSemanal
 from rassa.permissions.role_permissions import AGRICULTOR, HasRole
-from rassa.views import CatalogPagination, _log, ok_response
+from rassa.views import CatalogPagination, _log
+from rassa.views import _ok as ok_response
 
 from .serializers import ProductoSemanalSerializer, PublicacionSerializer
 
