@@ -845,3 +845,68 @@ class CatalogosCRUDTest(APITestCase):
             **self._nonadmin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ==================================================================
+    # Localidad soft-deleted isolation (Review v3 — W1)
+    # ==================================================================
+
+    def test_soft_deleted_localidad_detail_returns_404(self):
+        """GET soft-deleted localidad detail returns 404."""
+        temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.get(
+            reverse("localidad-detail", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_soft_deleted_localidad_update_returns_404(self):
+        """PUT soft-deleted localidad returns 404."""
+        temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.put(
+            reverse("localidad-detail", kwargs={"pk": temp.id_localidad}),
+            {"nombre": "Nuevo"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_soft_deleted_localidad_delete_returns_404(self):
+        """DELETE soft-deleted localidad returns 404."""
+        temp = Localidad.objects.create(nombre="Temp", fk_municipio=self.municipio)
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+        resp = self.client.delete(
+            reverse("localidad-detail", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ==================================================================
+    # PATCH max length validation (Review v3 — W2)
+    # ==================================================================
+
+    def test_municipio_patch_name_too_long(self):
+        """PATCH municipio with name over max_length returns 400."""
+        resp = self.client.patch(
+            reverse("municipio-detail", kwargs={"pk": self.municipio.id_municipio}),
+            {"nombre": "A" * 101},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_localidad_patch_name_too_long(self):
+        """PATCH localidad with name over max_length returns 400."""
+        resp = self.client.patch(
+            reverse("localidad-detail", kwargs={"pk": self.localidad.id_localidad}),
+            {"nombre": "A" * 151},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
