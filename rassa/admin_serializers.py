@@ -1,7 +1,8 @@
+from django.db import transaction
 from rest_framework import serializers
 
-from rassa.auth_serializers import ROLE_REVERSE_MAPPING
-from rassa.models import Rol, Usuario
+from rassa.auth_serializers import ROLE_MAPPING, ROLE_REVERSE_MAPPING
+from rassa.models import Localidad, Rol, Usuario
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -77,25 +78,17 @@ class AdminUserUpdateSerializer(serializers.Serializer):
     )
 
     def validate_fk_localidad(self, value):
-        from rassa.models import Localidad
-
         if not Localidad.objects.filter(id_localidad=value).exists():
             raise serializers.ValidationError("La localidad especificada no existe.")
         return value
 
     def validate_role(self, value):
-        from rassa.auth_serializers import ROLE_MAPPING
-
         db_role_name = ROLE_MAPPING.get(value)
         if not Rol.objects.filter(nombre_rol=db_role_name).exists():
             raise serializers.ValidationError(f"El rol {db_role_name} no existe en el sistema.")
         return value
 
     def update(self, instance, validated_data):
-        from django.db import transaction
-
-        from rassa.auth_serializers import ROLE_MAPPING
-
         persona = instance.fk_persona
 
         with transaction.atomic():

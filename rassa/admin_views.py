@@ -4,8 +4,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rassa.admin_serializers import AdminUserSerializer, AdminUserUpdateSerializer
-from rassa.models import Usuario
+from rassa.models import Log, Usuario
 from rassa.permissions.role_permissions import HasRole
+from rassa.views import _log, _ok
 
 ADMIN = "Admin"
 
@@ -56,7 +57,7 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
         queryset = queryset.order_by("id_usuario")
 
         serializer = AdminUserSerializer(queryset, many=True)
-        return Response({"data": serializer.data}, status=status.HTTP_200_OK)
+        return _ok(data=serializer.data)
 
     def retrieve(self, request, pk=None):
         """Obtener detalle de un usuario especÃ­fico."""
@@ -69,7 +70,7 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
             )
 
         serializer = AdminUserSerializer(usuario)
-        return Response({"data": serializer.data}, status=status.HTTP_200_OK)
+        return _ok(data=serializer.data)
 
     def partial_update(self, request, pk=None):
         """Editar datos de un usuario (telÃ©fono, nombre, rol, etc.)."""
@@ -92,12 +93,11 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
 
-        return Response(
-            {
-                "message": "Usuario actualizado exitosamente.",
-                "data": AdminUserSerializer(updated).data,
-            },
-            status=status.HTTP_200_OK,
+        _log(request.user, f"ActualizaciÃ³n de usuario: {updated.correo} por admin {admin_usuario.correo}", request)
+
+        return _ok(
+            data=AdminUserSerializer(updated).data,
+            message="Usuario actualizado exitosamente.",
         )
 
     @action(detail=True, methods=["patch"], url_path="toggle-estado")
@@ -133,10 +133,9 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
         usuario.save(update_fields=["estado"])
 
         accion = "activado" if usuario.estado else "desactivado"
-        return Response(
-            {
-                "message": f"Usuario {accion} exitosamente.",
-                "data": AdminUserSerializer(usuario).data,
-            },
-            status=status.HTTP_200_OK,
+        _log(request.user, f"Usuario {accion}: {usuario.correo} por admin {admin_usuario.correo}", request)
+
+        return _ok(
+            data=AdminUserSerializer(usuario).data,
+            message=f"Usuario {accion} exitosamente.",
         )
