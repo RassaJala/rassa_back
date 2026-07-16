@@ -43,6 +43,10 @@ def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
     return Response(body, status=status_code)
 
 
+# Alias for base branch compatibility — main uses ok_response, not _ok
+ok_response = _ok
+
+
 class RegisterView(generics.CreateAPIView):
     """Endpoint para registrar un nuevo usuario con perfil completo.
 
