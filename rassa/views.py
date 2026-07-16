@@ -83,8 +83,10 @@ class AdminCreateAgricultorView(generics.CreateAPIView):
     """
 
     serializer_class = AdminCreateAgricultorSerializer
+    throttle_scope = "admin_write"
 
     def get_permissions(self):
+        """HasRole is parameterized — must be instantiated here, not in permission_classes."""
         return [permissions.IsAuthenticated(), HasRole("Admin")]
 
     def create(self, request, *args, **kwargs):
