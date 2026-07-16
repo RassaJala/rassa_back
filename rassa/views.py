@@ -24,13 +24,16 @@ from rassa.permissions.role_permissions import HasRole, IsAdminOrReadOnly
 
 
 def _log(user, descripcion, request):
-    """Create an audit log entry."""
-    Log.objects.create(
-        fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
-        descripcion=descripcion,
-        ip=request.META.get("REMOTE_ADDR", ""),
-        dispositivo=request.META.get("HTTP_USER_AGENT", "")[:200],
-    )
+    """Create an audit log entry — failures never break the caller."""
+    try:
+        Log.objects.create(
+            fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
+            descripcion=descripcion,
+            ip=request.META.get("REMOTE_ADDR", ""),
+            dispositivo=request.META.get("HTTP_USER_AGENT", "")[:200],
+        )
+    except Exception:
+        pass  # Audit logging must never break the response
 
 
 def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
@@ -243,21 +246,35 @@ class UnidadViewSet(CatalogViewSet):
 
 
 # ======================================================================
-# Base views for catalog CRUD with admin-only writes + soft-delete
+# Permission mixin
 # ======================================================================
 
 
-class CatalogListCreateView(generics.ListCreateAPIView):
-    """Base ListCreate with admin-only writes, _ok wrapping, audit logging, and throttling."""
+class CatalogPermissionMixin:
+    """Mixin that applies IsAuthenticated for safe methods and Admin-only for writes.
 
-    pagination_class = None
-    throttle_classes = [UserRateThrottle]
-    create_message = "Registro creado exitosamente."
+    Use with any DRF generic view or viewset by placing it first in the
+    MRO (``class MyView(CatalogPermissionMixin, generics.ListCreateAPIView)``).
+    """
 
     def get_permissions(self):
         if self.request.method in permissions.SAFE_METHODS:
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+
+# ======================================================================
+# Base views for catalog CRUD with admin-only writes + soft-delete
+# ======================================================================
+
+
+class CatalogListCreateView(CatalogPermissionMixin, generics.ListCreateAPIView):
+    """Base ListCreate with admin-only writes, _ok wrapping, audit logging, and throttling."""
+
+    pagination_class = None
+    throttle_classes = [UserRateThrottle]
+    throttle_scope = "catalog_write"
+    create_message = "Registro creado exitosamente."
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -276,17 +293,19 @@ class CatalogListCreateView(generics.ListCreateAPIView):
             status_code=status.HTTP_201_CREATED,
         )
 
+    def initial(self, request, *args, **kwargs):
+        """Apply ScopedRateThrottle only on write operations."""
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+        super().initial(request, *args, **kwargs)
 
-class CatalogDetailView(generics.RetrieveUpdateDestroyAPIView):
+
+class CatalogDetailView(CatalogPermissionMixin, generics.RetrieveUpdateDestroyAPIView):
     """Base detail view with admin-only writes, _ok wrapping, soft-delete, audit logging."""
 
     throttle_classes = [UserRateThrottle]
+    throttle_scope = "catalog_write"
     update_message = "Registro actualizado exitosamente."
-
-    def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -308,6 +327,12 @@ class CatalogDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.save(update_fields=["estado"])
         model_name = type(instance).__name__
         _log(self.request.user, f"{model_name} eliminado (soft): {instance.nombre} (id={instance.pk})", self.request)
+
+    def initial(self, request, *args, **kwargs):
+        """Apply ScopedRateThrottle only on write operations."""
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+        super().initial(request, *args, **kwargs)
 
 
 # ======================================================================
@@ -337,6 +362,31 @@ class LocalidadByMunicipioListCreateView(CatalogListCreateView):
     serializer_class = LocalidadSerializer
     create_message = "Localidad creada exitosamente."
 
+    def _resolve_municipio_id(self, for_create=False):
+        """Extract and validate the municipio ID from URL kwarg or query param.
+
+        Returns the validated integer municipio_id, or raises ValidationError.
+        When *for_create* is True the error messages reference ``municipio``
+        for the URL-path branch and ``municipio_id`` for the query-param branch,
+        matching the existing API contract.
+        """
+        pk = self.kwargs.get("pk")
+        if pk is not None:
+            if not Municipio.objects.filter(pk=pk, estado=True).exists():
+                raise ValidationError({"municipio": "El municipio especificado no existe o fue eliminado."})
+            return int(pk)
+
+        raw = self.request.query_params.get("municipio_id")
+        if raw is None:
+            raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
+        try:
+            municipio_id = int(raw)
+        except (ValueError, TypeError) as err:
+            raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
+        if not Municipio.objects.filter(pk=municipio_id, estado=True).exists():
+            raise ValidationError({"municipio_id": "El municipio especificado no existe o fue eliminado."})
+        return municipio_id
+
     def get_queryset(self):
         base = Localidad.objects.filter(estado=True)
         pk = self.kwargs.get("pk")
@@ -352,21 +402,7 @@ class LocalidadByMunicipioListCreateView(CatalogListCreateView):
         raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
 
     def perform_create(self, serializer):
-        pk = self.kwargs.get("pk")
-        if pk is not None:
-            if not Municipio.objects.filter(pk=pk, estado=True).exists():
-                raise ValidationError({"municipio": "El municipio especificado no existe o fue eliminado."})
-            serializer.save(fk_municipio_id=pk)
-            return
-        raw = self.request.query_params.get("municipio_id")
-        if raw is None:
-            raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
-        try:
-            municipio_id = int(raw)
-        except (ValueError, TypeError) as err:
-            raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
-        if not Municipio.objects.filter(pk=municipio_id, estado=True).exists():
-            raise ValidationError({"municipio_id": "El municipio especificado no existe o fue eliminado."})
+        municipio_id = self._resolve_municipio_id(for_create=True)
         serializer.save(fk_municipio_id=municipio_id)
 
 
@@ -376,3 +412,51 @@ class LocalidadDetailView(CatalogDetailView):
     queryset = Localidad.objects.filter(estado=True)
     serializer_class = LocalidadSerializer
     update_message = "Localidad actualizada exitosamente."
+
+
+# ======================================================================
+# Restore endpoint for soft-deleted records
+# ======================================================================
+
+
+class CatalogRestoreView(generics.GenericAPIView):
+    """Restore a soft-deleted catalog record (admin-only).
+
+    Subclasses must set ``queryset`` and ``serializer_class``.
+    URL: POST /api/{resource}/<pk>/restore/  →  estado = True
+    """
+
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    throttle_scope = "catalog_write"
+    soft_delete_field = "estado"
+
+    def get_permissions(self):
+        """Admin-only — returns fresh instances because HasRole lacks __call__ in this project."""
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+    def get_queryset(self):
+        # Allow access to soft-deleted records for restoration
+        return self.queryset.model.objects.filter(estado=False)
+
+    def post(self, request, *args, **kwargs):
+        instance = self.get_object()
+        setattr(instance, self.soft_delete_field, True)
+        instance.save(update_fields=[self.soft_delete_field])
+        serializer = self.get_serializer(instance)
+        model_name = type(instance).__name__
+        _log(
+            request.user,
+            f"{model_name} restaurado: {instance.nombre} (id={instance.pk})",
+            request,
+        )
+        return _ok(data=serializer.data, message="Registro restaurado correctamente.")
+
+
+class MunicipioRestoreView(CatalogRestoreView):
+    queryset = Municipio.objects.all()
+    serializer_class = MunicipioSerializer
+
+
+class LocalidadRestoreView(CatalogRestoreView):
+    queryset = Localidad.objects.all()
+    serializer_class = LocalidadSerializer
