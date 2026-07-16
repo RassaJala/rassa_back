@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from rassa.models import Localidad, Log, Municipio, Persona, Rol, Usuario
+from rassa.permissions.role_permissions import HasRole
 
 User = get_user_model()
 
@@ -19,7 +20,11 @@ User = get_user_model()
 @override_settings(
     REST_FRAMEWORK={
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {},
+        "DEFAULT_THROTTLE_RATES": {
+            "user": "1000/hour",
+            "catalog_read": "60/minute",
+            "catalog_write": "60/hour",
+        },
         "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
         "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -197,6 +202,11 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["message"], "Agricultor creado exitosamente.")
         self.assertEqual(response.data["data"]["role"], "farmer")
+        # Verify response schema has expected keys
+        self.assertIn("access", response.data["data"])
+        self.assertIn("refresh", response.data["data"])
+        self.assertIn("id_usuario", response.data["data"])
+        self.assertIn("email", response.data["data"])
         # Verify DB
         db_user = Usuario.objects.get(correo="newfarmer@rassa.com")
         self.assertEqual(db_user.fk_rol.nombre_rol, "Agricultor")
@@ -257,6 +267,27 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_localidad", resp.data)
+
+    def test_admin_create_farmer_invalid_email(self):
+        """Create-farmer with malformed email returns 400."""
+        data = self._create_farmer_data(email="not-an-email")
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", resp.data)
+
+    def test_admin_create_farmer_invalid_localidad(self):
+        """Create-farmer with nonexistent localidad returns 400."""
+        data = self._create_farmer_data(fk_localidad=99999)
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", resp.data)
+
+    def test_admin_create_farmer_short_password(self):
+        """Create-farmer with short password returns 400."""
+        data = self._create_farmer_data(password="ab")
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", resp.data)
 
     def test_register_no_apellido_materno(self):
         """Register without apellido_materno."""
@@ -629,3 +660,38 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         response = self.client.get(reverse("localidades"), {"municipio_id": 99999}, **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["data"], [])
+
+    # ==================================================================
+    # PERMISSION TESTS
+    # ==================================================================
+
+    def test_has_role_callable_works_as_class(self):
+        """HasRole('Admin')() returns self — works in permission_classes."""
+        hr = HasRole("Admin")
+        self.assertIs(hr(), hr, "HasRole.__call__ must return self for DRF")
+
+    def test_has_role_has_permission_admin(self):
+        """HasRole('Admin').has_permission returns True for admin user."""
+        hr = HasRole("Admin")
+        request = type("Req", (), {"user": self.admin_user, "method": "POST"})()
+        self.assertTrue(hr.has_permission(request, None))
+
+    def test_has_role_has_permission_non_admin(self):
+        """HasRole('Admin').has_permission returns False for buyer user."""
+        hr = HasRole("Admin")
+        request = type("Req", (), {"user": self.user, "method": "POST"})()
+        self.assertFalse(hr.has_permission(request, None))
+
+    def test_has_role_has_permission_unauthenticated(self):
+        """HasRole('Admin').has_permission returns False for anonymous."""
+        hr = HasRole("Admin")
+        anon = type("User", (), {"is_authenticated": False})()
+        request = type("Req", (), {"user": anon, "method": "POST"})()
+        self.assertFalse(hr.has_permission(request, None))
+
+    def test_has_role_multi_role(self):
+        """HasRole('Admin', 'Agricultor') works with either role."""
+        hr = HasRole("Admin", "Agricultor")
+        # Admin user passes
+        request = type("Req", (), {"user": self.admin_user, "method": "POST"})()
+        self.assertTrue(hr.has_permission(request, None))

@@ -20,7 +20,11 @@ User = get_user_model()
 @override_settings(
     REST_FRAMEWORK={
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {},
+        "DEFAULT_THROTTLE_RATES": {
+            "user": "1000/hour",
+            "catalog_read": "60/minute",
+            "catalog_write": "60/hour",
+        },
         "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
         "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -153,6 +157,15 @@ class CatalogosCRUDTest(APITestCase):
         self.assertEqual(resp.data["data"]["nombre"], "Nuevo Municipio")
         self.assertTrue(Municipio.objects.filter(nombre="Nuevo Municipio").exists())
 
+    def test_municipio_create_unauthenticated(self):
+        """Unauthenticated POST to /municipios/ returns 401."""
+        resp = self.client.post(
+            reverse("municipios"),
+            {"nombre": "Should Fail"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_municipio_create_nonadmin_forbidden(self):
         """Non-admin gets 403 when creating a municipio."""
         resp = self.client.post(
@@ -271,6 +284,16 @@ class CatalogosCRUDTest(APITestCase):
         self.assertIn("message", resp.data)
         self.assertEqual(resp.data["data"]["nombre"], "Nueva Colonia")
         self.assertTrue(Localidad.objects.filter(nombre="Nueva Colonia", fk_municipio=self.municipio).exists())
+
+    def test_localidad_create_via_nested_unauthenticated(self):
+        """Unauthenticated POST to /municipios/{pk}/localidades/ returns 401."""
+        url = reverse("localidades-by-municipio", kwargs={"pk": self.municipio.id_municipio})
+        resp = self.client.post(
+            url,
+            {"nombre": "Should Fail"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_localidad_create_via_nested_nonadmin_forbidden(self):
         """Non-admin gets 403 when creating a localidad."""

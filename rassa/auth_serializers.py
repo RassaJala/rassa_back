@@ -82,7 +82,17 @@ def _create_usuario_db(validated_data, email, password, rol):
                 fk_rol=rol,
             )
     except IntegrityError as err:
-        raise serializers.ValidationError({"email": "Este correo ya está registrado."}) from err
+        err_msg = str(err)
+        # Inspect the constraint name to give accurate feedback — not all
+        # unique constraints are on the email field.
+        if "correo" in err_msg or "email" in err_msg or "username" in err_msg or "auth_user" in err_msg:
+            raise serializers.ValidationError({"email": "Este correo ya está registrado."}) from err
+        if "telefono" in err_msg:
+            raise serializers.ValidationError({"telefono": "Este teléfono ya está registrado."}) from err
+        # Unknown constraint — surface a generic error so the caller isn't misled
+        raise serializers.ValidationError(
+            {"non_field_errors": ["Error de integridad al crear el usuario. Contacte al administrador."]}
+        ) from err
 
     return usuario
 
@@ -226,6 +236,9 @@ class AdminCreateAgricultorSerializer(serializers.Serializer):
     domicilio = serializers.CharField(max_length=300)
     fk_localidad = serializers.IntegerField()
 
+    # Reuses RegisterSerializer validators — keeps validation consistent
+    # across public and admin flows. If RegisterSerializer.validate_email
+    # changes, this follows automatically since it references the bound method.
     validate_email = RegisterSerializer.validate_email
     validate_password = RegisterSerializer.validate_password
     validate_fk_localidad = validate_fk_localidad
@@ -237,7 +250,7 @@ class AdminCreateAgricultorSerializer(serializers.Serializer):
         try:
             rol = Rol.objects.get(nombre_rol="Agricultor")
         except Rol.DoesNotExist as err:
-            raise serializers.ValidationError({"role": "El rol Agricultor no existe en el sistema."}) from err
+            raise serializers.ValidationError({"non_field_errors": ["El rol Agricultor no existe en el sistema."]}) from err
 
         return _create_usuario_db(validated_data, email, password, rol)
 
