@@ -200,8 +200,13 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         # Verify DB
         db_user = Usuario.objects.get(correo="newfarmer@rassa.com")
         self.assertEqual(db_user.fk_rol.nombre_rol, "Agricultor")
-        # Verify audit log
-        self.assertTrue(Log.objects.filter(descripcion__startswith="Creación de agricultor por admin").exists())
+        # Verify audit log with full content validation
+        log_entry = Log.objects.filter(descripcion__startswith="Creación de agricultor por admin").first()
+        self.assertIsNotNone(log_entry)
+        self.assertEqual(log_entry.fk_usuario, self.admin_usuario)
+        self.assertIn("newfarmer@rassa.com", log_entry.descripcion)
+        self.assertIsNotNone(log_entry.ip)
+        self.assertIsNotNone(log_entry.dispositivo)
 
     def test_admin_create_farmer_non_admin_forbidden(self):
         """Non-admin gets 403 when trying to create a farmer."""
@@ -224,6 +229,34 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         # Second with same email fails
         resp2 = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
         self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_admin_create_farmer_missing_nombre(self):
+        """Create-farmer without nombre returns 400."""
+        data = self._create_farmer_data(nombre="")
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("nombre", resp.data)
+
+    def test_admin_create_farmer_missing_email(self):
+        """Create-farmer without email returns 400."""
+        data = self._create_farmer_data(email="")
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", resp.data)
+
+    def test_admin_create_farmer_missing_telefono(self):
+        """Create-farmer without telefono returns 400."""
+        data = self._create_farmer_data(telefono="")
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("telefono", resp.data)
+
+    def test_admin_create_farmer_missing_localidad(self):
+        """Create-farmer without fk_localidad returns 400."""
+        data = self._create_farmer_data(fk_localidad=None)
+        resp = self.client.post(reverse("create-farmer"), data, format="json", **self._admin_auth())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", resp.data)
 
     def test_register_no_apellido_materno(self):
         """Register without apellido_materno."""
