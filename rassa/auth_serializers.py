@@ -250,7 +250,9 @@ class AdminCreateAgricultorSerializer(serializers.Serializer):
         try:
             rol = Rol.objects.get(nombre_rol="Agricultor")
         except Rol.DoesNotExist as err:
-            raise serializers.ValidationError({"non_field_errors": ["El rol Agricultor no existe en el sistema."]}) from err
+            raise serializers.ValidationError(
+                {"non_field_errors": ["El rol Agricultor no existe en el sistema."]}
+            ) from err
 
         return _create_usuario_db(validated_data, email, password, rol)
 
