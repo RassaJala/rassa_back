@@ -134,6 +134,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "register": "30/minute",
     "login": "30/minute",
     "change_password": "10/hour",
+    "catalog_read": "60/minute",
     "catalog_write": "60/hour",
     "publicaciones": "30/hour",
     "publicaciones_write": "10/hour",

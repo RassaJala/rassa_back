@@ -98,12 +98,26 @@ class AdminCreateAgricultorView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         usuario = serializer.save()
 
-        # Generate JWT so the farmer can access the system immediately
         user = usuario.fk_user
-        refresh = RefreshToken.for_user(user)
         user_data = UserSerializer(usuario).data
-        user_data["access"] = str(refresh.access_token)
-        user_data["refresh"] = str(refresh)
+
+        # Generate JWT so the farmer can access the system immediately
+        # NOTE: wrapped in try/except because token generation depends on
+        # Redis/blacklist being available. If it fails, the farmer still exists
+        # in DB but we return data without tokens (ghost-user prevention).
+        try:
+            refresh = RefreshToken.for_user(user)
+            user_data["access"] = str(refresh.access_token)
+            user_data["refresh"] = str(refresh)
+        except Exception as exc:
+            user_data["access"] = None
+            user_data["refresh"] = None
+            # Log the failure — token generation was non-fatal
+            _log(
+                request.user,
+                f"Advertencia: tokens JWT no generados para {usuario.correo}: {exc}",
+                request,
+            )
 
         _log(request.user, f"Creación de agricultor por admin: {usuario.correo}", request)
 
@@ -299,6 +313,20 @@ class CatalogPermissionMixin:
         return [permissions.IsAuthenticated(), HasRole("Admin")]
 
 
+class PublicReadAdminWriteMixin:
+    """Mixin for public reads (AllowAny) and admin-only writes.
+
+    Used by catalog endpoints that must be accessible without authentication
+    (e.g., municipio/localidad lists for the registration form) but still
+    protect mutations behind Admin role.
+    """
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+
 # ======================================================================
 # Base views for catalog CRUD with admin-only writes + soft-delete
 # ======================================================================
@@ -376,17 +404,21 @@ class CatalogDetailView(CatalogPermissionMixin, generics.RetrieveUpdateDestroyAP
 # ======================================================================
 
 
-class MunicipioListCreateView(CatalogListCreateView):
+class MunicipioListCreateView(PublicReadAdminWriteMixin, CatalogListCreateView):
     """List and create municipios (public reads for registration flow, admin-only for write)."""
 
     queryset = Municipio.objects.filter(estado=True).order_by("nombre")
     serializer_class = MunicipioSerializer
     create_message = "Municipio creado exitosamente."
 
-    def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
+    # Public reads need a dedicated throttle scope to prevent scraping/DDoS
+    throttle_scope = "catalog_read"
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
 
 
 class MunicipioDetailView(CatalogDetailView):
@@ -397,16 +429,20 @@ class MunicipioDetailView(CatalogDetailView):
     update_message = "Municipio actualizado exitosamente."
 
 
-class LocalidadByMunicipioListCreateView(CatalogListCreateView):
+class LocalidadByMunicipioListCreateView(PublicReadAdminWriteMixin, CatalogListCreateView):
     """List and create localidades — public reads for registration flow, admin-only for write."""
 
     serializer_class = LocalidadSerializer
     create_message = "Localidad creada exitosamente."
 
-    def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
-            return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated(), HasRole("Admin")]
+    # Public reads need a dedicated throttle scope to prevent scraping/DDoS
+    throttle_scope = "catalog_read"
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
 
     def _resolve_municipio_id(self, for_create=False):
         """Extract and validate the municipio ID from URL kwarg or query param.
