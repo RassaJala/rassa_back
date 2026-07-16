@@ -254,3 +254,140 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.admin_usuario.refresh_from_db()
         self.assertTrue(self.admin_usuario.estado)
+
+    # ==================================================================
+    # HAPPY PATH — CRUD
+    # ==================================================================
+
+    def test_admin_can_list_users(self):
+        """Admin can list all users."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("data", response.data)
+        self.assertIsInstance(response.data["data"], list)
+        self.assertGreaterEqual(len(response.data["data"]), 3)
+
+    def test_admin_can_retrieve_user(self):
+        """Admin can retrieve a specific user's detail."""
+        response = self.client.get(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("data", response.data)
+        self.assertEqual(response.data["data"]["email"], self.user_email)
+
+    def test_admin_can_partial_update_user(self):
+        """Admin can update a user's fields."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"telefono": "5555555555", "nombre": "Editado"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.telefono, "5555555555")
+        self.assertEqual(self.user_usuario.fk_persona.nombre, "Editado")
+
+    def test_admin_can_toggle_estado(self):
+        """Admin can activate/deactivate a non-admin user."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertFalse(self.user_usuario.estado)
+
+        # Toggle back
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertTrue(self.user_usuario.estado)
+
+    # ==================================================================
+    # UNAUTHORIZED ACCESS
+    # ==================================================================
+
+    def test_anonymous_user_gets_401(self):
+        """Unauthenticated request returns 401."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_non_admin_user_gets_403(self):
+        """Authenticated non-admin user gets 403."""
+        token = self._login(email=self.user_email, password="user1234")
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+        for endpoint in ["admin-usuarios-list", "admin-usuarios-detail"]:
+            response = self.client.get(
+                reverse(endpoint, args=[] if endpoint == "admin-usuarios-list" else [self.user_usuario.id_usuario]),
+                format="json",
+                **auth,
+            )
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ==================================================================
+    # SEARCH & FILTERS
+    # ==================================================================
+
+    def test_search_by_name(self):
+        """Search by nombre returns matching users."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"search": "Admin"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data["data"]), 2)
+
+    def test_search_by_email(self):
+        """Search by correo returns matching users."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"search": "admin@rassa.com"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 1)
+        self.assertEqual(response.data["data"][0]["email"], "admin@rassa.com")
+
+    def test_filter_by_role(self):
+        """Filter by rol returns only users with that role."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"rol": "Cliente"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 1)
+        self.assertEqual(response.data["data"][0]["email"], self.user_email)
+
+    def test_filter_by_estado(self):
+        """Filter by estado returns only users with that state."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"estado": "true"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for user in response.data["data"]:
+            self.assertTrue(user["estado"])
