@@ -200,6 +200,8 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         # Verify DB
         db_user = Usuario.objects.get(correo="newfarmer@rassa.com")
         self.assertEqual(db_user.fk_rol.nombre_rol, "Agricultor")
+        # Verify audit log
+        self.assertTrue(Log.objects.filter(descripcion__startswith="Creación de agricultor por admin").exists())
 
     def test_admin_create_farmer_non_admin_forbidden(self):
         """Non-admin gets 403 when trying to create a farmer."""
