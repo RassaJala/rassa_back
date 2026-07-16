@@ -33,8 +33,8 @@ def _log(user, descripcion, request):
     )
 
 
-def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
-    """Standardized success response."""
+def ok_response(data=None, message=None, status_code=status.HTTP_200_OK):
+    """Standardized success response body with {data, message} envelope."""
     body = {}
     if message:
         body["message"] = message
@@ -43,8 +43,7 @@ def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
     return Response(body, status=status_code)
 
 
-# Alias for base branch compatibility — main uses ok_response, not _ok
-ok_response = _ok
+_ok = ok_response  # Alias for compatibility with PR #39 branch
 
 
 class RegisterView(generics.CreateAPIView):
@@ -104,7 +103,7 @@ class AdminCreateAgricultorView(generics.CreateAPIView):
 
         _log(request.user, f"Creación de agricultor por admin: {usuario.correo}", request)
 
-        return _ok(
+        return ok_response(
             data=user_data,
             message="Agricultor creado exitosamente.",
             status_code=status.HTTP_201_CREATED,
