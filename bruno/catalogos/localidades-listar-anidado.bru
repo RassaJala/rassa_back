@@ -1,0 +1,15 @@
+meta {
+  name: Localidades - Listar por municipio (ruta anidada)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/municipios/1/localidades/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

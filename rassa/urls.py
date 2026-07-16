@@ -17,15 +17,20 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.views import (
     AdminCreateAgricultorView,
     AuthHealthView,
     CategoriaProductoViewSet,
     ChangePasswordView,
-    LocalidadByMunicipioListView,
+    LocalidadByMunicipioListCreateView,
+    LocalidadDetailView,
+    LocalidadRestoreView,
     MeView,
-    MunicipioListView,
+    MunicipioDetailView,
+    MunicipioListCreateView,
+    MunicipioRestoreView,
     RegisterView,
     UnidadViewSet,
 )
@@ -86,7 +91,17 @@ urlpatterns = [
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
     path("api/logs/", include("logs.urls")),
-    path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
-    path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
+    path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
+    path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
+    path("api/municipios/<int:pk>/restore/", MunicipioRestoreView.as_view(), name="municipio-restore"),
+    path(
+        "api/municipios/<int:pk>/localidades/",
+        LocalidadByMunicipioListCreateView.as_view(),
+        name="localidades-by-municipio",
+    ),
+    path("api/localidades/", LocalidadByMunicipioListCreateView.as_view(), name="localidades"),
+    path("api/localidades/<int:pk>/", LocalidadDetailView.as_view(), name="localidad-detail"),
+    path("api/localidades/<int:pk>/restore/", LocalidadRestoreView.as_view(), name="localidad-restore"),
     path("", include(router.urls)),
+    path("", include(publicacion_urls)),
 ]
