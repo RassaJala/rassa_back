@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rassa.admin_serializers import AdminUserSerializer, AdminUserUpdateSerializer
-from rassa.models import Log, Usuario
+from rassa.models import Usuario
 from rassa.permissions.role_permissions import HasRole
 from rassa.views import _log, _ok
 
