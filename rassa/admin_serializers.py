@@ -68,12 +68,7 @@ class AdminUserUpdateSerializer(serializers.Serializer):
     domicilio = serializers.CharField(max_length=300, required=False)
     fk_localidad = serializers.IntegerField(required=False)
     role = serializers.ChoiceField(
-        choices=[
-            ("buyer", "Comprador"),
-            ("farmer", "Agricultor"),
-            ("admin", "Admin"),
-            ("seller", "Vendedor"),
-        ],
+        choices=[(key, key.title()) for key in ROLE_MAPPING.keys()],
         required=False,
     )
 
