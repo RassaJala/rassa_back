@@ -268,8 +268,9 @@ class AdminUserProtectionTest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("data", response.data)
-        self.assertIsInstance(response.data["data"], list)
-        self.assertGreaterEqual(len(response.data["data"]), 3)
+        results = response.data["data"]["results"]
+        self.assertIsInstance(results, list)
+        self.assertGreaterEqual(len(results), 3)
 
     def test_admin_can_retrieve_user(self):
         """Admin can retrieve a specific user's detail."""
@@ -354,7 +355,7 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data["data"]), 2)
+        self.assertGreaterEqual(len(response.data["data"]["results"]), 2)
 
     def test_search_by_email(self):
         """Search by correo returns matching users."""
@@ -365,8 +366,9 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data["data"]), 1)
-        self.assertEqual(response.data["data"][0]["email"], "admin@rassa.com")
+        results = response.data["data"]["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["email"], "admin@rassa.com")
 
     def test_filter_by_role(self):
         """Filter by rol returns only users with that role."""
@@ -377,8 +379,9 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data["data"]), 1)
-        self.assertEqual(response.data["data"][0]["email"], self.user_email)
+        results = response.data["data"]["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["email"], self.user_email)
 
     def test_filter_by_estado(self):
         """Filter by estado returns only users with that state."""
@@ -389,5 +392,112 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        for user in response.data["data"]:
+        for user in response.data["data"]["results"]:
             self.assertTrue(user["estado"])
+
+    # ==================================================================
+    # NONEXISTENT USER
+    # ==================================================================
+
+    def test_partial_update_nonexistent_user_returns_404(self):
+        """partial_update returns 404 for nonexistent user."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[99999]),
+            {"telefono": "1234567890"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("detail", response.data)
+
+    def test_toggle_estado_nonexistent_user_returns_404(self):
+        """toggle_estado returns 404 for nonexistent user."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[99999]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("detail", response.data)
+
+    # ==================================================================
+    # LAST ADMIN ROLE DEMOTION PREVENTION
+    # ==================================================================
+
+    def test_admin_cannot_demote_last_admin_role(self):
+        """Admin cannot change the last active admin's role to non-admin."""
+        self.admin2_usuario.estado = False
+        self.admin2_usuario.save(update_fields=["estado"])
+
+        token = self._login(email=self.admin2_email, password="admin1234")
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.admin_usuario.id_usuario]),
+            {"role": "buyer"},
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("unico administrador", response.data["detail"].lower().replace("\u00fa", "u"))
+
+        self.admin_usuario.refresh_from_db()
+        self.assertEqual(self.admin_usuario.fk_rol.nombre_rol, "Admin")
+
+    def test_admin_can_demote_admin_when_multiple_exist(self):
+        """Admin CAN demote another admin when 2+ active admins exist."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.admin2_usuario.id_usuario]),
+            {"role": "buyer"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.admin2_usuario.refresh_from_db()
+        self.assertEqual(self.admin2_usuario.fk_rol.nombre_rol, "Cliente")
+
+    # ==================================================================
+    # TOGGLE ON INACTIVE ADMIN
+    # ==================================================================
+
+    def test_toggle_can_activate_inactive_admin(self):
+        """Activating an inactive admin is always allowed."""
+        self.admin2_usuario.estado = False
+        self.admin2_usuario.save(update_fields=["estado"])
+
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin2_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.admin2_usuario.refresh_from_db()
+        self.assertTrue(self.admin2_usuario.estado)
+
+    # ==================================================================
+    # EMPTY SEARCH
+    # ==================================================================
+
+    def test_search_empty_returns_all(self):
+        """Empty search string returns all users."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"search": ""},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data["data"]["results"]
+        self.assertGreaterEqual(len(results), 3)
+
+    # ==================================================================
+    # INVALID DATA
+    # ==================================================================
+
+    def test_partial_update_invalid_email_returns_400(self):
+        """partial_update with invalid data returns validation error."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"role": "invalid_role"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
