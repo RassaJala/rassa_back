@@ -2,7 +2,6 @@
 
 import base64
 import binascii
-import imghdr
 import os
 import uuid
 
@@ -44,7 +43,7 @@ class ProductoListView(generics.ListCreateAPIView):
     queryset = (
         Producto.objects.select_related("fk_categoria", "fk_unidad")
         .prefetch_related("productoimagen_set")
-        .all()
+        .filter(estado=True)
         .order_by("-creado_en")
     )
     permission_classes = [IsAdminOrReadOnly]
@@ -75,7 +74,11 @@ class ProductoListView(generics.ListCreateAPIView):
 class ProductoDetailView(generics.RetrieveUpdateDestroyAPIView):
     """GET/PUT/PATCH/DELETE /api/productos/<id>/"""
 
-    queryset = Producto.objects.select_related("fk_categoria", "fk_unidad").prefetch_related("productoimagen_set").all()
+    queryset = (
+        Producto.objects.select_related("fk_categoria", "fk_unidad")
+        .prefetch_related("productoimagen_set")
+        .filter(estado=True)
+    )
     serializer_class = ProductoDetailSerializer
     permission_classes = [IsAdminOrReadOnly]
 
@@ -94,7 +97,8 @@ class ProductoDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        instance.delete()
+        instance.estado = False
+        instance.save(update_fields=["estado"])
         return _ok(message="Producto eliminado exitosamente.")
 
 
@@ -124,12 +128,24 @@ class UnidadListView(generics.ListAPIView):
         return _ok(data=response.data)
 
 
+def _detect_image_format(data):
+    """Detect image format from magic bytes. Returns format string or None."""
+    if len(data) < 12:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 def _validar_imagen_bytes(data):
     """Validate that binary data is a recognized image format."""
-    sig = imghdr.what(None, h=data)
-    if sig not in ("jpeg", "png", "gif", "webp"):
-        return False
-    return True
+    return _detect_image_format(data) is not None
 
 
 def _guardar_imagen_bytes(data, ext):
@@ -244,7 +260,7 @@ class ProductoImagenUploadView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            ext = imghdr.what(None, h=raw_bytes) or "png"
+            ext = _detect_image_format(raw_bytes) or "png"
             try:
                 url_guardada, saved_file_path = _guardar_imagen_bytes(raw_bytes, ext)
             except OSError:
@@ -289,7 +305,7 @@ class ProductoImagenUploadView(APIView):
 class ProductoImagenDeleteView(APIView):
     """DELETE /api/productos/<id>/imagen/<id_imagen>/ — delete a product image."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]
 
     def delete(self, request, pk, id_imagen):
         try:

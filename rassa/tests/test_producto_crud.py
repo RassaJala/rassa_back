@@ -185,7 +185,8 @@ class ProductoCRUDTests(TestCase):
         response = self.client.delete(reverse("producto_detail", args=[p.id_producto]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["message"], "Producto eliminado exitosamente.")
-        self.assertFalse(Producto.objects.filter(id_producto=p.id_producto).exists())
+        p.refresh_from_db()
+        self.assertFalse(p.estado)
 
     def test_non_admin_cannot_create_producto(self):
         reader = _create_user_with_role("Cliente", "reader_producto")

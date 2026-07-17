@@ -710,6 +710,13 @@ class ProductoImagen(models.Model):
     class Meta:
         db_table = "producto_imagen"
         ordering = ["id_imagen"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_producto"],
+                condition=models.Q(es_principal=True),
+                name="unique_es_principal_per_producto",
+            ),
+        ]
 
     def __str__(self):
         return f"Imagen #{self.id_imagen} — {str(self.fk_producto)}"
