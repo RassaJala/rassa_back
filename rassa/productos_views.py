@@ -147,7 +147,7 @@ class ProductoImagenUploadView(APIView):
 
         imagen_archivo = request.FILES.get("imagen")
         imagen_base64 = request.data.get("imagen_base64")
-        
+
         # Read es_principal, default to True if not provided to maintain backward compatibility
         es_principal_str = str(request.data.get("es_principal", "true")).lower()
         es_principal = es_principal_str in ("true", "1", "yes")
