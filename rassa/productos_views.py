@@ -8,7 +8,7 @@ import uuid
 
 from django.conf import settings
 from django.db import transaction
-from rest_framework import generics, permissions, status
+from rest_framework import generics, parsers, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
 
@@ -136,12 +136,12 @@ def _guardar_imagen_bytes(data, ext):
     """Save image bytes to disk with a single UUID and return (url, file_path)."""
     uid = uuid.uuid4().hex
     nombre_archivo = f"{uid}.{ext}"
-    directorio = settings.MEDIA_ROOT / "productos"
-    directorio.mkdir(parents=True, exist_ok=True)
-    ruta = directorio / nombre_archivo
+    directorio = os.path.join(str(settings.MEDIA_ROOT), "productos")
+    os.makedirs(directorio, exist_ok=True)
+    ruta = os.path.join(directorio, nombre_archivo)
     with open(ruta, "wb") as f:
         f.write(data)
-    return f"/media/productos/{nombre_archivo}", str(ruta)
+    return f"/media/productos/{nombre_archivo}", ruta
 
 
 def _eliminar_archivo_si_existe(file_path):
@@ -164,7 +164,7 @@ class ProductoImagenUploadView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, parsers.JSONParser]
 
     def post(self, request, pk):
         try:
@@ -305,7 +305,7 @@ class ProductoImagenDeleteView(APIView):
         file_path = None
         if imagen.url and imagen.url.startswith("/media/"):
             rel_path = imagen.url[len("/media/") :]
-            file_path = str(settings.MEDIA_ROOT / rel_path)
+            file_path = os.path.join(str(settings.MEDIA_ROOT), rel_path)
         imagen.delete()
 
         _eliminar_archivo_si_existe(file_path)
