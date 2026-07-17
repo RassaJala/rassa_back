@@ -10,9 +10,9 @@ Uso en ViewSets:
     class ProductoViewSet(viewsets.ModelViewSet):
         def get_permissions(self):
             if self.action == 'destroy':
-                return [HasRole("Administrador")]
+                return [HasRole(ADMIN)]
             if self.action in ('create', 'update'):
-                return [HasRole("Administrador", "Agricultor")]
+                return [HasRole(ADMIN, "Agricultor")]
             return [IsAuthenticated()]
 
 Nota:
@@ -23,6 +23,12 @@ Nota:
 
 from rest_framework import permissions
 
+# Valores de rol en BD — usar estas constantes, no strings hardcodeados
+ADMIN = "Admin"
+AGRICULTOR = "Agricultor"
+VENDEDOR = "Vendedor"
+CLIENTE = "Cliente"
+
 
 class HasRole(permissions.BasePermission):
     """Permiso genérico basado en uno o más roles.
@@ -30,12 +36,21 @@ class HasRole(permissions.BasePermission):
     Verifica que el usuario autenticado tenga uno de los roles indicados.
 
     Uso:
-        permission_classes = [HasRole("Administrador")]
-        permission_classes = [HasRole("Administrador", "Agricultor")]
+        permission_classes = [HasRole(ADMIN)]
+        permission_classes = [HasRole(ADMIN, "Agricultor")]
     """
 
     def __init__(self, *role_names):
         self.role_names = role_names
+
+    def __call__(self):
+        """Allow usage as permission_classes = [HasRole(ADMIN)].
+
+        DRF's get_permissions() calls each element in permission_classes,
+        expecting either a class (instantiates it) or a callable instance.
+        HasRole instances are callable and return self.
+        """
+        return self
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
@@ -65,7 +80,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
             return False
 
         try:
-            if request.user.usuario.fk_rol.nombre_rol == "Administrador":
+            if request.user.usuario.fk_rol.nombre_rol == ADMIN:
                 return True
         except AttributeError:
             return False
@@ -80,10 +95,28 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         return False
 
 
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """Permiso de lectura para autenticados y escritura solo para Administrador.
+
+    Uso:
+        permission_classes = [IsAdminOrReadOnly]
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        try:
+            return request.user.usuario.fk_rol.nombre_rol == ADMIN
+        except AttributeError:
+            return False
+
+
 # Backward-compatible aliases — prefer HasRole() directly in new code
-IsAdmin = HasRole("Administrador")
-IsAgricultor = HasRole("Agricultor")
-IsVendedor = HasRole("Vendedor")
-IsCliente = HasRole("Cliente")
-IsAdminOrAgricultor = HasRole("Administrador", "Agricultor")
-IsAdminOrVendedor = HasRole("Administrador", "Vendedor")
+IsAdmin = HasRole(ADMIN)
+IsAgricultor = HasRole(AGRICULTOR)
+IsVendedor = HasRole(VENDEDOR)
+IsCliente = HasRole(CLIENTE)
+IsAdminOrAgricultor = HasRole(ADMIN, AGRICULTOR)
+IsAdminOrVendedor = HasRole(ADMIN, VENDEDOR)

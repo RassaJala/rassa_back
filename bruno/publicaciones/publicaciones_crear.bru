@@ -1,0 +1,15 @@
+meta {
+  name: Crear publicación
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/publicaciones/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

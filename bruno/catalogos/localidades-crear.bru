@@ -1,0 +1,22 @@
+meta {
+  name: Localidades - Crear (ruta anidada)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/municipios/1/localidades/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre": "Nueva Localidad"
+  }
+}

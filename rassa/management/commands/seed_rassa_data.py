@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from rassa.models import (
@@ -220,16 +220,55 @@ class Command(BaseCommand):
             CategoriaProducto.objects.update_or_create(id_categoria=c["id_categoria"], defaults=c)
         self.stdout.write("  Categorías: OK")
 
+    def _reset_pk_sequence(self, model):
+        """Ajusta la secuencia de PostgreSQL tras insertar IDs fijos."""
+        if connection.vendor != "postgresql":
+            return
+
+        table = connection.ops.quote_name(model._meta.db_table)
+        pk = connection.ops.quote_name(model._meta.pk.column)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT setval(pg_get_serial_sequence(%s, %s), COALESCE((SELECT MAX({pk}) FROM {table}), 1), true)",
+                [model._meta.db_table, model._meta.pk.column],
+            )
+
     def _seed_unidades(self):
         unidades = [
-            {"id_unidad": 1, "tipo": "Kilogramo"},
-            {"id_unidad": 2, "tipo": "Pieza"},
-            {"id_unidad": 3, "tipo": "Manojo"},
-            {"id_unidad": 4, "tipo": "Litro"},
-            {"id_unidad": 5, "tipo": "Docena"},
+            {
+                "id_unidad": 1,
+                "tipo": "Kilogramo",
+                "nombre": "Kilogramo",
+                "abreviatura": "kg",
+            },
+            {
+                "id_unidad": 2,
+                "tipo": "Pieza",
+                "nombre": "Pieza",
+                "abreviatura": "pz",
+            },
+            {
+                "id_unidad": 3,
+                "tipo": "Manojo",
+                "nombre": "Manojo",
+                "abreviatura": "mj",
+            },
+            {
+                "id_unidad": 4,
+                "tipo": "Litro",
+                "nombre": "Litro",
+                "abreviatura": "L",
+            },
+            {
+                "id_unidad": 5,
+                "tipo": "Docena",
+                "nombre": "Docena",
+                "abreviatura": "doc",
+            },
         ]
         for u in unidades:
             Unidad.objects.update_or_create(id_unidad=u["id_unidad"], defaults=u)
+        self._reset_pk_sequence(Unidad)
         self.stdout.write("  Unidades: OK")
 
     def _seed_estados_pedido(self):
@@ -296,44 +335,161 @@ class Command(BaseCommand):
         self.stdout.write("  Tipos de pago: OK")
 
     # ------------------------------------------------------------------
-    # 2. MUNICIPIO Y LOCALIDAD
+    # 2. MUNICIPIO Y LOCALIDAD (Nayarit)
     # ------------------------------------------------------------------
 
     def _seed_municipios(self):
         municipios = [
-            {"id_municipio": 1, "nombre": "Apaseo el Alto"},
-            {"id_municipio": 2, "nombre": "Apaseo el Grande"},
-            {"id_municipio": 3, "nombre": "Celaya"},
-            {"id_municipio": 4, "nombre": "Salvatierra"},
-            {"id_municipio": 5, "nombre": "Cortazar"},
-            {"id_municipio": 6, "nombre": "Tarimoro"},
+            {"id_municipio": 1, "nombre": "Acaponeta"},
+            {"id_municipio": 2, "nombre": "Ahuacatlán"},
+            {"id_municipio": 3, "nombre": "Amatlán de Cañas"},
+            {"id_municipio": 4, "nombre": "Bahía de Banderas"},
+            {"id_municipio": 5, "nombre": "Compostela"},
+            {"id_municipio": 6, "nombre": "Del Nayar"},
+            {"id_municipio": 7, "nombre": "Huajicori"},
+            {"id_municipio": 8, "nombre": "Ixtlán del Río"},
+            {"id_municipio": 9, "nombre": "Jala"},
+            {"id_municipio": 10, "nombre": "La Yesca"},
+            {"id_municipio": 11, "nombre": "Rosamorada"},
+            {"id_municipio": 12, "nombre": "Ruiz"},
+            {"id_municipio": 13, "nombre": "San Blas"},
+            {"id_municipio": 14, "nombre": "San Pedro Lagunillas"},
+            {"id_municipio": 15, "nombre": "Santa María del Oro"},
+            {"id_municipio": 16, "nombre": "Santiago Ixcuintla"},
+            {"id_municipio": 17, "nombre": "Tecuala"},
+            {"id_municipio": 18, "nombre": "Tepic"},
+            {"id_municipio": 19, "nombre": "Tuxpan"},
+            {"id_municipio": 20, "nombre": "Xalisco"},
         ]
         for m in municipios:
             Municipio.objects.update_or_create(id_municipio=m["id_municipio"], defaults=m)
-        self.stdout.write("  Municipios: OK")
+        self.stdout.write("  Municipios: OK (Nayarit)")
 
     def _seed_localidades(self):
         localidades = [
-            {"id_localidad": 1, "nombre": "Centro", "fk_municipio_id": 1},
-            {"id_localidad": 2, "nombre": "San Bartolo", "fk_municipio_id": 1},
-            {"id_localidad": 3, "nombre": "La Joya", "fk_municipio_id": 1},
-            {"id_localidad": 4, "nombre": "Centro", "fk_municipio_id": 2},
-            {"id_localidad": 5, "nombre": "Ixtla", "fk_municipio_id": 2},
-            {"id_localidad": 6, "nombre": "San Juan", "fk_municipio_id": 2},
-            {"id_localidad": 7, "nombre": "Centro", "fk_municipio_id": 3},
-            {"id_localidad": 8, "nombre": "San Miguel", "fk_municipio_id": 3},
-            {"id_localidad": 9, "nombre": "Rincón de Tamayo", "fk_municipio_id": 3},
-            {"id_localidad": 10, "nombre": "Centro", "fk_municipio_id": 4},
-            {"id_localidad": 11, "nombre": "San Isidro", "fk_municipio_id": 4},
-            {"id_localidad": 12, "nombre": "La Estancia", "fk_municipio_id": 4},
-            {"id_localidad": 13, "nombre": "Centro", "fk_municipio_id": 5},
-            {"id_localidad": 14, "nombre": "Cañada de Caracheo", "fk_municipio_id": 5},
-            {"id_localidad": 15, "nombre": "Centro", "fk_municipio_id": 6},
-            {"id_localidad": 16, "nombre": "San José de Horta", "fk_municipio_id": 6},
+            # Acaponeta (id=1)
+            {"id_localidad": 1, "nombre": "Acaponeta", "fk_municipio_id": 1},
+            {"id_localidad": 2, "nombre": "Sayulilla", "fk_municipio_id": 1},
+            {"id_localidad": 3, "nombre": "La Guásima", "fk_municipio_id": 1},
+            {"id_localidad": 4, "nombre": "San José de Gracia", "fk_municipio_id": 1},
+            {"id_localidad": 5, "nombre": "El Centenario", "fk_municipio_id": 1},
+            # Ahuacatlán (id=2)
+            {"id_localidad": 6, "nombre": "Ahuacatlán", "fk_municipio_id": 2},
+            {"id_localidad": 7, "nombre": "Uzeta", "fk_municipio_id": 2},
+            {"id_localidad": 8, "nombre": "El Rosario", "fk_municipio_id": 2},
+            {"id_localidad": 9, "nombre": "Mecatán", "fk_municipio_id": 2},
+            # Amatlán de Cañas (id=3)
+            {"id_localidad": 10, "nombre": "Amatlán de Cañas", "fk_municipio_id": 3},
+            {"id_localidad": 11, "nombre": "El Divisadero", "fk_municipio_id": 3},
+            {"id_localidad": 12, "nombre": "Lagunillas", "fk_municipio_id": 3},
+            {"id_localidad": 13, "nombre": "El Naranjo", "fk_municipio_id": 3},
+            # Bahía de Banderas (id=4)
+            {"id_localidad": 14, "nombre": "Valle de Banderas", "fk_municipio_id": 4},
+            {"id_localidad": 15, "nombre": "San José del Valle", "fk_municipio_id": 4},
+            {"id_localidad": 16, "nombre": "Bucerías", "fk_municipio_id": 4},
+            {"id_localidad": 17, "nombre": "Mezcales", "fk_municipio_id": 4},
+            {"id_localidad": 18, "nombre": "Jarretadera", "fk_municipio_id": 4},
+            {"id_localidad": 19, "nombre": "Cruz de Huanacaxtle", "fk_municipio_id": 4},
+            {"id_localidad": 20, "nombre": "Nuevo Nayarit", "fk_municipio_id": 4},
+            {"id_localidad": 21, "nombre": "San Vicente", "fk_municipio_id": 4},
+            # Compostela (id=5)
+            {"id_localidad": 22, "nombre": "Compostela", "fk_municipio_id": 5},
+            {"id_localidad": 23, "nombre": "Las Varas", "fk_municipio_id": 5},
+            {"id_localidad": 24, "nombre": "La Peñita de Jaltemba", "fk_municipio_id": 5},
+            {"id_localidad": 25, "nombre": "Zacualpan", "fk_municipio_id": 5},
+            {"id_localidad": 26, "nombre": "Rincón de Guayabitos", "fk_municipio_id": 5},
+            {"id_localidad": 27, "nombre": "Monteón", "fk_municipio_id": 5},
+            {"id_localidad": 28, "nombre": "Ixtapa de la Concepción", "fk_municipio_id": 5},
+            {"id_localidad": 29, "nombre": "Mazatán", "fk_municipio_id": 5},
+            # Del Nayar (id=6)
+            {"id_localidad": 30, "nombre": "Jesús María", "fk_municipio_id": 6},
+            {"id_localidad": 31, "nombre": "Mesa del Nayar", "fk_municipio_id": 6},
+            {"id_localidad": 32, "nombre": "Santa Teresa", "fk_municipio_id": 6},
+            {"id_localidad": 33, "nombre": "Linda Vista", "fk_municipio_id": 6},
+            {"id_localidad": 34, "nombre": "La Mesa", "fk_municipio_id": 6},
+            # Huajicori (id=7)
+            {"id_localidad": 35, "nombre": "Huajicori", "fk_municipio_id": 7},
+            {"id_localidad": 36, "nombre": "Acatita", "fk_municipio_id": 7},
+            {"id_localidad": 37, "nombre": "Mineral de Cucharas", "fk_municipio_id": 7},
+            {"id_localidad": 38, "nombre": "El Arrayán", "fk_municipio_id": 7},
+            {"id_localidad": 39, "nombre": "El Limón", "fk_municipio_id": 7},
+            # Ixtlán del Río (id=8)
+            {"id_localidad": 40, "nombre": "Ixtlán del Río", "fk_municipio_id": 8},
+            {"id_localidad": 41, "nombre": "El Zoquite", "fk_municipio_id": 8},
+            {"id_localidad": 42, "nombre": "La Cantera", "fk_municipio_id": 8},
+            {"id_localidad": 43, "nombre": "San José de Gracia", "fk_municipio_id": 8},
+            # Jala (id=9)
+            {"id_localidad": 44, "nombre": "Jala", "fk_municipio_id": 9},
+            {"id_localidad": 45, "nombre": "Atonalisco", "fk_municipio_id": 9},
+            {"id_localidad": 46, "nombre": "Pochotitán", "fk_municipio_id": 9},
+            {"id_localidad": 47, "nombre": "Los Pozos", "fk_municipio_id": 9},
+            {"id_localidad": 48, "nombre": "El Águila", "fk_municipio_id": 9},
+            # La Yesca (id=10)
+            {"id_localidad": 49, "nombre": "La Yesca", "fk_municipio_id": 10},
+            {"id_localidad": 50, "nombre": "Huayanmotita", "fk_municipio_id": 10},
+            {"id_localidad": 51, "nombre": "Zoquipilla", "fk_municipio_id": 10},
+            {"id_localidad": 52, "nombre": "Guayabitos", "fk_municipio_id": 10},
+            # Rosamorada (id=11)
+            {"id_localidad": 53, "nombre": "Rosamorada", "fk_municipio_id": 11},
+            {"id_localidad": 54, "nombre": "San Vicente", "fk_municipio_id": 11},
+            {"id_localidad": 55, "nombre": "Chacalilla", "fk_municipio_id": 11},
+            {"id_localidad": 56, "nombre": "El Colorado", "fk_municipio_id": 11},
+            {"id_localidad": 57, "nombre": "Callejones", "fk_municipio_id": 11},
+            # Ruiz (id=12)
+            {"id_localidad": 58, "nombre": "Ruiz", "fk_municipio_id": 12},
+            {"id_localidad": 59, "nombre": "Paso Hondo", "fk_municipio_id": 12},
+            {"id_localidad": 60, "nombre": "El Falcón", "fk_municipio_id": 12},
+            {"id_localidad": 61, "nombre": "La Loma", "fk_municipio_id": 12},
+            # San Blas (id=13)
+            {"id_localidad": 62, "nombre": "San Blas", "fk_municipio_id": 13},
+            {"id_localidad": 63, "nombre": "Matanchén", "fk_municipio_id": 13},
+            {"id_localidad": 64, "nombre": "Aticama", "fk_municipio_id": 13},
+            {"id_localidad": 65, "nombre": "El Llano", "fk_municipio_id": 13},
+            {"id_localidad": 66, "nombre": "La Contaduría", "fk_municipio_id": 13},
+            # San Pedro Lagunillas (id=14)
+            {"id_localidad": 67, "nombre": "San Pedro Lagunillas", "fk_municipio_id": 14},
+            {"id_localidad": 68, "nombre": "Estación de San Pedro", "fk_municipio_id": 14},
+            {"id_localidad": 69, "nombre": "La Presa", "fk_municipio_id": 14},
+            # Santa María del Oro (id=15)
+            {"id_localidad": 70, "nombre": "Santa María del Oro", "fk_municipio_id": 15},
+            {"id_localidad": 71, "nombre": "Venustiano Carranza", "fk_municipio_id": 15},
+            {"id_localidad": 72, "nombre": "La Mojonera", "fk_municipio_id": 15},
+            {"id_localidad": 73, "nombre": "Cerro Pelón", "fk_municipio_id": 15},
+            {"id_localidad": 74, "nombre": "El Llano", "fk_municipio_id": 15},
+            # Santiago Ixcuintla (id=16)
+            {"id_localidad": 75, "nombre": "Santiago Ixcuintla", "fk_municipio_id": 16},
+            {"id_localidad": 76, "nombre": "Mexcaltitán", "fk_municipio_id": 16},
+            {"id_localidad": 77, "nombre": "Villa Juárez", "fk_municipio_id": 16},
+            {"id_localidad": 78, "nombre": "Puerta de Palapares", "fk_municipio_id": 16},
+            {"id_localidad": 79, "nombre": "Pozo de Ibarra", "fk_municipio_id": 16},
+            # Tecuala (id=17)
+            {"id_localidad": 80, "nombre": "Tecuala", "fk_municipio_id": 17},
+            {"id_localidad": 81, "nombre": "Milpas Viejas", "fk_municipio_id": 17},
+            {"id_localidad": 82, "nombre": "La Toje", "fk_municipio_id": 17},
+            {"id_localidad": 83, "nombre": "Quimichis", "fk_municipio_id": 17},
+            # Tepic (id=18)
+            {"id_localidad": 84, "nombre": "Tepic", "fk_municipio_id": 18},
+            {"id_localidad": 85, "nombre": "Francisco I. Madero", "fk_municipio_id": 18},
+            {"id_localidad": 86, "nombre": "San Cayetano", "fk_municipio_id": 18},
+            {"id_localidad": 87, "nombre": "Camichín de Jauja", "fk_municipio_id": 18},
+            {"id_localidad": 88, "nombre": "Bellavista", "fk_municipio_id": 18},
+            {"id_localidad": 89, "nombre": "Santiago de Pochotitán", "fk_municipio_id": 18},
+            {"id_localidad": 90, "nombre": "Atonalisco", "fk_municipio_id": 18},
+            {"id_localidad": 91, "nombre": "Lo de Lamedo", "fk_municipio_id": 18},
+            # Tuxpan (id=19)
+            {"id_localidad": 92, "nombre": "Tuxpan", "fk_municipio_id": 19},
+            {"id_localidad": 93, "nombre": "Peñas", "fk_municipio_id": 19},
+            {"id_localidad": 94, "nombre": "Palma Grande", "fk_municipio_id": 19},
+            {"id_localidad": 95, "nombre": "El Tecomate", "fk_municipio_id": 19},
+            # Xalisco (id=20)
+            {"id_localidad": 96, "nombre": "Xalisco", "fk_municipio_id": 20},
+            {"id_localidad": 97, "nombre": "El Rodeo", "fk_municipio_id": 20},
+            {"id_localidad": 98, "nombre": "Colonia la Presa", "fk_municipio_id": 20},
+            {"id_localidad": 99, "nombre": "Los Sauces", "fk_municipio_id": 20},
         ]
         for loc in localidades:
             Localidad.objects.update_or_create(id_localidad=loc["id_localidad"], defaults=loc)
-        self.stdout.write("  Localidades: OK")
+        self.stdout.write("  Localidades: OK (Nayarit)")
 
     # ------------------------------------------------------------------
     # 3. PERSONAS Y USUARIOS
@@ -349,7 +505,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1985-03-15",
                 "sexo": "M",
                 "domicilio": "Av. Principal 123",
-                "fk_localidad_id": 1,
+                "fk_localidad_id": 1,  # Acaponeta
             },
             {
                 "id_persona": 2,
@@ -359,7 +515,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1990-07-22",
                 "sexo": "F",
                 "domicilio": "Calle Hidalgo 45",
-                "fk_localidad_id": 4,
+                "fk_localidad_id": 14,  # Valle de Banderas
             },
             {
                 "id_persona": 3,
@@ -369,7 +525,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1978-11-08",
                 "sexo": "M",
                 "domicilio": "Benito Juárez 78",
-                "fk_localidad_id": 7,
+                "fk_localidad_id": 30,  # Jesús María, Del Nayar
             },
             {
                 "id_persona": 4,
@@ -379,7 +535,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1995-02-14",
                 "sexo": "F",
                 "domicilio": "Zaragoza 12",
-                "fk_localidad_id": 10,
+                "fk_localidad_id": 22,  # Compostela
             },
             {
                 "id_persona": 5,
@@ -389,7 +545,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1982-09-30",
                 "sexo": "M",
                 "domicilio": "Allende 56",
-                "fk_localidad_id": 13,
+                "fk_localidad_id": 40,  # Ixtlán del Río
             },
             {
                 "id_persona": 6,
@@ -399,7 +555,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1988-06-18",
                 "sexo": "F",
                 "domicilio": "Morelos 34",
-                "fk_localidad_id": 2,
+                "fk_localidad_id": 2,  # Sayulilla, Acaponeta
             },
             {
                 "id_persona": 7,
@@ -409,7 +565,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1992-12-25",
                 "sexo": "M",
                 "domicilio": "Insurgentes 90",
-                "fk_localidad_id": 5,
+                "fk_localidad_id": 44,  # Jala
             },
             {
                 "id_persona": 8,
@@ -419,7 +575,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1997-04-03",
                 "sexo": "F",
                 "domicilio": "Reforma 67",
-                "fk_localidad_id": 8,
+                "fk_localidad_id": 75,  # Santiago Ixcuintla
             },
             {
                 "id_persona": 9,
@@ -429,7 +585,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1975-10-20",
                 "sexo": "M",
                 "domicilio": "Independencia 23",
-                "fk_localidad_id": 11,
+                "fk_localidad_id": 84,  # Tepic
             },
             {
                 "id_persona": 10,
@@ -439,7 +595,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1993-08-12",
                 "sexo": "F",
                 "domicilio": "Hidalgo 89",
-                "fk_localidad_id": 14,
+                "fk_localidad_id": 92,  # Tuxpan
             },
             {
                 "id_persona": 11,
@@ -449,7 +605,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1990-01-01",
                 "sexo": "M",
                 "domicilio": "Universidad S/N",
-                "fk_localidad_id": 7,
+                "fk_localidad_id": 84,  # Tepic
             },
             {
                 "id_persona": 12,
@@ -459,7 +615,7 @@ class Command(BaseCommand):
                 "fecha_nacimiento": "1992-01-01",
                 "sexo": "F",
                 "domicilio": "Universidad S/N",
-                "fk_localidad_id": 7,
+                "fk_localidad_id": 62,  # San Blas
             },
         ]
         for p in personas:

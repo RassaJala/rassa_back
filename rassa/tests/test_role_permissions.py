@@ -12,9 +12,11 @@ from django.test import RequestFactory, TestCase
 
 from rassa.models import Persona, Rol, Usuario
 from rassa.permissions.role_permissions import (
+    ADMIN,
     HasRole,
     IsAdmin,
     IsAdminOrAgricultor,
+    IsAdminOrReadOnly,
     IsAdminOrVendedor,
     IsAgricultor,
     IsCliente,
@@ -66,38 +68,69 @@ class HasRoleTest(TestCase):
     """Tests para el permiso genérico HasRole."""
 
     def test_single_role_match(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = HasRole("Administrador")
+        user, _ = _make_user_with_rol(ADMIN)
+        perm = HasRole(ADMIN)
         request = _make_request(user)
         self.assertTrue(perm.has_permission(request, None))
 
     def test_single_role_no_match(self):
         user, _ = _make_user_with_rol("Agricultor")
-        perm = HasRole("Administrador")
+        perm = HasRole(ADMIN)
         request = _make_request(user)
         self.assertFalse(perm.has_permission(request, None))
 
     def test_multi_role_match_first(self):
-        user, _ = _make_user_with_rol("Administrador")
-        perm = HasRole("Administrador", "Agricultor")
+        user, _ = _make_user_with_rol(ADMIN)
+        perm = HasRole(ADMIN, "Agricultor")
         request = _make_request(user)
         self.assertTrue(perm.has_permission(request, None))
 
     def test_multi_role_match_second(self):
         user, _ = _make_user_with_rol("Agricultor")
-        perm = HasRole("Administrador", "Agricultor")
+        perm = HasRole(ADMIN, "Agricultor")
         request = _make_request(user)
         self.assertTrue(perm.has_permission(request, None))
 
     def test_multi_role_no_match(self):
         user, _ = _make_user_with_rol("Vendedor")
-        perm = HasRole("Administrador", "Agricultor")
+        perm = HasRole(ADMIN, "Agricultor")
         request = _make_request(user)
         self.assertFalse(perm.has_permission(request, None))
 
     def test_unauthenticated(self):
-        perm = HasRole("Administrador")
+        perm = HasRole(ADMIN)
         request = _make_request(None)
+        self.assertFalse(perm.has_permission(request, None))
+
+
+class IsAdminOrReadOnlyTest(TestCase):
+    """Tests para el permiso IsAdminOrReadOnly."""
+
+    def test_admin_can_write(self):
+        user, _ = _make_user_with_rol(ADMIN)
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "POST"
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_non_admin_cannot_write(self):
+        user, _ = _make_user_with_rol("Cliente")
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "POST"
+        self.assertFalse(perm.has_permission(request, None))
+
+    def test_authenticated_user_can_read(self):
+        user, _ = _make_user_with_rol("Cliente")
+        perm = IsAdminOrReadOnly()
+        request = _make_request(user)
+        request.method = "GET"
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_unauthenticated_cannot_read(self):
+        perm = IsAdminOrReadOnly()
+        request = _make_request(None)
+        request.method = "GET"
         self.assertFalse(perm.has_permission(request, None))
 
 
@@ -105,7 +138,7 @@ class BackwardCompatAliasesTest(TestCase):
     """Verifica que los aliases IsAdmin, IsAgricultor, etc. siguen funcionando."""
 
     def test_admin_alias(self):
-        user, _ = _make_user_with_rol("Administrador")
+        user, _ = _make_user_with_rol(ADMIN)
         self.assertTrue(IsAdmin.has_permission(_make_request(user), None))
 
     def test_admin_alias_rejects_other(self):
@@ -125,7 +158,7 @@ class BackwardCompatAliasesTest(TestCase):
         self.assertTrue(IsCliente.has_permission(_make_request(user), None))
 
     def test_admin_or_agricultor_alias(self):
-        user1, _ = _make_user_with_rol("Administrador", "admin@rassa.com")
+        user1, _ = _make_user_with_rol(ADMIN, "admin@rassa.com")
         user2, _ = _make_user_with_rol("Agricultor", "agri@rassa.com")
         user3, _ = _make_user_with_rol("Vendedor", "vend@rassa.com")
         self.assertTrue(IsAdminOrAgricultor.has_permission(_make_request(user1), None))
@@ -133,7 +166,7 @@ class BackwardCompatAliasesTest(TestCase):
         self.assertFalse(IsAdminOrAgricultor.has_permission(_make_request(user3), None))
 
     def test_admin_or_vendedor_alias(self):
-        user1, _ = _make_user_with_rol("Administrador", "admin2@rassa.com")
+        user1, _ = _make_user_with_rol(ADMIN, "admin2@rassa.com")
         user2, _ = _make_user_with_rol("Vendedor", "vend2@rassa.com")
         user3, _ = _make_user_with_rol("Agricultor", "agri2@rassa.com")
         self.assertTrue(IsAdminOrVendedor.has_permission(_make_request(user1), None))
@@ -145,7 +178,7 @@ class IsOwnerOrAdminTest(TestCase):
     """Tests para el permiso IsOwnerOrAdmin (has_object_permission)."""
 
     def test_admin_accesa_cualquier_objeto(self):
-        user, usuario = _make_user_with_rol("Administrador")
+        user, usuario = _make_user_with_rol(ADMIN)
         perm = IsOwnerOrAdmin()
         request = _make_request(user)
         obj = type("Obj", (), {"fk_usuario": usuario})()
@@ -180,7 +213,7 @@ class IsOwnerOrAdminTest(TestCase):
         self.assertTrue(perm.has_object_permission(request, None, obj))
 
     def test_objeto_sin_atributos_usuario(self):
-        user, _ = _make_user_with_rol("Administrador")
+        user, _ = _make_user_with_rol(ADMIN)
         perm = IsOwnerOrAdmin()
         request = _make_request(user)
         obj = object()

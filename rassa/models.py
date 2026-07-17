@@ -57,7 +57,9 @@ class Unidad(models.Model):
     """Unidades de medida para productos (Kilogramo, Pieza, Manojo, etc.)."""
 
     id_unidad = models.AutoField(primary_key=True)
-    tipo = models.CharField(max_length=50)
+    tipo = models.CharField(max_length=50, blank=True, null=True)
+    nombre = models.CharField(max_length=100, blank=True, null=True)
+    abreviatura = models.CharField(max_length=20, blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -66,7 +68,7 @@ class Unidad(models.Model):
         ordering = ["id_unidad"]
 
     def __str__(self):
-        return str(self.tipo)
+        return str(self.nombre or self.tipo or self.abreviatura or self.id_unidad)
 
 
 class EstadoPedido(models.Model):
@@ -107,10 +109,11 @@ class DecisionMerma(models.Model):
 
 
 class Municipio(models.Model):
-    """Municipios del estado de Guanajuato."""
+    """Municipios del estado de Nayarit."""
 
     id_municipio = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100)
+    estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "municipio"
@@ -126,6 +129,7 @@ class Localidad(models.Model):
     id_localidad = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=150)
     fk_municipio = models.ForeignKey(Municipio, on_delete=models.CASCADE, db_column="fk_municipio")
+    estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "localidad"
@@ -310,10 +314,16 @@ class Producto(models.Model):
 class PublicacionSemanal(models.Model):
     """Publicación semanal de productos de un agricultor."""
 
+    ESTADO_BORRADOR = "borrador"
+    ESTADO_PUBLICADO = "publicado"
+    ESTADO_CERRADO = "cerrado"
+    ESTADO_CANCELADO = "cancelado"
+
     ESTADO_CHOICES = [
-        ("borrador", "Borrador"),
-        ("publicado", "Publicado"),
-        ("cerrado", "Cerrado"),
+        (ESTADO_BORRADOR, "Borrador"),
+        (ESTADO_PUBLICADO, "Publicado"),
+        (ESTADO_CERRADO, "Cerrado"),
+        (ESTADO_CANCELADO, "Cancelado"),
     ]
 
     id_publicacion = models.AutoField(primary_key=True)
@@ -322,7 +332,7 @@ class PublicacionSemanal(models.Model):
     )
     fecha_publicacion = models.DateField()
     semana = models.PositiveIntegerField()
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="borrador")
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_BORRADOR)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -333,6 +343,10 @@ class PublicacionSemanal(models.Model):
                 check=models.Q(semana__gte=1, semana__lte=52),
                 name="check_semana_range",
             ),
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "semana"],
+                name="unique_agricultor_semana",
+            ),
         ]
 
     def __str__(self):
@@ -342,14 +356,17 @@ class PublicacionSemanal(models.Model):
 class ProductoSemanal(models.Model):
     """Producto publicado en una publicación semanal con precio y stock."""
 
+    ESTADO_ACTIVO = "activo"
+    ESTADO_INACTIVO = "inactivo"
+
     ESTADO_CHOICES = [
-        ("activo", "Activo"),
-        ("inactivo", "Inactivo"),
+        (ESTADO_ACTIVO, "Activo"),
+        (ESTADO_INACTIVO, "Inactivo"),
     ]
 
     id_producto_semanal = models.AutoField(primary_key=True)
     fk_publicacion = models.ForeignKey(PublicacionSemanal, on_delete=models.CASCADE, db_column="fk_publicacion")
-    fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
+    fk_producto = models.ForeignKey(Producto, on_delete=models.PROTECT, db_column="fk_producto")
     fk_unidad = models.ForeignKey(Unidad, on_delete=models.PROTECT, db_column="fk_unidad")
     stock = models.PositiveIntegerField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)

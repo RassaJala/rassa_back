@@ -1,0 +1,15 @@
+meta {
+  name: Cerrar publicación
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/close/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

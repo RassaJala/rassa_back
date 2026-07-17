@@ -12,10 +12,12 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.productos_views import (
     CategoriaListView,
@@ -26,15 +28,26 @@ from rassa.productos_views import (
     UnidadListView,
 )
 from rassa.views import (
+    AdminCreateAgricultorView,
     AuthHealthView,
+    CategoriaProductoViewSet,
     ChangePasswordView,
-    LocalidadByMunicipioListView,
+    LocalidadByMunicipioListCreateView,
+    LocalidadDetailView,
+    LocalidadRestoreView,
     MeView,
-    MunicipioListView,
+    MunicipioDetailView,
+    MunicipioListCreateView,
+    MunicipioRestoreView,
     RegisterView,
+    UnidadViewSet,
 )
 
 logger = logging.getLogger(__name__)
+
+router = DefaultRouter()
+router.register(r"api/categorias", CategoriaProductoViewSet, basename="categoria-producto")
+router.register(r"api/unidades", UnidadViewSet, basename="unidad")
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -81,16 +94,28 @@ urlpatterns = [
     path("api/token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/register/", RegisterView.as_view(), name="register"),
+    path("api/auth/create-farmer/", AdminCreateAgricultorView.as_view(), name="create-farmer"),
     path("api/auth/me/", MeView.as_view(), name="me"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
     path("api/logs/", include("logs.urls")),
-    path("api/municipios/", MunicipioListView.as_view(), name="municipios"),
-    path("api/localidades/", LocalidadByMunicipioListView.as_view(), name="localidades"),
+    path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
+    path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
+    path("api/municipios/<int:pk>/restore/", MunicipioRestoreView.as_view(), name="municipio-restore"),
+    path(
+        "api/municipios/<int:pk>/localidades/",
+        LocalidadByMunicipioListCreateView.as_view(),
+        name="localidades-by-municipio",
+    ),
+    path("api/localidades/", LocalidadByMunicipioListCreateView.as_view(), name="localidades"),
+    path("api/localidades/<int:pk>/", LocalidadDetailView.as_view(), name="localidad-detail"),
+    path("api/localidades/<int:pk>/restore/", LocalidadRestoreView.as_view(), name="localidad-restore"),
     path("api/productos/", ProductoListView.as_view(), name="producto_list"),
     path("api/productos/<int:pk>/", ProductoDetailView.as_view(), name="producto_detail"),
     path("api/productos/<int:pk>/imagen/", ProductoImagenUploadView.as_view(), name="producto_imagen"),
     path("api/productos/<int:pk>/imagen/<int:id_imagen>/", ProductoImagenDeleteView.as_view(), name="producto_imagen_delete"),
     path("api/categorias/", CategoriaListView.as_view(), name="categoria_list"),
     path("api/unidades/", UnidadListView.as_view(), name="unidad_list"),
+    path("", include(router.urls)),
+    path("", include(publicacion_urls)),
 ]
