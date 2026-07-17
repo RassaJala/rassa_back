@@ -20,12 +20,10 @@ from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.productos_views import (
-    CategoriaListView,
     ProductoDetailView,
     ProductoImagenDeleteView,
     ProductoImagenUploadView,
     ProductoListView,
-    UnidadListView,
 )
 from rassa.views import (
     AdminCreateAgricultorView,
@@ -118,8 +116,6 @@ urlpatterns = [
         ProductoImagenDeleteView.as_view(),
         name="producto_imagen_delete",
     ),
-    path("api/categorias/", CategoriaListView.as_view(), name="categoria_list"),
-    path("api/unidades/", UnidadListView.as_view(), name="unidad_list"),
     path("", include(router.urls)),
     path("", include(publicacion_urls)),
 ]
