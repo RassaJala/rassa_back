@@ -11,10 +11,10 @@ class CategoriaSerializer(serializers.ModelSerializer):
         fields = ["id_categoria", "nombre", "descripcion"]
 
 
-class UnidadSerializer(serializers.ModelSerializer):
+class ProductoUnidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Unidad
-        fields = ["id_unidad", "tipo"]
+        fields = ["id_unidad", "nombre", "abreviatura", "tipo"]
 
 
 class ProductoImagenSerializer(serializers.ModelSerializer):
@@ -27,7 +27,7 @@ class ProductoListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for product listings."""
 
     categoria = CategoriaSerializer(source="fk_categoria", read_only=True)
-    unidad = UnidadSerializer(source="fk_unidad", read_only=True)
+    unidad = ProductoUnidadSerializer(source="fk_unidad", read_only=True)
     imagen_principal = serializers.SerializerMethodField()
 
     class Meta:
@@ -48,6 +48,12 @@ class ProductoListSerializer(serializers.ModelSerializer):
         ]
 
     def get_imagen_principal(self, obj):
+        cached = getattr(obj, "productoimagen_set", None)
+        if cached is not None and hasattr(cached, "all"):
+            for img in cached.all():
+                if img.es_principal:
+                    return img.url
+            return None
         img = obj.productoimagen_set.filter(es_principal=True).first()
         return img.url if img else None
 
@@ -56,7 +62,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
     """Full serializer for product detail/create/update."""
 
     categoria = CategoriaSerializer(source="fk_categoria", read_only=True)
-    unidad = UnidadSerializer(source="fk_unidad", read_only=True)
+    unidad = ProductoUnidadSerializer(source="fk_unidad", read_only=True)
     imagenes = ProductoImagenSerializer(source="productoimagen_set", many=True, read_only=True)
     fk_categoria = serializers.PrimaryKeyRelatedField(queryset=CategoriaProducto.objects.all())
     fk_unidad = serializers.PrimaryKeyRelatedField(queryset=Unidad.objects.all(), required=False, allow_null=True)
@@ -79,6 +85,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
             "imagenes",
             "creado_en",
         ]
+        read_only_fields = ["imagen"]
 
     def validate_nombre_producto(self, value):
         if not value or not value.strip():
