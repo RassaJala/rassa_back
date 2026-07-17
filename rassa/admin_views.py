@@ -105,34 +105,35 @@ class AdminUsuarioViewSet(viewsets.ViewSet):
 
     def partial_update(self, request, pk=None):
         """Editar datos de un usuario (telÃ©fono, nombre, rol, etc.)."""
+        admin_usuario = request.user.usuario
         try:
-            usuario = Usuario.objects.select_related("fk_persona", "fk_rol").get(pk=pk)
+            with transaction.atomic():
+                usuario = Usuario.objects.select_related("fk_persona", "fk_rol").select_for_update().get(pk=pk)
+
+                if usuario.id_usuario == admin_usuario.id_usuario and "role" in request.data:
+                    return Response(
+                        {"detail": "No puedes cambiar tu propio rol de administrador."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if "role" in request.data:
+                    new_role = request.data["role"]
+                    if usuario.fk_rol and usuario.fk_rol.nombre_rol == ADMIN and new_role != "admin":
+                        active_admin_count = Usuario.objects.filter(fk_rol__nombre_rol=ADMIN, estado=True).count()
+                        if active_admin_count <= 1:
+                            return Response(
+                                {"detail": "No se puede cambiar el rol del único administrador activo."},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+
+                serializer = AdminUserUpdateSerializer(usuario, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                updated = serializer.save()
         except Usuario.DoesNotExist:
             return Response(
                 {"detail": "Usuario no encontrado."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-
-        admin_usuario = request.user.usuario
-        if usuario.id_usuario == admin_usuario.id_usuario and "role" in request.data:
-            return Response(
-                {"detail": "No puedes cambiar tu propio rol de administrador."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if "role" in request.data:
-            new_role = request.data["role"]
-            if usuario.fk_rol and usuario.fk_rol.nombre_rol == ADMIN and new_role != "admin":
-                active_admin_count = Usuario.objects.filter(fk_rol__nombre_rol=ADMIN, estado=True).count()
-                if active_admin_count <= 1:
-                    return Response(
-                        {"detail": "No se puede cambiar el rol del único administrador activo."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-        serializer = AdminUserUpdateSerializer(usuario, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        updated = serializer.save()
 
         _log(request.user, f"ActualizaciÃ³n de usuario: {updated.correo} por admin {admin_usuario.correo}", request)
 
