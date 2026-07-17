@@ -288,9 +288,7 @@ class Producto(models.Model):
     nombre_producto = models.CharField(max_length=150)
     descripcion = models.TextField(blank=True, default="")
     fk_categoria = models.ForeignKey(CategoriaProducto, on_delete=models.CASCADE, db_column="fk_categoria")
-    fk_unidad = models.ForeignKey(
-        Unidad, on_delete=models.PROTECT, db_column="fk_unidad", null=True, blank=True
-    )
+    fk_unidad = models.ForeignKey(Unidad, on_delete=models.PROTECT, db_column="fk_unidad", null=True, blank=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     stock = models.PositiveIntegerField(default=0)
     es_perecedero = models.BooleanField(default=False)

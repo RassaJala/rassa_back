@@ -57,15 +57,9 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
 
     categoria = CategoriaSerializer(source="fk_categoria", read_only=True)
     unidad = UnidadSerializer(source="fk_unidad", read_only=True)
-    imagenes = ProductoImagenSerializer(
-        source="productoimagen_set", many=True, read_only=True
-    )
-    fk_categoria = serializers.PrimaryKeyRelatedField(
-        queryset=CategoriaProducto.objects.all()
-    )
-    fk_unidad = serializers.PrimaryKeyRelatedField(
-        queryset=Unidad.objects.all(), required=False, allow_null=True
-    )
+    imagenes = ProductoImagenSerializer(source="productoimagen_set", many=True, read_only=True)
+    fk_categoria = serializers.PrimaryKeyRelatedField(queryset=CategoriaProducto.objects.all())
+    fk_unidad = serializers.PrimaryKeyRelatedField(queryset=Unidad.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = Producto

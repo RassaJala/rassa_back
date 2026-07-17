@@ -43,11 +43,7 @@ class ProductoListView(generics.ListCreateAPIView):
         ?unidad=<id>          Filtrar por unidad
     """
 
-    queryset = (
-        Producto.objects.select_related("fk_categoria", "fk_unidad")
-        .all()
-        .order_by("-creado_en")
-    )
+    queryset = Producto.objects.select_related("fk_categoria", "fk_unidad").all().order_by("-creado_en")
     permission_classes = [permissions.IsAuthenticated]
     filterset_class = ProductoFilter
     search_fields = ["nombre_producto", "descripcion"]
