@@ -147,6 +147,10 @@ class ProductoImagenUploadView(APIView):
 
         imagen_archivo = request.FILES.get("imagen")
         imagen_base64 = request.data.get("imagen_base64")
+        
+        # Read es_principal, default to True if not provided to maintain backward compatibility
+        es_principal_str = str(request.data.get("es_principal", "true")).lower()
+        es_principal = es_principal_str in ("true", "1", "yes")
 
         url_guardada = None
 
@@ -183,17 +187,74 @@ class ProductoImagenUploadView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        if es_principal:
+            ProductoImagen.objects.filter(fk_producto=producto).update(es_principal=False)
+
         imagen = ProductoImagen.objects.create(
             fk_producto=producto,
             url=url_guardada,
-            es_principal=True,
+            es_principal=es_principal,
         )
 
-        producto.imagen = url_guardada
-        producto.save(update_fields=["imagen"])
+        if es_principal:
+            producto.imagen = url_guardada
+            producto.save(update_fields=["imagen"])
 
         return _ok(
             data=ProductoImagenSerializer(imagen).data,
             message="Imagen subida exitosamente.",
             status_code=status.HTTP_201_CREATED,
         )
+
+
+class ProductoImagenDeleteView(APIView):
+    """DELETE /api/productos/<id>/imagen/<id_imagen>/ — delete a product image."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk, id_imagen):
+        try:
+            producto = Producto.objects.get(pk=pk)
+            imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
+        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
+            return _ok(
+                message="Imagen o producto no encontrado.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        was_principal = imagen.es_principal
+        imagen.delete()
+
+        # Si borramos la principal, asignar otra si existe
+        if was_principal:
+            otra_imagen = ProductoImagen.objects.filter(fk_producto=producto).first()
+            if otra_imagen:
+                otra_imagen.es_principal = True
+                otra_imagen.save(update_fields=["es_principal"])
+                producto.imagen = otra_imagen.url
+            else:
+                producto.imagen = None
+            producto.save(update_fields=["imagen"])
+
+        return _ok(message="Imagen eliminada exitosamente.")
+
+    def patch(self, request, pk, id_imagen):
+        try:
+            producto = Producto.objects.get(pk=pk)
+            imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
+        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
+            return _ok(
+                message="Imagen o producto no encontrado.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        es_principal = str(request.data.get("es_principal", "")).lower() in ("true", "1", "yes")
+
+        if es_principal:
+            ProductoImagen.objects.filter(fk_producto=producto).update(es_principal=False)
+            imagen.es_principal = True
+            imagen.save(update_fields=["es_principal"])
+            producto.imagen = imagen.url
+            producto.save(update_fields=["imagen"])
+
+        return _ok(message="Imagen actualizada exitosamente.")

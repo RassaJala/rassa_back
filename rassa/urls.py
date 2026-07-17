@@ -20,6 +20,7 @@ from rassa.models import Log, Usuario
 from rassa.productos_views import (
     CategoriaListView,
     ProductoDetailView,
+    ProductoImagenDeleteView,
     ProductoImagenUploadView,
     ProductoListView,
     UnidadListView,
@@ -89,6 +90,7 @@ urlpatterns = [
     path("api/productos/", ProductoListView.as_view(), name="producto_list"),
     path("api/productos/<int:pk>/", ProductoDetailView.as_view(), name="producto_detail"),
     path("api/productos/<int:pk>/imagen/", ProductoImagenUploadView.as_view(), name="producto_imagen"),
+    path("api/productos/<int:pk>/imagen/<int:id_imagen>/", ProductoImagenDeleteView.as_view(), name="producto_imagen_delete"),
     path("api/categorias/", CategoriaListView.as_view(), name="categoria_list"),
     path("api/unidades/", UnidadListView.as_view(), name="unidad_list"),
 ]
