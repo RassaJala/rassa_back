@@ -700,11 +700,12 @@ class ProductoImagen(models.Model):
     fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
     url = models.TextField()
     es_principal = models.BooleanField(default=False)
+    orden = models.PositiveIntegerField(default=0)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "producto_imagen"
-        ordering = ["id_imagen"]
+        ordering = ["orden", "id_imagen"]
 
     def __str__(self):
         return f"Imagen #{self.id_imagen} — {str(self.fk_producto)}"
