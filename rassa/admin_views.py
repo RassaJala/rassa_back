@@ -1,3 +1,4 @@
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
 from rest_framework import permissions, status, viewsets
@@ -126,18 +127,25 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
 
         queryset = queryset.order_by("id_usuario")
 
-        page = self.paginate_queryset(queryset)
+        try:
+            page = self.paginate_queryset(queryset)
 
-        if page is not None:
-            serializer = AdminUserSerializer(page, many=True)
+            if page is not None:
+                serializer = AdminUserSerializer(page, many=True)
 
-            paginated = self.paginator.get_paginated_response(serializer.data).data
+                paginated = self.paginator.get_paginated_response(serializer.data).data
 
-            return _ok(data=paginated)
+                return _ok(data=paginated)
 
-        serializer = AdminUserSerializer(queryset, many=True)
+            serializer = AdminUserSerializer(queryset, many=True)
 
-        return _ok(data=serializer.data)
+            return _ok(data=serializer.data)
+
+        except OperationalError:
+            return Response(
+                {"detail": "Error de conexión con la base de datos."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
     def retrieve(self, request, pk=None):
         """Obtener detalle de un usuario específico."""
@@ -148,6 +156,12 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
         except Usuario.DoesNotExist:
             return _usuario_not_found()
 
+        except OperationalError:
+            return Response(
+                {"detail": "Error de conexión con la base de datos."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         serializer = AdminUserSerializer(usuario)
 
         return _ok(data=serializer.data)
@@ -155,7 +169,10 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
     def partial_update(self, request, pk=None):
         """Editar datos de un usuario (teléfono, nombre, rol, etc.)."""
 
-        requesting_admin = request.user.usuario
+        try:
+            requesting_admin = request.user.usuario
+        except ObjectDoesNotExist:
+            return _usuario_not_found()
 
         try:
             with transaction.atomic():
@@ -212,10 +229,13 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
         """Activar o desactivar un usuario."""
 
         try:
+            requesting_admin = request.user.usuario
+        except ObjectDoesNotExist:
+            return _usuario_not_found()
+
+        try:
             with transaction.atomic():
                 usuario = Usuario.objects.select_related("fk_rol").select_for_update().get(pk=pk)
-
-                requesting_admin = request.user.usuario
 
                 if usuario.id_usuario == requesting_admin.id_usuario:
                     return Response(
@@ -235,6 +255,12 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
 
         except Usuario.DoesNotExist:
             return _usuario_not_found()
+
+        except IntegrityError:
+            return Response(
+                {"detail": "Error de integridad al guardar."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         except OperationalError:
             return Response(
