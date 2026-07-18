@@ -79,7 +79,9 @@ class FamiliaMiembroSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"fk_usuario": "El usuario especificado está inactivo."})
 
             if familia and not familia.estado:
-                raise serializers.ValidationError({"fk_familia": "No se pueden agregar miembros a una familia inactiva."})
+                raise serializers.ValidationError(
+                    {"fk_familia": "No se pueden agregar miembros a una familia inactiva."}
+                )
 
             if usuario:
                 existing = FamiliaUsuario.objects.filter(fk_usuario=usuario, estado=True)

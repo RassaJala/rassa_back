@@ -269,7 +269,9 @@ class FamiliasTestCase(TestCase):
         FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia1, estado=True)
 
         # El usuario tiene una relación inactiva en familia2
-        rel_inactiva = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia2, estado=False)
+        rel_inactiva = FamiliaUsuario.objects.create(
+            fk_usuario=self.usuario_cliente1, fk_familia=familia2, estado=False
+        )
 
         # Probamos la validación del serializador directamente al recibir un PATCH parcial
         from rassa.blueprints.familias.serializers import FamiliaMiembroSerializer
