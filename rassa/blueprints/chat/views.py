@@ -1,8 +1,10 @@
+from datetime import timedelta
 import uuid
 from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -120,6 +122,43 @@ class MensajeLeerView(APIView):
         mensaje.save(update_fields=["leido"])
 
         return Response({"ok": True, "mensaje": "Mensaje marcado como leído."})
+
+
+class MensajeInactivarView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, mensaje_id):
+        try:
+            mensaje = Mensaje.objects.get(pk=mensaje_id, estado=True)
+        except Mensaje.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "Mensaje no encontrado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if mensaje.fk_emisor_id != request.user.usuario.id_usuario:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "No puedes eliminar un mensaje que no te pertenece.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        antiguedad = timezone.now() - mensaje.creado_en
+        if antiguedad > timedelta(minutes=15):
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "Solo se pueden eliminar mensajes de los últimos 15 minutos.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mensaje.estado = False
+        mensaje.save(update_fields=["estado"])
+
+        return Response({"ok": True, "mensaje": "Mensaje eliminado correctamente."})
 
 
 class ConversacionPrivadaCreateView(APIView):
@@ -273,6 +312,121 @@ class ConversacionRenombrarView(APIView):
                 "data": {"id_conversacion": conv.id_conversacion, "nombre": conv.nombre},
             }
         )
+
+
+class ConversacionAgregarIntegranteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, conversacion_id):
+        usuario_id = request.data.get("usuario_id")
+
+        if not usuario_id:
+            return Response(
+                {"ok": False, "mensaje": "El campo usuario_id es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
+        except Conversacion.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "Conversación no encontrada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not conv.tipo:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "Solo puedes agregar integrantes a conversaciones grupales.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        solicitante = request.user.usuario
+        if not conv.integrante_set.filter(fk_usuario=solicitante, estado=True).exists():
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "No eres miembro de esta conversación.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            usuario_nuevo = Usuario.objects.get(pk=usuario_id, estado=True)
+        except Usuario.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "El usuario no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if conv.integrante_set.filter(fk_usuario=usuario_nuevo, estado=True).exists():
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "El usuario ya es miembro de esta conversación.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        Integrante.objects.create(fk_usuario=usuario_nuevo, fk_conversacion=conv)
+
+        return Response(
+            {
+                "ok": True,
+                "mensaje": "Integrante agregado correctamente.",
+                "data": {"id_conversacion": conv.id_conversacion},
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ConversacionIntegrantesListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, conversacion_id):
+        try:
+            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
+        except Conversacion.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "Conversación no encontrada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        usuario = request.user.usuario
+        if not conv.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "No eres miembro de esta conversación.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        integrantes = conv.integrante_set.filter(estado=True).select_related(
+            "fk_usuario__fk_persona"
+        )
+
+        result = []
+        for integrante in integrantes:
+            user = integrante.fk_usuario
+            persona = user.fk_persona
+            apellido_m = persona.apellido_materno or ""
+            nombre_completo = (
+                f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
+            )
+            result.append(
+                {
+                    "id_miembro": integrante.id_miembro,
+                    "id_usuario": user.id_usuario,
+                    "nombre_completo": nombre_completo,
+                    "correo": user.correo,
+                    "creado_en": integrante.creado_en.isoformat(),
+                }
+            )
+
+        return Response({"ok": True, "data": result})
 
 
 class ConversacionListView(APIView):
