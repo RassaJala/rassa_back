@@ -139,7 +139,6 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones": "30/hour",
     "publicaciones_write": "10/hour",
     "admin_write": "30/hour",
-    "admin_users": "30/minute",
 }
 
 # === CORS ===
