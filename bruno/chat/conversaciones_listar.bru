@@ -1,0 +1,15 @@
+meta {
+  name: Listar conversaciones del usuario
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/chat/usuarios/conversaciones/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

@@ -10,7 +10,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from rassa.models import Conversacion, Documento, Mensaje, MensajeDocumento
+from rassa.models import Conversacion, Documento, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
 from .serializers import (
@@ -120,6 +120,211 @@ class MensajeLeerView(APIView):
         mensaje.save(update_fields=["leido"])
 
         return Response({"ok": True, "mensaje": "Mensaje marcado como leído."})
+
+
+class ConversacionPrivadaCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        usuario1 = request.user.usuario
+        usuario2_id = request.data.get("usuario2")
+
+        if not usuario2_id:
+            return Response(
+                {"ok": False, "mensaje": "El campo usuario2 es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            usuario2 = Usuario.objects.get(pk=usuario2_id, estado=True)
+        except Usuario.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "El usuario no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if usuario1.id_usuario == usuario2.id_usuario:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "No puedes crear una conversación contigo mismo.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        conv_ids = Integrante.objects.filter(
+            fk_usuario=usuario1,
+            estado=True,
+            fk_conversacion__tipo=False,
+            fk_conversacion__estado=True,
+        ).values_list("fk_conversacion_id", flat=True)
+
+        existing = (
+            Integrante.objects.filter(
+                fk_usuario=usuario2,
+                estado=True,
+                fk_conversacion_id__in=conv_ids,
+                fk_conversacion__tipo=False,
+                fk_conversacion__estado=True,
+            )
+            .select_related("fk_conversacion")
+            .first()
+        )
+
+        if existing:
+            return Response(
+                {
+                    "ok": True,
+                    "mensaje": "La conversación ya existe.",
+                    "data": {"id_conversacion": existing.fk_conversacion_id},
+                }
+            )
+
+        with transaction.atomic():
+            conv = Conversacion.objects.create(tipo=False)
+            Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
+            Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
+
+        return Response(
+            {
+                "ok": True,
+                "mensaje": "Conversación creada correctamente.",
+                "data": {"id_conversacion": conv.id_conversacion},
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ConversacionGrupalCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        nombre = request.data.get("nombre")
+
+        if not nombre or not nombre.strip():
+            return Response(
+                {"ok": False, "mensaje": "El campo nombre es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        usuario_creador = request.user.usuario
+
+        with transaction.atomic():
+            conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
+            Integrante.objects.create(fk_usuario=usuario_creador, fk_conversacion=conv)
+
+        return Response(
+            {
+                "ok": True,
+                "mensaje": "Conversación grupal creada correctamente.",
+                "data": {"id_conversacion": conv.id_conversacion},
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ConversacionRenombrarView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, conversacion_id):
+        nombre = request.data.get("nombre")
+
+        if not nombre or not nombre.strip():
+            return Response(
+                {"ok": False, "mensaje": "El campo nombre es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
+        except Conversacion.DoesNotExist:
+            return Response(
+                {"ok": False, "mensaje": "Conversación no encontrada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not conv.tipo:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "Solo puedes renombrar conversaciones grupales.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not conv.integrante_set.filter(
+            fk_usuario=request.user.usuario, estado=True
+        ).exists():
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "No eres miembro de esta conversación.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        conv.nombre = nombre.strip()
+        conv.save(update_fields=["nombre"])
+
+        return Response(
+            {
+                "ok": True,
+                "mensaje": "Nombre de la conversación actualizado correctamente.",
+                "data": {"id_conversacion": conv.id_conversacion, "nombre": conv.nombre},
+            }
+        )
+
+
+class ConversacionListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        usuario = request.user.usuario
+
+        conversaciones = Conversacion.objects.filter(
+            integrante__fk_usuario=usuario,
+            integrante__estado=True,
+            estado=True,
+        ).distinct()
+
+        result = []
+        for conv in conversaciones:
+            if conv.tipo:
+                nombre = conv.nombre
+            else:
+                otro = (
+                    conv.integrante_set.filter(estado=True)
+                    .exclude(fk_usuario=usuario)
+                    .first()
+                )
+                if otro:
+                    persona = otro.fk_usuario.fk_persona
+                    apellido_m = persona.apellido_materno or ""
+                    nombre = (
+                        f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
+                    )
+                else:
+                    nombre = "Sin nombre"
+
+            ultimo = (
+                Mensaje.objects.filter(fk_conversacion=conv, estado=True)
+                .order_by("-creado_en")
+                .first()
+            )
+
+            result.append(
+                {
+                    "id_conversacion": conv.id_conversacion,
+                    "tipo": conv.tipo,
+                    "nombre": nombre,
+                    "ultimo_mensaje": ultimo.contenido if ultimo else None,
+                    "ultimo_mensaje_creado_en": (
+                        ultimo.creado_en.isoformat() if ultimo else None
+                    ),
+                }
+            )
+
+        return Response(result)
 
 
 class MensajeDocumentoCreateView(APIView):

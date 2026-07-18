@@ -1,0 +1,22 @@
+meta {
+  name: Renombrar conversación grupal
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/api/chat/conversaciones/{{conversacion_id}}/renombrar/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre": "Nuevo nombre del grupo"
+  }
+}
