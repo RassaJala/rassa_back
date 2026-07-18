@@ -1,8 +1,38 @@
 from django.urls import path
 
-from .views import MensajeCreateView, MensajeDocumentoCreateView, MensajeLeerView, MensajeListView, MensajeUpdateView
+from .views import (
+    ConversacionGrupalCreateView,
+    ConversacionListView,
+    ConversacionPrivadaCreateView,
+    ConversacionRenombrarView,
+    MensajeCreateView,
+    MensajeDocumentoCreateView,
+    MensajeLeerView,
+    MensajeListView,
+    MensajeUpdateView,
+)
 
 urlpatterns = [
+    path(
+        "api/chat/conversaciones/crear-privada/",
+        ConversacionPrivadaCreateView.as_view(),
+        name="chat-conversaciones-crear-privada",
+    ),
+    path(
+        "api/chat/conversaciones/crear-grupal/",
+        ConversacionGrupalCreateView.as_view(),
+        name="chat-conversaciones-crear-grupal",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/renombrar/",
+        ConversacionRenombrarView.as_view(),
+        name="chat-conversaciones-renombrar",
+    ),
+    path(
+        "api/chat/usuarios/conversaciones/",
+        ConversacionListView.as_view(),
+        name="chat-conversaciones",
+    ),
     path(
         "api/chat/conversaciones/<int:conversacion_id>/mensajes/",
         MensajeListView.as_view(),
