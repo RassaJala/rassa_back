@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -7,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from rassa.auth_serializers import (
+    AdminCreateAgricultorSerializer,
     ChangePasswordSerializer,
     ProfileUpdateSerializer,
     RegisterSerializer,
@@ -19,27 +21,33 @@ from rassa.catalogos_serializers import (
     UnidadSerializer,
 )
 from rassa.models import CategoriaProducto, Localidad, Log, Municipio, Unidad, Usuario
-from rassa.permissions.role_permissions import IsAdminOrReadOnly
+from rassa.permissions.role_permissions import HasRole, IsAdminOrReadOnly
 
 
 def _log(user, descripcion, request):
-    """Create an audit log entry."""
-    Log.objects.create(
-        fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
-        descripcion=descripcion,
-        ip=request.META.get("REMOTE_ADDR", ""),
-        dispositivo=request.META.get("HTTP_USER_AGENT", "")[:200],
-    )
+    """Create an audit log entry — failures never break the caller."""
+    try:
+        Log.objects.create(
+            fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
+            descripcion=descripcion,
+            ip=request.META.get("REMOTE_ADDR", ""),
+            dispositivo=request.META.get("HTTP_USER_AGENT", "")[:200],
+        )
+    except Exception:
+        pass  # Audit logging must never break the response
 
 
 def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
-    """Standardized success response."""
+    """Standardized success response body with {data, message} envelope."""
     body = {}
     if message:
         body["message"] = message
     if data is not None:
         body["data"] = data
     return Response(body, status=status_code)
+
+
+ok_response = _ok  # Alias for backward compatibility
 
 
 class RegisterView(generics.CreateAPIView):
@@ -70,6 +78,52 @@ class RegisterView(generics.CreateAPIView):
         return _ok(
             data=user_data,
             message="Registro completado exitosamente.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class AdminCreateAgricultorView(generics.CreateAPIView):
+    """Endpoint exclusivo para que un Admin cree usuarios Agricultor.
+
+    Solo accesible por usuarios con rol Admin.
+    No require que el agricultor se registre por sí mismo.
+    """
+
+    serializer_class = AdminCreateAgricultorSerializer
+    permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
+    throttle_scope = "admin_write"
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        usuario = serializer.save()
+
+        user = usuario.fk_user
+        user_data = UserSerializer(usuario).data
+
+        # Generate JWT so the farmer can access the system immediately
+        # NOTE: wrapped in try/except because token generation depends on
+        # Redis/blacklist being available. If it fails, the farmer still exists
+        # in DB but we return data without tokens (ghost-user prevention).
+        try:
+            refresh = RefreshToken.for_user(user)
+            user_data["access"] = str(refresh.access_token)
+            user_data["refresh"] = str(refresh)
+        except Exception as exc:
+            user_data["access"] = None
+            user_data["refresh"] = None
+            # Log the failure — token generation was non-fatal
+            _log(
+                request.user,
+                f"Advertencia: tokens JWT no generados para {usuario.correo}: {exc}",
+                request,
+            )
+
+        _log(request.user, f"Creación de agricultor por admin: {usuario.correo}", request)
+
+        return ok_response(
+            data=user_data,
+            message="Agricultor creado exitosamente.",
             status_code=status.HTTP_201_CREATED,
         )
 
@@ -150,14 +204,29 @@ class CatalogPagination(PageNumberPagination):
 
 
 class CatalogViewSet(viewsets.ModelViewSet):
-    """ViewSet base para catálogos con respuestas envueltas en un formato consistente."""
+    """ViewSet base para catálogos con respuestas envueltas en un formato consistente.
+
+    Incluye endpoints de papelera:
+        - GET  /{prefix}/trash/           → Lista registros desactivados
+        - POST /{pk}/restore/             → Restaura un registro desactivado
+        - DELETE /{pk}/permanent/          → Eliminación permanente (hard delete)
+    """
 
     permission_classes = [IsAdminOrReadOnly]
     pagination_class = CatalogPagination
     throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    soft_delete_field = "estado"
+
+    def get_queryset(self):
+        model = self.queryset.model
+        if self.action == "trash":
+            return model.objects.filter(estado=False).order_by("-creado_en")
+        if self.action in ("restore", "permanent"):
+            return model.objects.filter(estado=False)
+        return model.objects.filter(estado=True)
 
     def initial(self, request, *args, **kwargs):
-        if self.action in ("create", "update", "partial_update", "destroy"):
+        if self.action in ("create", "update", "partial_update", "destroy", "permanent"):
             self.throttle_scope = "catalog_write"
         super().initial(request, *args, **kwargs)
 
@@ -191,18 +260,143 @@ class CatalogViewSet(viewsets.ModelViewSet):
         return _ok(message="Registro eliminado correctamente.")
 
     def perform_destroy(self, instance):
-        instance.estado = False
-        instance.save(update_fields=["estado"])
+        setattr(instance, self.soft_delete_field, False)
+        instance.save(update_fields=[self.soft_delete_field])
+
+    @action(detail=False, methods=["get"], url_path="trash")
+    def trash(self, request, *args, **kwargs):
+        """Lista registros desactivados (papelera)."""
+        return self.list(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="restore")
+    def restore(self, request, pk=None, *args, **kwargs):
+        """Restaura un registro desactivado."""
+        instance = self.get_object()
+        setattr(instance, self.soft_delete_field, True)
+        instance.save(update_fields=[self.soft_delete_field])
+        serializer = self.get_serializer(instance)
+        return _ok(data=serializer.data, message="Registro restaurado correctamente.")
+
+    @action(detail=True, methods=["post"], url_path="permanent")
+    def permanent(self, request, pk=None, *args, **kwargs):
+        """Eliminación permanente de un registro desactivado."""
+        instance = self.get_object()
+        instance.delete()
+        return _ok(message="Registro eliminado permanentemente.")
 
 
 class CategoriaProductoViewSet(CatalogViewSet):
-    queryset = CategoriaProducto.objects.filter(estado=True).order_by("id_categoria")
+    queryset = CategoriaProducto.objects.all()
     serializer_class = CategoriaProductoSerializer
 
 
 class UnidadViewSet(CatalogViewSet):
-    queryset = Unidad.objects.filter(estado=True).order_by("id_unidad")
+    queryset = Unidad.objects.all()
     serializer_class = UnidadSerializer
+
+
+# ======================================================================
+# Permission mixin
+# ======================================================================
+
+
+class CatalogPermissionMixin:
+    """Mixin that applies IsAuthenticated for safe methods and Admin-only for writes.
+
+    Use with any DRF generic view or viewset by placing it first in the
+    MRO (``class MyView(CatalogPermissionMixin, generics.ListCreateAPIView)``).
+    """
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+
+class PublicReadAdminWriteMixin:
+    """Mixin for public reads (AllowAny) and admin-only writes.
+
+    Used by catalog endpoints that must be accessible without authentication
+    (e.g., municipio/localidad lists for the registration form) but still
+    protect mutations behind Admin role.
+    """
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+
+# ======================================================================
+# Base views for catalog CRUD with admin-only writes + soft-delete
+# ======================================================================
+
+
+class CatalogListCreateView(CatalogPermissionMixin, generics.ListCreateAPIView):
+    """Base ListCreate with admin-only writes, _ok wrapping, audit logging, and throttling."""
+
+    pagination_class = None
+    throttle_classes = [UserRateThrottle]
+    throttle_scope = "catalog_write"
+    create_message = "Registro creado exitosamente."
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        return _ok(data=response.data)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        model_name = type(serializer.instance).__name__ if serializer.instance else "Registro"
+        nombre = getattr(serializer.instance, "nombre", "")
+        _log(request.user, f"{model_name} creado: {nombre} (id={serializer.instance.pk})", request)
+        return _ok(
+            data=serializer.data,
+            message=self.create_message,
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def initial(self, request, *args, **kwargs):
+        """Apply ScopedRateThrottle only on write operations."""
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+        super().initial(request, *args, **kwargs)
+
+
+class CatalogDetailView(CatalogPermissionMixin, generics.RetrieveUpdateDestroyAPIView):
+    """Base detail view with admin-only writes, _ok wrapping, soft-delete, audit logging."""
+
+    throttle_classes = [UserRateThrottle]
+    throttle_scope = "catalog_write"
+    update_message = "Registro actualizado exitosamente."
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return _ok(data=serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        model_name = type(instance).__name__
+        _log(request.user, f"{model_name} actualizado: {instance.nombre} (id={instance.pk})", request)
+        return _ok(data=serializer.data, message=self.update_message)
+
+    def perform_destroy(self, instance):
+        instance.estado = False
+        instance.save(update_fields=["estado"])
+        model_name = type(instance).__name__
+        _log(self.request.user, f"{model_name} eliminado (soft): {instance.nombre} (id={instance.pk})", self.request)
+
+    def initial(self, request, *args, **kwargs):
+        """Apply ScopedRateThrottle only on write operations."""
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+        super().initial(request, *args, **kwargs)
 
 
 # ======================================================================
@@ -210,35 +404,141 @@ class UnidadViewSet(CatalogViewSet):
 # ======================================================================
 
 
-class MunicipioListView(generics.ListAPIView):
-    """List all municipios (requires authentication)."""
+class MunicipioListCreateView(PublicReadAdminWriteMixin, CatalogListCreateView):
+    """List and create municipios (public reads for registration flow, admin-only for write)."""
 
-    queryset = Municipio.objects.all().order_by("nombre")
+    queryset = Municipio.objects.filter(estado=True).order_by("nombre")
     serializer_class = MunicipioSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None
+    create_message = "Municipio creado exitosamente."
 
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
+    # Public reads need a dedicated throttle scope to prevent scraping/DDoS
+    throttle_scope = "catalog_read"
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
 
 
-class LocalidadByMunicipioListView(APIView):
-    """List localidades for a given municipio (requires authentication)."""
+class MunicipioDetailView(CatalogDetailView):
+    """Retrieve, update, or soft-delete a municipio (admin-only for write)."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    queryset = Municipio.objects.filter(estado=True)
+    serializer_class = MunicipioSerializer
+    update_message = "Municipio actualizado exitosamente."
 
-    def get(self, request):
-        raw = request.query_params.get("municipio_id")
 
-        if not raw:
+class LocalidadByMunicipioListCreateView(PublicReadAdminWriteMixin, CatalogListCreateView):
+    """List and create localidades — public reads for registration flow, admin-only for write."""
+
+    serializer_class = LocalidadSerializer
+    create_message = "Localidad creada exitosamente."
+
+    # Public reads need a dedicated throttle scope to prevent scraping/DDoS
+    throttle_scope = "catalog_read"
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        if request.method not in permissions.SAFE_METHODS:
+            self.throttle_scope = "catalog_write"
+        super().initial(request, *args, **kwargs)
+
+    def _resolve_municipio_id(self, for_create=False):
+        """Extract and validate the municipio ID from URL kwarg or query param.
+
+        Returns the validated integer municipio_id, or raises ValidationError.
+        When *for_create* is True the error messages reference ``municipio``
+        for the URL-path branch and ``municipio_id`` for the query-param branch,
+        matching the existing API contract.
+        """
+        pk = self.kwargs.get("pk")
+        if pk is not None:
+            if not Municipio.objects.filter(pk=pk, estado=True).exists():
+                raise ValidationError({"municipio": "El municipio especificado no existe o fue eliminado."})
+            return int(pk)
+
+        raw = self.request.query_params.get("municipio_id")
+        if raw is None:
             raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
-
         try:
             municipio_id = int(raw)
         except (ValueError, TypeError) as err:
             raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
+        if not Municipio.objects.filter(pk=municipio_id, estado=True).exists():
+            raise ValidationError({"municipio_id": "El municipio especificado no existe o fue eliminado."})
+        return municipio_id
 
-        localidades = Localidad.objects.filter(fk_municipio_id=municipio_id).order_by("nombre")
-        serializer = LocalidadSerializer(localidades, many=True)
-        return _ok(data=serializer.data)
+    def get_queryset(self):
+        base = Localidad.objects.filter(estado=True)
+        pk = self.kwargs.get("pk")
+        if pk is not None:
+            return base.filter(fk_municipio_id=pk).order_by("nombre")
+        raw = self.request.query_params.get("municipio_id")
+        if raw is not None:
+            try:
+                municipio_id = int(raw)
+            except (ValueError, TypeError) as err:
+                raise ValidationError({"municipio_id": "municipio_id debe ser un número entero válido."}) from err
+            return base.filter(fk_municipio_id=municipio_id).order_by("nombre")
+        raise ValidationError({"municipio_id": "El parámetro municipio_id es requerido."})
+
+    def perform_create(self, serializer):
+        municipio_id = self._resolve_municipio_id(for_create=True)
+        serializer.save(fk_municipio_id=municipio_id)
+
+
+class LocalidadDetailView(CatalogDetailView):
+    """Retrieve, update, or soft-delete a localidad (admin-only for write)."""
+
+    queryset = Localidad.objects.filter(estado=True)
+    serializer_class = LocalidadSerializer
+    update_message = "Localidad actualizada exitosamente."
+
+
+# ======================================================================
+# Restore endpoint for soft-deleted records
+# ======================================================================
+
+
+class CatalogRestoreView(generics.GenericAPIView):
+    """Restore a soft-deleted catalog record (admin-only).
+
+    Subclasses must set ``queryset`` and ``serializer_class``.
+    URL: POST /api/{resource}/<pk>/restore/  →  estado = True
+    """
+
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    throttle_scope = "catalog_write"
+    soft_delete_field = "estado"
+
+    def get_permissions(self):
+        """Admin-only."""
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+    def get_queryset(self):
+        # Allow access to soft-deleted records for restoration
+        return self.queryset.model.objects.filter(estado=False)
+
+    def post(self, request, *args, **kwargs):
+        instance = self.get_object()
+        setattr(instance, self.soft_delete_field, True)
+        instance.save(update_fields=[self.soft_delete_field])
+        serializer = self.get_serializer(instance)
+        model_name = type(instance).__name__
+        _log(
+            request.user,
+            f"{model_name} restaurado: {instance.nombre} (id={instance.pk})",
+            request,
+        )
+        return _ok(data=serializer.data, message="Registro restaurado correctamente.")
+
+
+class MunicipioRestoreView(CatalogRestoreView):
+    queryset = Municipio.objects.all()
+    serializer_class = MunicipioSerializer
+
+
+class LocalidadRestoreView(CatalogRestoreView):
+    queryset = Localidad.objects.all()
+    serializer_class = LocalidadSerializer

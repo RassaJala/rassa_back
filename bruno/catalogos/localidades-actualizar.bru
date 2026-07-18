@@ -1,0 +1,22 @@
+meta {
+  name: Localidades - Actualizar
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/api/localidades/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre": "Localidad Actualizada"
+  }
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Eliminar categoría permanentemente
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/categorias/{{categoriaId}}/permanent/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

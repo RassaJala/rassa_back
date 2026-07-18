@@ -1,0 +1,15 @@
+meta {
+  name: Municipios - Eliminar
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/municipios/999/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
