@@ -15,7 +15,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import Localidad, Municipio, Persona, Rol, Usuario
+from rassa.admin_views import _ensure_single_admin_protected
+from rassa.models import Localidad, Log, Municipio, Persona, Rol, Usuario
 
 User = get_user_model()
 
@@ -35,6 +36,10 @@ class AdminUserProtectionTest(APITestCase):
     """Tests para protecciones de integridad del usuario admin."""
 
     def setUp(self):
+        from rassa.admin_views import AdminUsuarioViewSet
+
+        self._original_throttle = AdminUsuarioViewSet.throttle_classes
+        AdminUsuarioViewSet.throttle_classes = []
         self.rol_admin, _ = Rol.objects.get_or_create(
             nombre_rol="Admin",
             defaults={"descripcion": "Rol Admin"},
@@ -120,6 +125,11 @@ class AdminUserProtectionTest(APITestCase):
             correo=self.user_email,
             fk_rol=self.rol_buyer,
         )
+
+    def tearDown(self):
+        from rassa.admin_views import AdminUsuarioViewSet
+
+        AdminUsuarioViewSet.throttle_classes = self._original_throttle
 
     # ------------------------------------------------------------------
     # Helpers
@@ -214,21 +224,33 @@ class AdminUserProtectionTest(APITestCase):
     # ==================================================================
 
     def test_admin_cannot_deactivate_self(self):
-        """Admin cannot deactivate themselves via toggle-estado."""
+        """Admin cannot change their own estado via toggle-estado."""
         response = self.client.patch(
             reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
             format="json",
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("propia cuenta", response.data["detail"])
+        self.assertIn("propio estado", response.data["detail"])
 
         self.admin_usuario.refresh_from_db()
         self.assertTrue(self.admin_usuario.estado)
 
-    # ==================================================================
-    # LAST ADMIN DEACTIVATION PREVENTION
-    # ==================================================================
+    def test_admin_cannot_activate_self(self):
+        """Inactive admin cannot reactivate themselves via toggle-estado."""
+        self.admin_usuario.estado = False
+        self.admin_usuario.save(update_fields=["estado"])
+
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("propio estado", response.data["detail"])
+
+        self.admin_usuario.refresh_from_db()
+        self.assertFalse(self.admin_usuario.estado)
 
     def test_admin_cannot_deactivate_last_admin(self):
         """No one can deactivate the last active admin."""
@@ -264,10 +286,11 @@ class AdminUserProtectionTest(APITestCase):
         self.admin_usuario.estado = False
         self.admin_usuario.save(update_fields=["estado"])
 
+        token = self._login(email=self.admin2_email, password="admin1234")
         response = self.client.patch(
             reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
             format="json",
-            **self._auth_header(),
+            **self._auth_header(token),
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.admin_usuario.refresh_from_db()
@@ -718,3 +741,47 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.user_usuario.refresh_from_db()
         self.assertEqual(self.user_usuario.fk_persona.fk_localidad.id_localidad, new_localidad.id_localidad)
+
+    # ==================================================================
+    # AUDIT LOGGING (S6)
+    # ==================================================================
+
+    def test_audit_log_created_on_partial_update(self):
+        """partial_update creates an audit log entry with correct fields."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"telefono": "7777777777"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        log_entry = Log.objects.filter(descripcion__startswith="Actualización de usuario").latest("creado_en")
+        self.assertIn(f"id={self.user_usuario.id_usuario}", log_entry.descripcion)
+        self.assertIn("campos=", log_entry.descripcion)
+
+    def test_audit_log_created_on_toggle_estado(self):
+        """toggle_estado creates an audit log entry."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        log_entry = Log.objects.filter(descripcion__startswith="Toggle de usuario").latest("creado_en")
+        self.assertIn(f"id={self.user_usuario.id_usuario}", log_entry.descripcion)
+        self.assertIn("desactivado", log_entry.descripcion)
+
+    # ==================================================================
+    # NULL FK_ROL HANDLING (S7)
+    # ==================================================================
+
+    def test_ensure_single_admin_protected_null_fk_rol(self):
+        """_ensure_single_admin_protected returns None when fk_rol is None."""
+        from unittest.mock import MagicMock
+
+        mock_user = MagicMock()
+        mock_user.fk_rol = None
+        result = _ensure_single_admin_protected(mock_user)
+        self.assertIsNone(result)
