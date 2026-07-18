@@ -1,10 +1,9 @@
 from datetime import timedelta
 
 from django.utils import timezone
-
 from rest_framework import serializers
 
-from rassa.models import Conversacion, Documento, Mensaje
+from rassa.models import Conversacion, Mensaje
 
 
 class EmisorSerializer(serializers.Serializer):
@@ -83,7 +82,8 @@ class MensajeUpdateSerializer(serializers.Serializer):
 
     def update(self, instance, validated_data):
         instance.contenido = validated_data["contenido"]
-        instance.save(update_fields=["contenido"])
+        instance.editado = True
+        instance.save(update_fields=["contenido", "editado"])
         return instance
 
 
@@ -97,5 +97,6 @@ class MensajeSerializer(serializers.ModelSerializer):
             "emisor",
             "contenido",
             "leido",
+            "editado",
             "creado_en",
         ]

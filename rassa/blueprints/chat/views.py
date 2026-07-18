@@ -1,11 +1,10 @@
-from datetime import timedelta
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -51,7 +50,11 @@ class MensajeListView(generics.ListAPIView):
         )
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return _ok(data=serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return _ok(data=serializer.data)
 
