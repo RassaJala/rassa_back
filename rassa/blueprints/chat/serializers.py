@@ -74,9 +74,7 @@ class MensajeUpdateSerializer(serializers.Serializer):
 
         antiguedad = timezone.now() - mensaje.creado_en
         if antiguedad > timedelta(minutes=15):
-            raise serializers.ValidationError(
-                "Solo puedes editar mensajes con menos de 15 minutos de antigüedad."
-            )
+            raise serializers.ValidationError("Solo puedes editar mensajes con menos de 15 minutos de antigüedad.")
 
         return attrs
 

@@ -30,21 +30,15 @@ class MensajeListView(generics.ListAPIView):
         conversacion_id = self.kwargs.get("conversacion_id")
 
         try:
-            conversacion = Conversacion.objects.get(
-                pk=conversacion_id, estado=True
-            )
+            conversacion = Conversacion.objects.get(pk=conversacion_id, estado=True)
         except Conversacion.DoesNotExist as err:
             raise NotFound("Conversación no encontrada.") from err
 
-        if not conversacion.integrante_set.filter(
-            fk_usuario=self.request.user.usuario, estado=True
-        ).exists():
+        if not conversacion.integrante_set.filter(fk_usuario=self.request.user.usuario, estado=True).exists():
             raise PermissionDenied("No eres miembro de esta conversación.")
 
         return (
-            Mensaje.objects.filter(
-                fk_conversacion_id=conversacion_id, estado=True
-            )
+            Mensaje.objects.filter(fk_conversacion_id=conversacion_id, estado=True)
             .select_related("fk_emisor__fk_persona")
             .order_by("-creado_en")
         )
@@ -116,9 +110,7 @@ class MensajeLeerView(APIView):
         except Mensaje.DoesNotExist as err:
             raise NotFound("Mensaje no encontrado.") from err
 
-        if not mensaje.fk_conversacion.integrante_set.filter(
-            fk_usuario=request.user.usuario, estado=True
-        ).exists():
+        if not mensaje.fk_conversacion.integrante_set.filter(fk_usuario=request.user.usuario, estado=True).exists():
             raise PermissionDenied("No eres miembro de esta conversación.")
 
         mensaje.leido = True
@@ -294,9 +286,7 @@ class ConversacionRenombrarView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not conv.integrante_set.filter(
-            fk_usuario=request.user.usuario, estado=True
-        ).exists():
+        if not conv.integrante_set.filter(fk_usuario=request.user.usuario, estado=True).exists():
             return Response(
                 {
                     "ok": False,
@@ -407,18 +397,14 @@ class ConversacionIntegrantesListView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        integrantes = conv.integrante_set.filter(estado=True).select_related(
-            "fk_usuario__fk_persona"
-        )
+        integrantes = conv.integrante_set.filter(estado=True).select_related("fk_usuario__fk_persona")
 
         result = []
         for integrante in integrantes:
             user = integrante.fk_usuario
             persona = user.fk_persona
             apellido_m = persona.apellido_materno or ""
-            nombre_completo = (
-                f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
-            )
+            nombre_completo = f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
             result.append(
                 {
                     "id_miembro": integrante.id_miembro,
@@ -449,25 +435,15 @@ class ConversacionListView(APIView):
             if conv.tipo:
                 nombre = conv.nombre
             else:
-                otro = (
-                    conv.integrante_set.filter(estado=True)
-                    .exclude(fk_usuario=usuario)
-                    .first()
-                )
+                otro = conv.integrante_set.filter(estado=True).exclude(fk_usuario=usuario).first()
                 if otro:
                     persona = otro.fk_usuario.fk_persona
                     apellido_m = persona.apellido_materno or ""
-                    nombre = (
-                        f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
-                    )
+                    nombre = f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
                 else:
                     nombre = "Sin nombre"
 
-            ultimo = (
-                Mensaje.objects.filter(fk_conversacion=conv, estado=True)
-                .order_by("-creado_en")
-                .first()
-            )
+            ultimo = Mensaje.objects.filter(fk_conversacion=conv, estado=True).order_by("-creado_en").first()
 
             result.append(
                 {
@@ -475,9 +451,7 @@ class ConversacionListView(APIView):
                     "tipo": conv.tipo,
                     "nombre": nombre,
                     "ultimo_mensaje": ultimo.contenido if ultimo else None,
-                    "ultimo_mensaje_creado_en": (
-                        ultimo.creado_en.isoformat() if ultimo else None
-                    ),
+                    "ultimo_mensaje_creado_en": (ultimo.creado_en.isoformat() if ultimo else None),
                 }
             )
 
