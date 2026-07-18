@@ -1,0 +1,23 @@
+meta {
+  name: Crear Familia
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/familias/grupos/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre_familia": "Familia González",
+    "detalle_familia": "Familia productora del municipio de Jala"
+  }
+}
