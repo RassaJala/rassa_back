@@ -68,22 +68,24 @@ class FamiliaMiembroSerializer(serializers.ModelSerializer):
         """Devuelve el correo del miembro."""
         return obj.fk_usuario.correo if obj.fk_usuario else None
 
-    def validate_fk_usuario(self, value):
-        """Valida que el usuario no pertenezca a otra familia activa y esté activo."""
-        if not value.estado:
-            raise serializers.ValidationError("El usuario especificado está inactivo.")
+    def validate(self, attrs):
+        """Valida que el usuario y la familia estén activos y se cumpla la exclusividad de membresías."""
+        usuario = attrs.get("fk_usuario", self.instance.fk_usuario if self.instance else None)
+        familia = attrs.get("fk_familia", self.instance.fk_familia if self.instance else None)
+        estado = attrs.get("estado", self.instance.estado if self.instance else True)
 
-        existing = FamiliaUsuario.objects.filter(fk_usuario=value, estado=True)
+        if estado:
+            if usuario and not usuario.estado:
+                raise serializers.ValidationError({"fk_usuario": "El usuario especificado está inactivo."})
 
-        if self.instance:
-            existing = existing.exclude(pk=self.instance.pk)
+            if familia and not familia.estado:
+                raise serializers.ValidationError({"fk_familia": "No se pueden agregar miembros a una familia inactiva."})
 
-        if existing.exists():
-            raise serializers.ValidationError("El usuario ya pertenece a otra familia activa.")
-        return value
+            if usuario:
+                existing = FamiliaUsuario.objects.filter(fk_usuario=usuario, estado=True)
+                if self.instance:
+                    existing = existing.exclude(pk=self.instance.pk)
+                if existing.exists():
+                    raise serializers.ValidationError({"fk_usuario": "El usuario ya pertenece a otra familia activa."})
 
-    def validate_fk_familia(self, value):
-        """Valida que la familia esté activa."""
-        if not value.estado:
-            raise serializers.ValidationError("No se pueden agregar miembros a una familia inactiva.")
-        return value
+        return attrs

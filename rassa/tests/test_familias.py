@@ -259,3 +259,41 @@ class FamiliasTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_jefe_familia", response.data)
+
+    def test_bypass_validacion_patch_estado(self):
+        """Valida que un PATCH de reactivación de estado no evada la validación de exclusividad."""
+        familia1 = Familia.objects.create(nombre_familia="Familia Uno")
+        familia2 = Familia.objects.create(nombre_familia="Familia Dos")
+
+        # El usuario pertenece de forma activa a familia1
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia1, estado=True)
+
+        # El usuario tiene una relación inactiva en familia2
+        rel_inactiva = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia2, estado=False)
+
+        # Probamos la validación del serializador directamente al recibir un PATCH parcial
+        from rassa.blueprints.familias.serializers import FamiliaMiembroSerializer
+        serializer = FamiliaMiembroSerializer(instance=rel_inactiva, data={"estado": True}, partial=True)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("fk_usuario", serializer.errors)
+
+    def test_miembro_viewset_http_method_restrictions(self):
+        """Valida que PUT y PATCH estén deshabilitados en el ViewSet de miembros."""
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+
+        # Intentar PUT -> 405 Method Not Allowed
+        response_put = self.client.put(
+            f"/api/familias/miembros/{rel.id_familia_usuario}/",
+            {"fk_usuario": self.usuario_cliente1.id_usuario, "fk_familia": familia.id_familia, "estado": False},
+            format="json",
+        )
+        self.assertEqual(response_put.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        # Intentar PATCH -> 405 Method Not Allowed
+        response_patch = self.client.patch(
+            f"/api/familias/miembros/{rel.id_familia_usuario}/",
+            {"estado": False},
+            format="json",
+        )
+        self.assertEqual(response_patch.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)

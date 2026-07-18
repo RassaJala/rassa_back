@@ -83,6 +83,7 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
     queryset = FamiliaUsuario.objects.filter(estado=True)
     serializer_class = FamiliaMiembroSerializer
     permission_classes = [IsAuthenticated, HasRole("Admin")]
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def perform_destroy(self, instance):
         """Realiza un borrado lógico de la asociación del miembro."""
