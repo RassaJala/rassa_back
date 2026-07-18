@@ -4,6 +4,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import OuterRef, Prefetch, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -78,11 +79,13 @@ class MensajeUpdateView(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        mensaje_id = self.kwargs.get("mensaje_id")
-        try:
-            return Mensaje.objects.get(pk=mensaje_id, estado=True)
-        except Mensaje.DoesNotExist as err:
-            raise NotFound("Mensaje no encontrado.") from err
+        if not hasattr(self, "_mensaje_cache"):
+            mensaje_id = self.kwargs.get("mensaje_id")
+            try:
+                self._mensaje_cache = Mensaje.objects.get(pk=mensaje_id, estado=True)
+            except Mensaje.DoesNotExist as err:
+                raise NotFound("Mensaje no encontrado.") from err
+        return self._mensaje_cache
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -186,47 +189,52 @@ class ConversacionPrivadaCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        conv_ids = Integrante.objects.filter(
-            fk_usuario=usuario1,
-            estado=True,
-            fk_conversacion__tipo=False,
-            fk_conversacion__estado=True,
-        ).values_list("fk_conversacion_id", flat=True)
-
-        existing = (
-            Integrante.objects.filter(
-                fk_usuario=usuario2,
-                estado=True,
-                fk_conversacion_id__in=conv_ids,
-                fk_conversacion__tipo=False,
-                fk_conversacion__estado=True,
-            )
-            .select_related("fk_conversacion")
-            .first()
-        )
-
-        if existing:
-            return Response(
-                {
-                    "ok": True,
-                    "mensaje": "La conversación ya existe.",
-                    "data": {"id_conversacion": existing.fk_conversacion_id},
-                }
-            )
-
         with transaction.atomic():
+            conv_ids = list(
+                Integrante.objects.filter(
+                    fk_usuario=usuario1,
+                    estado=True,
+                    fk_conversacion__tipo=False,
+                    fk_conversacion__estado=True,
+                )
+                .select_for_update()
+                .values_list("fk_conversacion_id", flat=True)
+            )
+
+            existing = (
+                Integrante.objects.filter(
+                    fk_usuario=usuario2,
+                    estado=True,
+                    fk_conversacion_id__in=conv_ids,
+                    fk_conversacion__tipo=False,
+                    fk_conversacion__estado=True,
+                )
+                .select_for_update()
+                .select_related("fk_conversacion")
+                .first()
+            )
+
+            if existing:
+                return Response(
+                    {
+                        "ok": True,
+                        "mensaje": "La conversación ya existe.",
+                        "data": {"id_conversacion": existing.fk_conversacion_id},
+                    }
+                )
+
             conv = Conversacion.objects.create(tipo=False)
             Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
             Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
 
-        return Response(
-            {
-                "ok": True,
-                "mensaje": "Conversación creada correctamente.",
-                "data": {"id_conversacion": conv.id_conversacion},
-            },
-            status=status.HTTP_201_CREATED,
-        )
+            return Response(
+                {
+                    "ok": True,
+                    "mensaje": "Conversación creada correctamente.",
+                    "data": {"id_conversacion": conv.id_conversacion},
+                },
+                status=status.HTTP_201_CREATED,
+            )
 
 
 class ConversacionGrupalCreateView(APIView):
@@ -424,38 +432,54 @@ class ConversacionListView(APIView):
     def get(self, request):
         usuario = request.user.usuario
 
-        conversaciones = Conversacion.objects.filter(
-            integrante__fk_usuario=usuario,
-            integrante__estado=True,
-            estado=True,
-        ).distinct()
+        ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
+
+        conversaciones = (
+            Conversacion.objects.filter(
+                integrante__fk_usuario=usuario,
+                integrante__estado=True,
+                estado=True,
+            )
+            .annotate(
+                ultimo_mensaje_contenido=Subquery(ultimo_subq.values("contenido")[:1]),
+                ultimo_mensaje_creado_en=Subquery(ultimo_subq.values("creado_en")[:1]),
+            )
+            .prefetch_related(
+                Prefetch(
+                    "integrante_set",
+                    queryset=Integrante.objects.filter(estado=True).select_related("fk_usuario__fk_persona"),
+                    to_attr="integrantes_activos",
+                )
+            )
+            .distinct()
+        )
 
         result = []
         for conv in conversaciones:
             if conv.tipo:
                 nombre = conv.nombre
             else:
-                otro = conv.integrante_set.filter(estado=True).exclude(fk_usuario=usuario).first()
-                if otro:
-                    persona = otro.fk_usuario.fk_persona
+                otros = [i for i in conv.integrantes_activos if i.fk_usuario_id != usuario.id_usuario]
+                if otros:
+                    persona = otros[0].fk_usuario.fk_persona
                     apellido_m = persona.apellido_materno or ""
                     nombre = f"{persona.nombre} {persona.apellido_paterno} {apellido_m}".strip()
                 else:
                     nombre = "Sin nombre"
-
-            ultimo = Mensaje.objects.filter(fk_conversacion=conv, estado=True).order_by("-creado_en").first()
 
             result.append(
                 {
                     "id_conversacion": conv.id_conversacion,
                     "tipo": conv.tipo,
                     "nombre": nombre,
-                    "ultimo_mensaje": ultimo.contenido if ultimo else None,
-                    "ultimo_mensaje_creado_en": (ultimo.creado_en.isoformat() if ultimo else None),
+                    "ultimo_mensaje": conv.ultimo_mensaje_contenido,
+                    "ultimo_mensaje_creado_en": (
+                        conv.ultimo_mensaje_creado_en.isoformat() if conv.ultimo_mensaje_creado_en else None
+                    ),
                 }
             )
 
-        return Response(result)
+        return _ok(data=result)
 
 
 class MensajeDocumentoCreateView(APIView):
