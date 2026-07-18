@@ -785,3 +785,120 @@ class AdminUserProtectionTest(APITestCase):
         mock_user.fk_rol = None
         result = _ensure_single_admin_protected(mock_user)
         self.assertIsNone(result)
+
+    # ==================================================================
+    # PROTECTED FIELDS (R3-F1 + R3-F4)
+    # ==================================================================
+
+    def test_partial_update_ignores_correo_field(self):
+        """correo field is not updatable via admin endpoint."""
+        original_correo = self.user_usuario.correo
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"correo": "hacked@email.com", "telefono": "8888888888"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.correo, original_correo)
+
+    def test_partial_update_ignores_id_field(self):
+        """id_usuario cannot be changed via PATCH."""
+        original_id = self.user_usuario.id_usuario
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"id_usuario": 99999, "telefono": "8888888888"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.id_usuario, original_id)
+
+    # ==================================================================
+    # PAGINATION EDGE CASES (R3-F2)
+    # ==================================================================
+
+    def test_pagination_page_zero(self):
+        """page=0 is rejected (DRF PageNumberPagination returns 404 for invalid pages)."""
+        self._create_bulk_users(25)
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"page": 0},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_pagination_page_negative(self):
+        """page=-1 is rejected (DRF PageNumberPagination returns 404 for invalid pages)."""
+        self._create_bulk_users(25)
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"page": -1},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_pagination_page_beyond_range(self):
+        """page=999 returns 404 (DRF PageNumberPagination raises NotFound for out-of-range pages)."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"page": 999},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_pagination_non_numeric_page(self):
+        """page=abc returns 404 (DRF PageNumberPagination raises NotFound for non-integer pages)."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"page": "abc"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ==================================================================
+    # PASSWORD NOT IN MUTATION RESPONSES (R3-F5)
+    # ==================================================================
+
+    def test_partial_update_response_no_password(self):
+        """partial_update response must not expose password."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"telefono": "8888888888"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("password", response.data["data"])
+
+    def test_toggle_estado_response_no_password(self):
+        """toggle_estado response must not expose password."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("password", response.data["data"])
+
+    # ==================================================================
+    # AUDIT LOG ACTOR VALIDATION (R3-W5)
+    # ==================================================================
+
+    def test_audit_log_actor_is_requesting_admin(self):
+        """Audit log records the admin who performed the action."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"telefono": "7777777777"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        log_entry = Log.objects.filter(descripcion__startswith="Actualización de usuario").latest("creado_en")
+        self.assertEqual(log_entry.fk_usuario.id_usuario, self.admin_usuario.id_usuario)
