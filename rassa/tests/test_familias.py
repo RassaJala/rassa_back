@@ -275,6 +275,7 @@ class FamiliasTestCase(TestCase):
 
         # Probamos la validación del serializador directamente al recibir un PATCH parcial
         from rassa.blueprints.familias.serializers import FamiliaMiembroSerializer
+
         serializer = FamiliaMiembroSerializer(instance=rel_inactiva, data={"estado": True}, partial=True)
         self.assertFalse(serializer.is_valid())
         self.assertIn("fk_usuario", serializer.errors)
