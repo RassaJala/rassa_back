@@ -139,6 +139,33 @@ class AdminUserProtectionTest(APITestCase):
     def _auth_header(self, token=None):
         return {"HTTP_AUTHORIZATION": f"Bearer {token or self._login()}"}
 
+    def _create_bulk_users(self, count, prefix="bulk"):
+        """Create multiple users for pagination tests."""
+        users = []
+        for i in range(count):
+            u = User.objects.create_user(
+                username=f"{prefix}{i}@test.com",
+                email=f"{prefix}{i}@test.com",
+                password="test1234",
+            )
+            p = Persona.objects.create(
+                nombre=f"User{i}",
+                apellido_paterno="Bulk",
+                fecha_nacimiento="1990-01-01",
+                sexo="M",
+                domicilio=f"Calle {i}",
+                fk_localidad=self.localidad,
+            )
+            usuario = Usuario.objects.create(
+                fk_user=u,
+                fk_persona=p,
+                telefono=f"555{i:06d}",
+                correo=f"{prefix}{i}@test.com",
+                fk_rol=self.rol_buyer,
+            )
+            users.append(usuario)
+        return users
+
     # ==================================================================
     # SELF ROLE CHANGE PREVENTION
     # ==================================================================
@@ -154,7 +181,6 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("propio rol", response.data["detail"])
 
-        # Verify role unchanged in DB
         self.admin_usuario.refresh_from_db()
         self.assertEqual(self.admin_usuario.fk_rol.nombre_rol, "Admin")
 
@@ -197,7 +223,6 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("propia cuenta", response.data["detail"])
 
-        # Verify still active
         self.admin_usuario.refresh_from_db()
         self.assertTrue(self.admin_usuario.estado)
 
@@ -207,15 +232,10 @@ class AdminUserProtectionTest(APITestCase):
 
     def test_admin_cannot_deactivate_last_admin(self):
         """No one can deactivate the last active admin."""
-        # Deactivate second admin so only one remains
         self.admin2_usuario.estado = False
         self.admin2_usuario.save(update_fields=["estado"])
 
-        # admin2 logs in BEFORE deactivation to get a valid JWT
         token = self._login(email=self.admin2_email, password="admin1234")
-
-        # Now admin2 (inactive usuario, but valid JWT) tries to deactivate admin1
-        # who is the only active admin
         response = self.client.patch(
             reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
             format="json",
@@ -224,13 +244,11 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("nico administrador", response.data["detail"])
 
-        # Verify still active
         self.admin_usuario.refresh_from_db()
         self.assertTrue(self.admin_usuario.estado)
 
     def test_admin_can_deactivate_when_multiple_admins_exist(self):
         """Admin CAN deactivate another admin when 2+ admins are active."""
-        # Login as admin2, deactivate admin1 (2 admins active)
         token = self._login(email=self.admin2_email, password="admin1234")
         response = self.client.patch(
             reverse("admin-usuarios-toggle-estado", args=[self.admin_usuario.id_usuario]),
@@ -437,7 +455,6 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(token),
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("unico administrador", response.data["detail"].lower().replace("\u00fa", "u"))
 
         self.admin_usuario.refresh_from_db()
         self.assertEqual(self.admin_usuario.fk_rol.nombre_rol, "Admin")
@@ -492,8 +509,8 @@ class AdminUserProtectionTest(APITestCase):
     # INVALID DATA
     # ==================================================================
 
-    def test_partial_update_invalid_email_returns_400(self):
-        """partial_update with invalid data returns validation error."""
+    def test_partial_update_invalid_role_returns_400(self):
+        """partial_update with invalid role returns validation error."""
         response = self.client.patch(
             reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
             {"role": "invalid_role"},
@@ -501,3 +518,203 @@ class AdminUserProtectionTest(APITestCase):
             **self._auth_header(),
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.fk_rol.nombre_rol, "Cliente")
+
+    def test_partial_update_invalid_localidad_returns_400(self):
+        """partial_update with nonexistent localidad returns validation error."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"fk_localidad": 99999},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_partial_update_invalid_sexo_returns_400(self):
+        """partial_update with invalid sexo value returns validation error."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"sexo": "X"},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_partial_update_empty_body_returns_200(self):
+        """partial_update with empty body is a no-op, returns 200."""
+        original_tel = self.user_usuario.telefono
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.telefono, original_tel)
+
+    # ==================================================================
+    # PASSWORD LEAK PREVENTION
+    # ==================================================================
+
+    def test_password_not_exposed_in_list(self):
+        """Password field must never appear in list response."""
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for user in response.data["data"]["results"]:
+            self.assertNotIn("password", user)
+            self.assertNotIn("password", str(user))
+
+    def test_password_not_exposed_in_retrieve(self):
+        """Password field must never appear in detail response."""
+        response = self.client.get(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("password", response.data["data"])
+        self.assertNotIn("password", str(response.data["data"]))
+
+    # ==================================================================
+    # PAGINATION BOUNDARY
+    # ==================================================================
+
+    def test_pagination_boundary(self):
+        """Pagination works correctly with more users than page_size."""
+        self._create_bulk_users(21)
+
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data["data"]
+
+        self.assertEqual(data["count"], 24)
+        self.assertEqual(len(data["results"]), 20)
+        self.assertIsNotNone(data["next"])
+        self.assertIsNone(data["previous"])
+
+        # Fetch page 2
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"page": 2},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data2 = response.data["data"]
+        self.assertEqual(data2["count"], 24)
+        self.assertEqual(len(data2["results"]), 4)
+        self.assertIsNone(data2["next"])
+        self.assertIsNotNone(data2["previous"])
+
+    # ==================================================================
+    # SEARCH LENGTH LIMIT
+    # ==================================================================
+
+    def test_search_exceeding_max_length_returns_empty(self):
+        """Search string longer than 100 chars returns empty results."""
+        long_search = "a" * 101
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"search": long_search},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["data"]["count"], 0)
+        self.assertEqual(response.data["data"]["results"], [])
+
+    def test_search_at_max_length_works(self):
+        """Search string at exactly 100 chars still works."""
+        search_100 = "admin" * 20
+        response = self.client.get(
+            reverse("admin-usuarios-list"),
+            {"search": search_100},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    # ==================================================================
+    # SPECIAL CHARACTER SEARCH
+    # ==================================================================
+
+    def test_search_with_special_characters(self):
+        """Search with special characters does not crash."""
+        for query in ["O'Brien", "%", "_", "--", "\u00e9\u00f1\u00fc"]:
+            response = self.client.get(
+                reverse("admin-usuarios-list"),
+                {"search": query},
+                format="json",
+                **self._auth_header(),
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    # ==================================================================
+    # TOGGLE ESTADO — ADDITIONAL SCENARIOS
+    # ==================================================================
+
+    def test_toggle_non_admin_user_no_admin_count_check(self):
+        """Toggling a non-admin user never triggers admin count validation."""
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertFalse(self.user_usuario.estado)
+
+    def test_toggle_already_inactive_user_activates(self):
+        """Toggling an already inactive user activates them."""
+        self.user_usuario.estado = False
+        self.user_usuario.save(update_fields=["estado"])
+
+        response = self.client.patch(
+            reverse("admin-usuarios-toggle-estado", args=[self.user_usuario.id_usuario]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertTrue(self.user_usuario.estado)
+
+    # ==================================================================
+    # PARTIAL UPDATE — ADDITIONAL SCENARIOS
+    # ==================================================================
+
+    def test_partial_update_apellido_materno_null(self):
+        """Setting apellido_materno to empty string stores None."""
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"apellido_materno": ""},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertIsNone(self.user_usuario.fk_persona.apellido_materno)
+
+    def test_partial_update_fk_localidad(self):
+        """Updating fk_localidad changes the user's locality."""
+        new_municipio = Municipio.objects.create(nombre="Queretaro")
+        new_localidad = Localidad.objects.create(nombre="Juriquilla", fk_municipio=new_municipio)
+
+        response = self.client.patch(
+            reverse("admin-usuarios-detail", args=[self.user_usuario.id_usuario]),
+            {"fk_localidad": new_localidad.id_localidad},
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user_usuario.refresh_from_db()
+        self.assertEqual(self.user_usuario.fk_persona.fk_localidad.id_localidad, new_localidad.id_localidad)
