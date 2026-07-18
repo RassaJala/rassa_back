@@ -1,0 +1,79 @@
+from django.urls import path
+
+from .views import (
+    ConversacionAgregarIntegranteView,
+    ConversacionGrupalCreateView,
+    ConversacionIntegrantesListView,
+    ConversacionListView,
+    ConversacionPrivadaCreateView,
+    ConversacionRenombrarView,
+    MensajeCreateView,
+    MensajeDocumentoCreateView,
+    MensajeInactivarView,
+    MensajeLeerView,
+    MensajeListView,
+    MensajeUpdateView,
+)
+
+urlpatterns = [
+    path(
+        "api/chat/conversaciones/crear-privada/",
+        ConversacionPrivadaCreateView.as_view(),
+        name="chat-conversaciones-crear-privada",
+    ),
+    path(
+        "api/chat/conversaciones/crear-grupal/",
+        ConversacionGrupalCreateView.as_view(),
+        name="chat-conversaciones-crear-grupal",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/renombrar/",
+        ConversacionRenombrarView.as_view(),
+        name="chat-conversaciones-renombrar",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/agregar-integrante/",
+        ConversacionAgregarIntegranteView.as_view(),
+        name="chat-conversaciones-agregar-integrante",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/integrantes/",
+        ConversacionIntegrantesListView.as_view(),
+        name="chat-conversaciones-integrantes",
+    ),
+    path(
+        "api/chat/usuarios/conversaciones/",
+        ConversacionListView.as_view(),
+        name="chat-conversaciones",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/mensajes/",
+        MensajeListView.as_view(),
+        name="chat-mensajes",
+    ),
+    path(
+        "api/chat/mensajes/enviar/",
+        MensajeCreateView.as_view(),
+        name="chat-mensajes-enviar",
+    ),
+    path(
+        "api/chat/mensajes/<int:mensaje_id>/editar/",
+        MensajeUpdateView.as_view(),
+        name="chat-mensajes-editar",
+    ),
+    path(
+        "api/chat/mensajes/<int:mensaje_id>/leer/",
+        MensajeLeerView.as_view(),
+        name="chat-mensajes-leer",
+    ),
+    path(
+        "api/chat/mensajes/<int:mensaje_id>/inactivar/",
+        MensajeInactivarView.as_view(),
+        name="chat-mensajes-inactivar",
+    ),
+    path(
+        "api/chat/mensajes/enviar-con-documento/",
+        MensajeDocumentoCreateView.as_view(),
+        name="chat-mensajes-enviar-con-documento",
+    ),
+]

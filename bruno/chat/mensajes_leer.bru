@@ -1,0 +1,15 @@
+meta {
+  name: Marcar mensaje como leído
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/chat/mensajes/20/leer/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
