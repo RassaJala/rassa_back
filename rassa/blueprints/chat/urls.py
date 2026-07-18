@@ -1,12 +1,15 @@
 from django.urls import path
 
 from .views import (
+    ConversacionAgregarIntegranteView,
     ConversacionGrupalCreateView,
+    ConversacionIntegrantesListView,
     ConversacionListView,
     ConversacionPrivadaCreateView,
     ConversacionRenombrarView,
     MensajeCreateView,
     MensajeDocumentoCreateView,
+    MensajeInactivarView,
     MensajeLeerView,
     MensajeListView,
     MensajeUpdateView,
@@ -27,6 +30,16 @@ urlpatterns = [
         "api/chat/conversaciones/<int:conversacion_id>/renombrar/",
         ConversacionRenombrarView.as_view(),
         name="chat-conversaciones-renombrar",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/agregar-integrante/",
+        ConversacionAgregarIntegranteView.as_view(),
+        name="chat-conversaciones-agregar-integrante",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/integrantes/",
+        ConversacionIntegrantesListView.as_view(),
+        name="chat-conversaciones-integrantes",
     ),
     path(
         "api/chat/usuarios/conversaciones/",
@@ -52,6 +65,11 @@ urlpatterns = [
         "api/chat/mensajes/<int:mensaje_id>/leer/",
         MensajeLeerView.as_view(),
         name="chat-mensajes-leer",
+    ),
+    path(
+        "api/chat/mensajes/<int:mensaje_id>/inactivar/",
+        MensajeInactivarView.as_view(),
+        name="chat-mensajes-inactivar",
     ),
     path(
         "api/chat/mensajes/enviar-con-documento/",
