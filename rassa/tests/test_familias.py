@@ -157,3 +157,105 @@ class FamiliasTestCase(TestCase):
         miembro.refresh_from_db()
         self.assertFalse(familia.estado)
         self.assertFalse(miembro.estado)
+
+    def test_fk_jefe_familia_read_only(self):
+        """Valida que el campo fk_jefe_familia sea de solo lectura en FamiliaSerializer."""
+        # 1. Intentar crear una familia enviando fk_jefe_familia directo
+        response = self.client.post(
+            "/api/familias/grupos/",
+            {
+                "nombre_familia": "Familia Bypass",
+                "fk_jefe_familia": self.usuario_cliente1.id_usuario,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.data["fk_jefe_familia"])
+
+        # 2. Intentar actualizar una familia enviando fk_jefe_familia directo
+        familia = Familia.objects.create(nombre_familia="Familia Edit")
+        response2 = self.client.patch(
+            f"/api/familias/grupos/{familia.id_familia}/",
+            {"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+            format="json",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response2.data["fk_jefe_familia"])
+
+    def test_agregar_miembro_inactivo_o_familia_inactiva(self):
+        """Valida que no se puedan agregar miembros inactivos o a familias inactivas."""
+        familia_activa = Familia.objects.create(nombre_familia="Familia Activa")
+        familia_inactiva = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+
+        # Crear usuario inactivo
+        user_inactivo = User.objects.create_user(
+            username="inactivo", email="inactivo@rassa.com", password="password123"
+        )
+        persona_inactiva = Persona.objects.create(
+            nombre="Inactivo",
+            apellido_paterno="Usuario",
+            fecha_nacimiento="1995-05-05",
+            sexo="M",
+            domicilio="Calle Inactiva 123",
+        )
+        usuario_inactivo = Usuario.objects.create(
+            fk_user=user_inactivo,
+            fk_persona=persona_inactiva,
+            telefono="1234567890",
+            correo="inactivo@rassa.com",
+            fk_rol=self.rol_cliente,
+            estado=False,
+        )
+
+        # 1. Intentar agregar usuario inactivo a familia activa -> Fallo
+        response = self.client.post(
+            "/api/familias/miembros/",
+            {"fk_usuario": usuario_inactivo.id_usuario, "fk_familia": familia_activa.id_familia},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_usuario", response.data)
+
+        # 2. Intentar agregar usuario activo a familia inactiva -> Fallo
+        response2 = self.client.post(
+            "/api/familias/miembros/",
+            {"fk_usuario": self.usuario_cliente1.id_usuario, "fk_familia": familia_inactiva.id_familia},
+            format="json",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_familia", response2.data)
+
+    def test_re_asociar_usuario_despues_de_soft_delete(self):
+        """Valida que un usuario se pueda asociar a otra familia si la anterior se desactivó."""
+        familia1 = Familia.objects.create(nombre_familia="Familia Vieja")
+        miembro_rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia1)
+
+        # Desactivar lógicamente la familia (esto desactiva también al miembro)
+        response = self.client.delete(f"/api/familias/grupos/{familia1.id_familia}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Verificar que la relación anterior está desactivada
+        miembro_rel.refresh_from_db()
+        self.assertFalse(miembro_rel.estado)
+
+        # Crear nueva familia
+        familia2 = Familia.objects.create(nombre_familia="Familia Nueva")
+
+        # Asociar a la nueva familia (esto fallaba con IntegrityError por el OneToOneField)
+        response2 = self.client.post(
+            "/api/familias/miembros/",
+            {"fk_usuario": self.usuario_cliente1.id_usuario, "fk_familia": familia2.id_familia},
+            format="json",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+
+    def test_asignar_jefe_no_numerico(self):
+        """Valida que enviar un jefe no numérico retorne 400 en lugar de crashear (500)."""
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/asignar-jefe/",
+            {"fk_jefe_familia": "no-numerico"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)

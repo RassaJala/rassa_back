@@ -46,9 +46,12 @@ class FamiliaViewSet(viewsets.ModelViewSet):
             raise ValidationError({"fk_jefe_familia": "El ID del jefe de familia es requerido."})
 
         try:
-            nuevo_jefe = Usuario.objects.get(id_usuario=jefe_id, estado=True)
-        except Usuario.DoesNotExist as err:
-            raise ValidationError({"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}) from err
+            jefe_id_int = int(jefe_id)
+            nuevo_jefe = Usuario.objects.get(id_usuario=jefe_id_int, estado=True)
+        except (ValueError, TypeError, Usuario.DoesNotExist) as err:
+            raise ValidationError(
+                {"fk_jefe_familia": "El usuario especificado no existe, está inactivo o tiene un formato incorrecto."}
+            ) from err
 
         # Validar que el jefe pertenezca a la familia
         es_miembro = FamiliaUsuario.objects.filter(fk_usuario=nuevo_jefe, fk_familia=familia, estado=True).exists()
