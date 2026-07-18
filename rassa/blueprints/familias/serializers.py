@@ -21,7 +21,7 @@ class FamiliaSerializer(serializers.ModelSerializer):
             "creado_en",
             "estado",
         ]
-        read_only_fields = ["id_familia", "creado_en"]
+        read_only_fields = ["id_familia", "creado_en", "fk_jefe_familia"]
 
     def get_jefe_nombre(self, obj) -> str | None:
         """Devuelve el nombre completo del jefe de familia."""
@@ -69,7 +69,10 @@ class FamiliaMiembroSerializer(serializers.ModelSerializer):
         return obj.fk_usuario.correo if obj.fk_usuario else None
 
     def validate_fk_usuario(self, value):
-        """Valida que el usuario no pertenezca a otra familia activa."""
+        """Valida que el usuario no pertenezca a otra familia activa y esté activo."""
+        if not value.estado:
+            raise serializers.ValidationError("El usuario especificado está inactivo.")
+
         existing = FamiliaUsuario.objects.filter(fk_usuario=value, estado=True)
 
         if self.instance:
@@ -77,4 +80,10 @@ class FamiliaMiembroSerializer(serializers.ModelSerializer):
 
         if existing.exists():
             raise serializers.ValidationError("El usuario ya pertenece a otra familia activa.")
+        return value
+
+    def validate_fk_familia(self, value):
+        """Valida que la familia esté activa."""
+        if not value.estado:
+            raise serializers.ValidationError("No se pueden agregar miembros a una familia inactiva.")
         return value
