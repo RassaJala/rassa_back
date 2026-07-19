@@ -26,10 +26,7 @@ class Command(BaseCommand):
         client_secret = config("GOOGLE_DRIVE_CLIENT_SECRET", default="")
 
         if not client_id or not client_secret:
-            self.stderr.write(
-                "Error: Configurá GOOGLE_DRIVE_CLIENT_ID y "
-                "GOOGLE_DRIVE_CLIENT_SECRET en tu archivo .env"
-            )
+            self.stderr.write("Error: Configurá GOOGLE_DRIVE_CLIENT_ID y GOOGLE_DRIVE_CLIENT_SECRET en tu archivo .env")
             return
 
         # Crear el flujo OAuth2
@@ -48,8 +45,7 @@ class Command(BaseCommand):
 
         # Ejecutar el flow localmente
         self.stdout.write(
-            "\nSe abrirá tu navegador para autorizar la app.\n"
-            "Si no se abre, copiá esta URL y pegala en tu navegador:\n"
+            "\nSe abrirá tu navegador para autorizar la app.\nSi no se abre, copiá esta URL y pegala en tu navegador:\n"
         )
 
         credentials = flow.run_local_server(
@@ -73,10 +69,7 @@ class Command(BaseCommand):
         self._update_env("GOOGLE_DRIVE_REFRESH_TOKEN", refresh_token, env_path)
 
         self.stdout.write(
-            self.style.SUCCESS(
-                f"\n¡Listo! Refresh token guardado en .env\n"
-                f"Token: {refresh_token[:20]}...\n"
-            )
+            self.style.SUCCESS(f"\n¡Listo! Refresh token guardado en .env\nToken: {refresh_token[:20]}...\n")
         )
 
     def _update_env(self, key, value, env_path):

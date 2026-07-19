@@ -62,6 +62,7 @@ def _get_drive_service():
     credentials = _get_credentials()
     # Refrescar el token
     from google.auth.transport.requests import Request
+
     credentials.refresh(Request())
     return build("drive", "v3", credentials=credentials)
 
@@ -87,8 +88,7 @@ def upload_image(file, filename):
     content_type = file.content_type
     if content_type not in MIME_TYPES:
         raise ValueError(
-            f"Tipo de archivo no permitido: {content_type}. "
-            f"Formatos válidos: {', '.join(MIME_TYPES.keys())}"
+            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(MIME_TYPES.keys())}"
         )
 
     # Validar tamaño
@@ -96,9 +96,7 @@ def upload_image(file, filename):
     file_size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if file_size_mb > MAX_FILE_SIZE_MB:
-        raise ValueError(
-            f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB."
-        )
+        raise ValueError(f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB.")
 
     service = _get_drive_service()
 

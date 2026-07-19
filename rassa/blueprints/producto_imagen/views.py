@@ -44,9 +44,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
     def list(self, request, producto_id=None):
         """Lista imágenes de un producto específico."""
         self._get_producto(producto_id)
-        imágenes = ProductoImagen.objects.filter(
-            fk_producto_id=producto_id
-        ).order_by("orden", "id_imagen")
+        imágenes = ProductoImagen.objects.filter(fk_producto_id=producto_id).order_by("orden", "id_imagen")
         serializer = ProductoImagenSerializer(imágenes, many=True)
         return _ok(data=serializer.data)
 
@@ -115,9 +113,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             raise NotFound("Imagen no encontrada.") from None
 
         with transaction.atomic():
-            ProductoImagen.objects.filter(
-                fk_producto_id=producto_id, es_principal=True
-            ).update(es_principal=False)
+            ProductoImagen.objects.filter(fk_producto_id=producto_id, es_principal=True).update(es_principal=False)
             imagen.es_principal = True
             imagen.save(update_fields=["es_principal"])
 

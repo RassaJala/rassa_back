@@ -63,17 +63,13 @@ class ProductoImagenCrudTests(APITestCase):
     # ── LIST ──────────────────────────────────────────────────────
 
     def test_list_imagenes_por_producto(self):
-        response = self.client.get(
-            reverse("producto-imagen-list", args=[self.producto.id_producto])
-        )
+        response = self.client.get(reverse("producto-imagen-list", args=[self.producto.id_producto]))
         data = self._assert_success_envelope(response)
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["url"], "https://example.com/manzana.jpg")
 
     def test_list_imagenes_producto_inexistente_returns_404(self):
-        response = self.client.get(
-            reverse("producto-imagen-list", args=[9999])
-        )
+        response = self.client.get(reverse("producto-imagen-list", args=[9999]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     # ── CREATE ────────────────────────────────────────────────────
@@ -130,9 +126,7 @@ class ProductoImagenCrudTests(APITestCase):
         self.assertFalse(ProductoImagen.objects.filter(pk=self.imagen.id_imagen).exists())
 
     def test_delete_imagen_inexistente_returns_404(self):
-        response = self.client.delete(
-            reverse("producto-imagen-detail", args=[self.producto.id_producto, 9999])
-        )
+        response = self.client.delete(reverse("producto-imagen-detail", args=[self.producto.id_producto, 9999]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_imagen_de_otro_producto_returns_404(self):
@@ -179,13 +173,9 @@ class ProductoImagenCrudTests(APITestCase):
             orden=3,
         )
         # Marcar img2 como principal
-        self.client.patch(
-            reverse("producto-imagen-set-principal", args=[self.producto.id_producto, img2.id_imagen])
-        )
+        self.client.patch(reverse("producto-imagen-set-principal", args=[self.producto.id_producto, img2.id_imagen]))
         # Marcar img3 como principal
-        self.client.patch(
-            reverse("producto-imagen-set-principal", args=[self.producto.id_producto, img3.id_imagen])
-        )
+        self.client.patch(reverse("producto-imagen-set-principal", args=[self.producto.id_producto, img3.id_imagen]))
         # Solo img3 debe ser principal
         self.assertEqual(
             ProductoImagen.objects.filter(fk_producto=self.producto, es_principal=True).count(),
@@ -195,9 +185,7 @@ class ProductoImagenCrudTests(APITestCase):
         self.assertTrue(img3.es_principal)
 
     def test_set_principal_imagen_inexistente_returns_404(self):
-        response = self.client.patch(
-            reverse("producto-imagen-set-principal", args=[self.producto.id_producto, 9999])
-        )
+        response = self.client.patch(reverse("producto-imagen-set-principal", args=[self.producto.id_producto, 9999]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     # ── PERMISSIONS ───────────────────────────────────────────────
@@ -222,9 +210,7 @@ class ProductoImagenCrudTests(APITestCase):
 
     def test_reader_puede_listar_imagenes(self):
         self.client.force_authenticate(self.reader)
-        response = self.client.get(
-            reverse("producto-imagen-list", args=[self.producto.id_producto])
-        )
+        response = self.client.get(reverse("producto-imagen-list", args=[self.producto.id_producto]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_reader_no_puede_eliminar_imagen(self):
