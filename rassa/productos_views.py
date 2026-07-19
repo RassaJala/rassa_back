@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import logging
 import os
 import uuid
 
@@ -196,9 +197,10 @@ class ProductoImagenUploadView(APIView):
             )
 
         imagen_archivo = request.FILES.get("imagen")
-        imagen_base64 = request.data.get("imagen_base64")
+        data = request.data if isinstance(request.data, dict) else {}
+        imagen_base64 = data.get("imagen_base64")
 
-        es_principal_str = str(request.data.get("es_principal", "true")).lower()
+        es_principal_str = str(data.get("es_principal", "true")).lower()
         es_principal = es_principal_str in ("true", "1", "yes")
 
         url_guardada = None
@@ -293,9 +295,10 @@ class ProductoImagenUploadView(APIView):
                 if es_principal:
                     producto.imagen = url_guardada
                     producto.save(update_fields=["imagen"])
-        except Exception:
+        except Exception as exc:
             if drive_file_id:
                 delete_image(drive_file_id)
+            logging.getLogger(__name__).error("Error guardando imagen en DB: %s", exc, exc_info=True)
             return _ok(
                 message="Error al guardar la imagen en la base de datos.",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
