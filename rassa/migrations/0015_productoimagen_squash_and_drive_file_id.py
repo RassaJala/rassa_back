@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     ]
 
     dependencies = [
-        ("rassa", "0012_alter_productoimagen_options_productoimagen_orden"),
+        ("rassa", "0013_merge_20260718_1323"),
     ]
 
     operations = [
