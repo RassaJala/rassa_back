@@ -114,6 +114,39 @@ class ProductoImagenCrudTests(APITestCase):
         data = self._assert_success_envelope(response, status_code=status.HTTP_201_CREATED)
         self.assertFalse(data["es_principal"])
 
+    def test_create_imagen_http_url_rejected(self):
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "http://example.com/test.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_imagen_javascript_url_rejected(self):
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "javascript:alert(1)"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_imagen_data_url_rejected(self):
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_imagen_returns_drive_file_id(self):
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "https://example.com/test.jpg"},
+            format="json",
+        )
+        data = self._assert_success_envelope(response, status_code=status.HTTP_201_CREATED)
+        self.assertIn("drive_file_id", data)
+
     # ── DELETE ────────────────────────────────────────────────────
 
     def test_delete_imagen(self):
