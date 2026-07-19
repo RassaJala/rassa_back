@@ -79,11 +79,15 @@ def upload_image(file_bytes, filename, product_id, mime_type="image/jpeg"):
     }
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
 
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-    ).execute()
+    file = (
+        service.files()
+        .create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+        )
+        .execute()
+    )
 
     file_id = file.get("id")
     _set_public_permission(service, file_id)
