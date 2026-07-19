@@ -1,0 +1,22 @@
+meta {
+  name: Editar mensaje
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/api/chat/mensajes/16/editar/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "contenido": "Mensaje editado correctamente"
+  }
+}
