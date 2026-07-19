@@ -21,6 +21,7 @@ class ProductoImagenSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductoImagen
         fields = ["id_imagen", "url", "es_principal"]
+        read_only_fields = ["id_imagen", "url"]
 
 
 class ProductoListSerializer(serializers.ModelSerializer):

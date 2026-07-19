@@ -1,4 +1,5 @@
 import base64
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -9,6 +10,17 @@ from rest_framework.test import APIClient
 from rassa.models import CategoriaProducto, Producto, Unidad
 
 TEST_MEDIA = "/tmp/rassa_test_media_edge"
+
+MOCK_DRIVE_URL = "https://drive.google.com/uc?id=mock_edge"
+MOCK_DRIVE_ID = "mock_edge"
+
+
+def _mock_upload(file_bytes, filename, product_id, mime_type="image/jpeg"):
+    return MOCK_DRIVE_URL, MOCK_DRIVE_ID
+
+
+def _mock_delete(file_id):
+    pass
 
 
 def _create_user_with_role(nombre_rol, username):
@@ -146,6 +158,12 @@ class EdgeCaseSerializerTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class EdgeCaseImageUploadTests(TestCase):
     def setUp(self):
+        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher.start()
+        self._delete_patcher.start()
+        self.addCleanup(self._upload_patcher.stop)
+        self.addCleanup(self._delete_patcher.stop)
         self.admin = _create_user_with_role("Admin", "admin_img_edge")
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
@@ -249,6 +267,12 @@ class EdgeCaseImageUploadTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class EdgeCaseImageDeleteTests(TestCase):
     def setUp(self):
+        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher.start()
+        self._delete_patcher.start()
+        self.addCleanup(self._upload_patcher.stop)
+        self.addCleanup(self._delete_patcher.stop)
         self.admin = _create_user_with_role("Admin", "admin_imgdel")
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
@@ -649,6 +673,12 @@ class InactiveProductFilterTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class ImageDeletePermissionTests(TestCase):
     def setUp(self):
+        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher.start()
+        self._delete_patcher.start()
+        self.addCleanup(self._upload_patcher.stop)
+        self.addCleanup(self._delete_patcher.stop)
         self.client = APIClient()
         self.categoria = CategoriaProducto.objects.create(nombre="Frutas", descripcion="Test", estado=True)
         self.producto = Producto.objects.create(

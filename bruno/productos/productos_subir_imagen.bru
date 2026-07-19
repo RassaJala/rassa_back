@@ -1,0 +1,20 @@
+meta {
+  name: Subir imagen de producto
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/productos/1/imagen/
+  body: multipart
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+body:multipart {
+  imagen: @file(/ruta/a/tu/imagen.jpg)
+  es_principal: true
+}

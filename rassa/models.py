@@ -705,6 +705,7 @@ class ProductoImagen(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
     url = models.TextField()
+    drive_file_id = models.CharField(max_length=255, blank=True, null=True)
     es_principal = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
 

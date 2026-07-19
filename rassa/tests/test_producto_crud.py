@@ -1,4 +1,5 @@
 import base64
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -10,6 +11,17 @@ from rest_framework.test import APIClient
 from rassa.models import CategoriaProducto, Producto, ProductoImagen, Unidad, Usuario
 
 TEST_MEDIA = "/tmp/rassa_test_media"
+
+MOCK_DRIVE_URL = "https://drive.google.com/uc?id=mock123"
+MOCK_DRIVE_ID = "mock123"
+
+
+def _mock_upload(file_bytes, filename, product_id, mime_type="image/jpeg"):
+    return MOCK_DRIVE_URL, MOCK_DRIVE_ID
+
+
+def _mock_delete(file_id):
+    pass
 
 
 def _create_user_with_role(nombre_rol, username):
@@ -211,6 +223,12 @@ class ProductoCRUDTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class ProductoImagenTests(TestCase):
     def setUp(self):
+        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher.start()
+        self._delete_patcher.start()
+        self.addCleanup(self._upload_patcher.stop)
+        self.addCleanup(self._delete_patcher.stop)
         self.admin = _create_user_with_role("Admin", "admin_img")
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
@@ -230,7 +248,7 @@ class ProductoImagenTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()["data"]
         self.assertTrue(data["es_principal"])
-        self.assertIn("/media/productos/", data["url"])
+        self.assertIn("drive.google.com", data["url"])
 
     def test_upload_imagen_base64(self):
         b64 = base64.b64encode(_small_png()).decode()

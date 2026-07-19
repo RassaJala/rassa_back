@@ -1,0 +1,15 @@
+meta {
+  name: Listar productos
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/productos/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

@@ -5,7 +5,6 @@ import binascii
 import os
 import uuid
 
-from django.conf import settings
 from django.db import transaction
 from rest_framework import generics, parsers, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -21,10 +20,18 @@ from rassa.productos_serializers import (
     ProductoListSerializer,
     ProductoUnidadSerializer,
 )
+from rassa.services.google_drive import delete_image, upload_image
 from rassa.views import _ok
 
 EXTENSIONES_PERMITIDAS = {"jpg", "jpeg", "png", "gif", "webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+MIME_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
 
 
 class ProductoListView(generics.ListCreateAPIView):
@@ -148,16 +155,13 @@ def _validar_imagen_bytes(data):
     return _detect_image_format(data) is not None
 
 
-def _guardar_imagen_bytes(data, ext):
-    """Save image bytes to disk with a single UUID and return (url, file_path)."""
+def _guardar_imagen_bytes(data, ext, product_id):
+    """Save image to Google Drive. Returns (url, drive_file_id)."""
     uid = uuid.uuid4().hex
-    nombre_archivo = f"{uid}.{ext}"
-    directorio = os.path.join(str(settings.MEDIA_ROOT), "productos")
-    os.makedirs(directorio, exist_ok=True)
-    ruta = os.path.join(directorio, nombre_archivo)
-    with open(ruta, "wb") as f:
-        f.write(data)
-    return f"/media/productos/{nombre_archivo}", ruta
+    filename = f"{uid}.{ext}"
+    mime_type = MIME_TYPES.get(ext, "image/jpeg")
+    url, file_id = upload_image(data, filename, product_id, mime_type)
+    return url, file_id
 
 
 def _eliminar_archivo_si_existe(file_path):
@@ -198,7 +202,7 @@ class ProductoImagenUploadView(APIView):
         es_principal = es_principal_str in ("true", "1", "yes")
 
         url_guardada = None
-        saved_file_path = None
+        drive_file_id = None
 
         if imagen_archivo:
             if imagen_archivo.size > MAX_FILE_SIZE:
@@ -230,10 +234,10 @@ class ProductoImagenUploadView(APIView):
                 )
 
             try:
-                url_guardada, saved_file_path = _guardar_imagen_bytes(raw_bytes, ext)
-            except OSError:
+                url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
+            except Exception:
                 return _ok(
-                    message="Error al guardar el archivo en disco.",
+                    message="Error al subir la imagen a Google Drive.",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
@@ -262,10 +266,10 @@ class ProductoImagenUploadView(APIView):
 
             ext = _detect_image_format(raw_bytes) or "png"
             try:
-                url_guardada, saved_file_path = _guardar_imagen_bytes(raw_bytes, ext)
-            except OSError:
+                url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
+            except Exception:
                 return _ok(
-                    message="Error al guardar el archivo en disco.",
+                    message="Error al subir la imagen a Google Drive.",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
         else:
@@ -282,6 +286,7 @@ class ProductoImagenUploadView(APIView):
                 imagen = ProductoImagen.objects.create(
                     fk_producto=producto,
                     url=url_guardada,
+                    drive_file_id=drive_file_id,
                     es_principal=es_principal,
                 )
 
@@ -289,7 +294,8 @@ class ProductoImagenUploadView(APIView):
                     producto.imagen = url_guardada
                     producto.save(update_fields=["imagen"])
         except Exception:
-            _eliminar_archivo_si_existe(saved_file_path)
+            if drive_file_id:
+                delete_image(drive_file_id)
             return _ok(
                 message="Error al guardar la imagen en la base de datos.",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -318,13 +324,10 @@ class ProductoImagenDeleteView(APIView):
             )
 
         was_principal = imagen.es_principal
-        file_path = None
-        if imagen.url and imagen.url.startswith("/media/"):
-            rel_path = imagen.url[len("/media/") :]
-            file_path = os.path.join(str(settings.MEDIA_ROOT), rel_path)
+        drive_file_id = imagen.drive_file_id
         imagen.delete()
 
-        _eliminar_archivo_si_existe(file_path)
+        delete_image(drive_file_id)
 
         if was_principal:
             otra_imagen = ProductoImagen.objects.filter(fk_producto=producto).first()
