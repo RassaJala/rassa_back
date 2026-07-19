@@ -1,0 +1,22 @@
+meta {
+  name: Grupos - Actualizar Parcial
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/api/familias/grupos/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre_familia": "Familia González Parcial"
+  }
+}
