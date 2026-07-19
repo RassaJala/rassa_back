@@ -698,7 +698,7 @@ class ProductoImagen(models.Model):
 
     id_imagen = models.AutoField(primary_key=True)
     fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
-    url = models.TextField()
+    url = models.URLField(max_length=500)
     es_principal = models.BooleanField(default=False)
     orden = models.PositiveIntegerField(default=0)
     creado_en = models.DateTimeField(auto_now_add=True)

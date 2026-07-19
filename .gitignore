@@ -14,6 +14,9 @@ venv/
 .venv/
 env/
 
+# Credentials
+credentials/
+
 # uv
 uv.lock
 

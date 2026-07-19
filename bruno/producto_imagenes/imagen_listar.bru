@@ -1,0 +1,14 @@
+meta {
+  name: Listar imágenes de producto
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/productos/{{productoId}}/imagenes/
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
