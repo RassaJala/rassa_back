@@ -18,6 +18,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from logs.utils import get_client_ip
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.producto_imagen.urls import urlpatterns as producto_imagen_urls
+from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.views import (
@@ -106,4 +107,5 @@ urlpatterns = [
     path("", include(router.urls)),
     path("", include(publicacion_urls)),
     path("", include(producto_imagen_urls)),
+    path("", include(chat_urls)),
 ]

@@ -144,6 +144,11 @@ class UserSerializer(serializers.ModelSerializer):
     direccion = serializers.CharField(source="fk_persona.domicilio", read_only=True)
     localidad = serializers.IntegerField(source="fk_persona.fk_localidad.id_localidad", read_only=True)
     localidad_nombre = serializers.SerializerMethodField()
+    municipio_id = serializers.IntegerField(
+        source="fk_persona.fk_localidad.fk_municipio.id_municipio",
+        read_only=True,
+    )
+    municipio_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = Usuario
@@ -160,6 +165,8 @@ class UserSerializer(serializers.ModelSerializer):
             "direccion",
             "localidad",
             "localidad_nombre",
+            "municipio_id",
+            "municipio_nombre",
         ]
 
     def get_role(self, obj):
@@ -170,6 +177,13 @@ class UserSerializer(serializers.ModelSerializer):
     def get_localidad_nombre(self, obj):
         if obj.fk_persona and obj.fk_persona.fk_localidad:
             return obj.fk_persona.fk_localidad.nombre
+        return None
+
+    def get_municipio_nombre(self, obj):
+        if obj.fk_persona and obj.fk_persona.fk_localidad:
+            municipio = obj.fk_persona.fk_localidad.fk_municipio
+            if municipio:
+                return municipio.nombre
         return None
 
 

@@ -53,3 +53,6 @@ openspec/
 
 # Local docs / planning (no subir)
 docs/PROTECCIONES_REPOSITORIO.md
+
+# OpenCode local config
+opencode.json

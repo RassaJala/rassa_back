@@ -629,6 +629,7 @@ class Mensaje(models.Model):
     fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     contenido = models.TextField(blank=True, null=True)
     leido = models.BooleanField(default=False)
+    editado = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
