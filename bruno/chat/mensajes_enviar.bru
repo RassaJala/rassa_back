@@ -1,0 +1,23 @@
+meta {
+  name: Enviar mensaje
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/chat/mensajes/enviar/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "fk_conversacion": 6,
+    "contenido": "Hola, este es un mensaje de pruebs, como estas?"
+  }
+}
