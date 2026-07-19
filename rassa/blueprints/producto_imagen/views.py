@@ -39,7 +39,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         try:
             return Producto.objects.get(pk=producto_id)
         except Producto.DoesNotExist:
-            raise NotFound("Producto no encontrado.")
+            raise NotFound("Producto no encontrado.") from None
 
     def list(self, request, producto_id=None):
         """Lista imágenes de un producto específico."""
@@ -101,7 +101,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:
-            raise NotFound("Imagen no encontrada.")
+            raise NotFound("Imagen no encontrada.") from None
         imagen.delete()
         return _ok(message="Imagen eliminada correctamente.")
 
@@ -112,7 +112,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:
-            raise NotFound("Imagen no encontrada.")
+            raise NotFound("Imagen no encontrada.") from None
 
         with transaction.atomic():
             ProductoImagen.objects.filter(

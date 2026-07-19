@@ -7,7 +7,6 @@ Luego guarda el refresh token en el archivo .env.
 """
 
 import os
-import sys
 
 from decouple import config
 from django.core.management.base import BaseCommand
@@ -86,7 +85,7 @@ class Command(BaseCommand):
         found = False
 
         if os.path.exists(env_path):
-            with open(env_path, "r", encoding="utf-8") as f:
+            with open(env_path, encoding="utf-8") as f:
                 lines = f.readlines()
                 for i, line in enumerate(lines):
                     if line.strip().startswith(f"{key}="):
