@@ -65,8 +65,7 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(
-            "\nSe abrirá tu navegador para autorizar la app.\n"
-            "Si no se abre, copiá esta URL y pegala en tu navegador:\n"
+            "\nSe abrirá tu navegador para autorizar la app.\nSi no se abre, copiá esta URL y pegala en tu navegador:\n"
         )
 
         try:
@@ -107,16 +106,12 @@ class Command(BaseCommand):
         try:
             self._update_env("GOOGLE_DRIVE_REFRESH_TOKEN", refresh_token, env_path)
         except OSError as exc:
-            self.stderr.write(
-                self.style.ERROR(f"Error al guardar en .env: {exc}")
-            )
+            self.stderr.write(self.style.ERROR(f"Error al guardar en .env: {exc}"))
             return
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"\n¡Listo! Refresh token guardado en .env\n"
-                f"Token: {refresh_token[:20]}...\n"
-                f"Archivo: {env_path}\n"
+                f"\n¡Listo! Refresh token guardado en .env\nToken: {refresh_token[:20]}...\nArchivo: {env_path}\n"
             )
         )
 

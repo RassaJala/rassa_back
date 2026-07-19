@@ -245,8 +245,7 @@ def upload_image(file, filename, folder_id=None):
     content_type = file.content_type
     if content_type not in MIME_TYPES:
         raise ValueError(
-            f"Tipo de archivo no permitido: {content_type}. "
-            f"Formatos válidos: {', '.join(MIME_TYPES.keys())}"
+            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(MIME_TYPES.keys())}"
         )
 
     if not _validate_magic_bytes(file, content_type):
