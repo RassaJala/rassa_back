@@ -32,7 +32,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
 
     def get_permissions(self):
         if self.request.method in ("POST", "DELETE", "PATCH"):
-            return [permissions.IsAuthenticated(), HasRole("Admin")]
+            return [permissions.IsAuthenticated(), HasRole("Admin", "Agricultor")]
         return [permissions.IsAuthenticated()]
 
     def _get_producto(self, producto_id):
