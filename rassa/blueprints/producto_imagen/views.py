@@ -1,49 +1,113 @@
+"""Vistas para imágenes de productos del catálogo.
+
+Endpoints para gestionar imágenes asociadas a productos:
+listar, crear (subir a Google Drive o URL directa), eliminar
+y marcar como principal.
+
+Cada producto puede tener múltiples imágenes, pero solo una
+puede ser marcada como principal en cualquier momento.
+"""
+
 import logging
 
 from django.db import transaction
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import Producto, ProductoImagen
 from rassa.permissions.role_permissions import HasRole
-from rassa.services.google_drive import upload_image
+from rassa.services.google_drive import delete_file, upload_image
 from rassa.views import _ok
 
 from .serializers import ProductoImagenSerializer
 
 logger = logging.getLogger(__name__)
 
+WRITE_METHODS = frozenset({"POST", "PATCH", "DELETE"})
+
+PERMISSION_MAP = {
+    "GET": [permissions.IsAuthenticated],
+    "POST": [permissions.IsAuthenticated, HasRole("Admin", "Agricultor")],
+    "PATCH": [permissions.IsAuthenticated, HasRole("Admin", "Agricultor")],
+    "DELETE": [permissions.IsAuthenticated, HasRole("Admin", "Agricultor")],
+}
+
+
+class ProductoImagenPagination(PageNumberPagination):
+    """Paginación para el listado de imágenes de productos.
+
+    Por defecto muestra 20 imágenes por página.
+    El cliente puede solicitar hasta 100 con page_size.
+    """
+
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
 
 class ProductoImagenViewSet(viewsets.ViewSet):
     """Endpoints para imágenes de productos del catálogo.
 
-    - GET    /api/productos/{id}/imagenes/                  → Listar
-    - POST   /api/productos/{id}/imagenes/                  → Subir (archivo a Google Drive)
-    - DELETE /api/productos/{id}/imagenes/{id}/              → Eliminar
-    - PATCH  /api/productos/{id}/imagenes/{id}/set-principal/ → Marcar principal
+    Endpoints disponibles:
+    - GET    /api/productos/{id}/imagenes/                  → Listar imágenes
+    - POST   /api/productos/{id}/imagenes/                  → Subir imagen (archivo o URL)
+    - DELETE /api/productos/{id}/imagenes/{id}/              → Eliminar imagen
+    - PATCH  /api/productos/{id}/imagenes/{id}/set-principal/ → Marcar como principal
 
-    El POST acepta multipart/form-data con campo 'archivo' (imagen)
-    que se sube a Google Drive y su URL se almacena en el registro.
-    Alternativamente se puede enviar 'url' directamente.
+    El POST acepta:
+    - multipart/form-data con campo 'archivo' (imagen que se sube a Google Drive)
+    - JSON con campo 'url' (enlace externo directo)
+    Al menos una de las dos es requerida.
+
+    La validación de una sola principal por imagen se realiza
+    en el endpoint set_principal, no en create.
     """
 
-    permission_classes = [permissions.IsAuthenticated()]
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "producto_imagen"
+    pagination_class = ProductoImagenPagination
 
     def get_permissions(self):
-        if self.request.method in ("POST", "DELETE", "PATCH"):
-            return [permissions.IsAuthenticated(), HasRole("Admin", "Agricultor")]
-        return [permissions.IsAuthenticated()]
+        """Retorna permisos según el método HTTP usando PERMISSION_MAP."""
+        method = self.request.method
+        permission_classes = PERMISSION_MAP.get(method, [permissions.IsAuthenticated])
+        return [cls() for cls in permission_classes]
 
-    def _get_producto(self, producto_id):
+    def _get_producto_or_404(self, producto_id):
+        """Busca un producto por ID o lanza NotFound.
+
+        Args:
+            producto_id (int): ID del producto a buscar.
+
+        Returns:
+            Producto: Instancia del producto encontrado.
+
+        Raises:
+            NotFound: Si el producto no existe.
+        """
         try:
             return Producto.objects.get(pk=producto_id)
         except Producto.DoesNotExist:
             raise NotFound("Producto no encontrado.") from None
 
     def list(self, request, producto_id=None):
-        """Lista imágenes de un producto específico."""
-        self._get_producto(producto_id)
+        """Lista todas las imágenes de un producto específico.
+
+        Las imágenes se ordenan por campo 'orden' y luego por ID.
+        Respeta la paginación configurada.
+
+        Args:
+            request: Request HTTP con autenticación.
+            producto_id (int): ID del producto padre.
+
+        Returns:
+            Response: Lista paginada de imágenes del producto.
+        """
+        self._get_producto_or_404(producto_id)
         imágenes = ProductoImagen.objects.filter(fk_producto_id=producto_id).order_by("orden", "id_imagen")
         serializer = ProductoImagenSerializer(imágenes, many=True)
         return _ok(data=serializer.data)
@@ -51,12 +115,24 @@ class ProductoImagenViewSet(viewsets.ViewSet):
     def create(self, request, producto_id=None):
         """Registra una imagen para un producto.
 
-        Acepta:
-        - archivo (file): imagen que se sube a Google Drive
-        - url (str): enlace externo directo
-        Al menos una de las dos es requerida.
+        Acepta dos formas de crear una imagen:
+        1. Subir archivo: multipart/form-data con campo 'archivo'
+           (se sube a Google Drive y se almacena la URL resultante)
+        2. URL directa: JSON con campo 'url' (se almacena tal cual)
+
+        La creación está envuelta en una transacción atómica para
+        garantizar consistencia entre la subida a Drive y el guardado
+        en base de datos.
+
+        Args:
+            request: Request HTTP con autenticación.
+            producto_id (int): ID del producto al que pertenece la imagen.
+
+        Returns:
+            Response: Datos de la imagen creada con status 201,
+                o error con status 400.
         """
-        self._get_producto(producto_id)
+        self._get_producto_or_404(producto_id)
 
         archivo = request.FILES.get("archivo")
         url = request.data.get("url", "").strip() if not archivo else None
@@ -67,10 +143,12 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Si se sube archivo, subir a Google Drive
+        drive_file_id = ""
         if archivo:
             try:
-                url = upload_image(archivo, archivo.name)
+                result = upload_image(archivo, archivo.name)
+                url = result["url"]
+                drive_file_id = result.get("file_id", "")
             except ValueError as e:
                 return _ok(
                     message=str(e),
@@ -80,13 +158,16 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         data = {
             "fk_producto": producto_id,
             "url": url,
+            "drive_file_id": drive_file_id,
             "es_principal": request.data.get("es_principal", False),
             "orden": request.data.get("orden", 0),
         }
 
-        serializer = ProductoImagenSerializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        with transaction.atomic():
+            serializer = ProductoImagenSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
         return _ok(
             data=serializer.data,
             message="Imagen registrada correctamente.",
@@ -94,19 +175,59 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         )
 
     def destroy(self, request, producto_id=None, pk=None):
-        """Elimina una imagen de un producto."""
-        self._get_producto(producto_id)
+        """Elimina una imagen de un producto y su archivo en Google Drive.
+
+        Si la imagen tiene un drive_file_id, primero elimina el archivo
+        de Google Drive antes de eliminar el registro de la base de datos.
+        Si la eliminación de Drive falla, se registra un warning pero
+        el registro se elimina igualmente.
+
+        Args:
+            request: Request HTTP con autenticación.
+            producto_id (int): ID del producto padre.
+            pk (int): ID de la imagen a eliminar.
+
+        Returns:
+            Response: Mensaje de confirmación con status 200.
+
+        Raises:
+            NotFound: Si el producto o la imagen no existen.
+        """
+        self._get_producto_or_404(producto_id)
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:
             raise NotFound("Imagen no encontrada.") from None
+
+        if imagen.drive_file_id:
+            try:
+                delete_file(imagen.drive_file_id)
+            except Exception as exc:
+                logger.warning("No se pudo eliminar archivo de Drive %s: %s", imagen.drive_file_id, exc)
+
         imagen.delete()
         return _ok(message="Imagen eliminada correctamente.")
 
     @action(detail=True, methods=["patch"], url_path="set-principal")
     def set_principal(self, request, producto_id=None, pk=None):
-        """Marca una imagen como principal (solo una por producto)."""
-        self._get_producto(producto_id)
+        """Marca una imagen como principal del producto.
+
+        Garantiza que solo una imagen sea principal por producto
+        usando una transacción atómica: primero desmarca todas las
+        imágenes principales del producto, luego marca la seleccionada.
+
+        Args:
+            request: Request HTTP con autenticación.
+            producto_id (int): ID del producto padre.
+            pk (int): ID de la imagen a marcar como principal.
+
+        Returns:
+            Response: Datos de la imagen actualizada con status 200.
+
+        Raises:
+            NotFound: Si el producto o la imagen no existen.
+        """
+        self._get_producto_or_404(producto_id)
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:
