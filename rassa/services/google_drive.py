@@ -92,7 +92,7 @@ def upload_image(file_bytes, filename, product_id, mime_type="image/jpeg"):
     file_id = file.get("id")
     _set_public_permission(service, file_id)
 
-    url = f"https://drive.google.com/uc?id={file_id}"
+    url = f"https://drive.google.com/uc?export=view&id={file_id}"
     logger.info("Image uploaded to Drive: %s → %s", filename, file_id)
     return url, file_id
 
@@ -111,9 +111,10 @@ def delete_image(file_id):
 
 def _get_or_create_folder(service, name, parent_id):
     """Find or create a folder by name inside parent_id. Returns folder ID."""
+    safe_name = name.replace("'", "\\'")
     query = (
         f"mimeType='application/vnd.google-apps.folder'"
-        f" and name='{name}'"
+        f" and name='{safe_name}'"
         f" and '{parent_id}' in parents"
         f" and trashed=false"
     )

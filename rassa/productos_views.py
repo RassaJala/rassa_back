@@ -3,7 +3,6 @@
 import base64
 import binascii
 import logging
-import os
 import uuid
 
 from django.db import transaction
@@ -165,15 +164,6 @@ def _guardar_imagen_bytes(data, ext, product_id):
     return url, file_id
 
 
-def _eliminar_archivo_si_existe(file_path):
-    """Safely remove a file from disk if it exists."""
-    if file_path and os.path.isfile(file_path):
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
-
-
 class ProductoImagenUploadView(APIView):
     """POST /api/productos/<id>/imagen/ — upload or replace product image.
 
@@ -238,6 +228,7 @@ class ProductoImagenUploadView(APIView):
             try:
                 url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
             except Exception:
+                logging.getLogger(__name__).error("Error subiendo imagen a Drive (file upload): %s", exc_info=True)
                 return _ok(
                     message="Error al subir la imagen a Google Drive.",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -270,6 +261,7 @@ class ProductoImagenUploadView(APIView):
             try:
                 url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
             except Exception:
+                logging.getLogger(__name__).error("Error subiendo imagen a Drive (base64): %s", exc_info=True)
                 return _ok(
                     message="Error al subir la imagen a Google Drive.",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -370,5 +362,12 @@ class ProductoImagenDeleteView(APIView):
                 imagen.save(update_fields=["es_principal"])
                 producto.imagen = imagen.url
                 producto.save(update_fields=["imagen"])
+
+        elif not es_principal and imagen.es_principal:
+            imagen.es_principal = False
+            imagen.save(update_fields=["es_principal"])
+            otra = ProductoImagen.objects.filter(fk_producto=producto).exclude(pk=imagen.pk).first()
+            producto.imagen = otra.url if otra else None
+            producto.save(update_fields=["imagen"])
 
         return _ok(message="Imagen actualizada exitosamente.")
