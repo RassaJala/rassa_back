@@ -6,6 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
+        ("rassa", "0012_mensaje_editado"),
         ("rassa", "0013_add_productoimagen_archivo"),
     ]
 
