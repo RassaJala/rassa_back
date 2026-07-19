@@ -461,6 +461,16 @@ class AdminUserProtectionTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn("detail", response.data)
 
+    def test_retrieve_nonexistent_user_returns_404(self):
+        """retrieve returns 404 for nonexistent user."""
+        response = self.client.get(
+            reverse("admin-usuarios-detail", args=[99999]),
+            format="json",
+            **self._auth_header(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("detail", response.data)
+
     # ==================================================================
     # LAST ADMIN ROLE DEMOTION PREVENTION
     # ==================================================================
