@@ -4,6 +4,16 @@ Ejecutar: python manage.py authorize_drive
 
 Abre un navegador para que el usuario autorice la app.
 Luego guarda el refresh token en el archivo .env.
+
+Requiere que las siguientes variables estén en .env:
+- GOOGLE_DRIVE_CLIENT_ID
+- GOOGLE_DRIVE_CLIENT_SECRET
+
+Pasos:
+1. Crear credenciales OAuth2 en Google Cloud Console
+2. Ejecutar este comando
+3. Autorizar en el navegador
+4. El refresh token se guarda automáticamente
 """
 
 import os
@@ -14,22 +24,33 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-# URI de redireccionamiento para el servidor local
 REDIRECT_URI = "http://localhost:8090/"
 
 
 class Command(BaseCommand):
+    """Command para autorizar el acceso a Google Drive mediante OAuth2.
+
+    Guía al usuario a través del flujo de autorización OAuth2,
+    obtiene el refresh token y lo guarda en el archivo .env.
+    """
+
     help = "Autoriza el acceso a Google Drive y guarda el refresh token"
 
     def handle(self, *args, **options):
+        """Ejecuta el flujo de autorización OAuth2 con Google Drive."""
         client_id = config("GOOGLE_DRIVE_CLIENT_ID", default="")
         client_secret = config("GOOGLE_DRIVE_CLIENT_SECRET", default="")
 
         if not client_id or not client_secret:
-            self.stderr.write("Error: Configurá GOOGLE_DRIVE_CLIENT_ID y GOOGLE_DRIVE_CLIENT_SECRET en tu archivo .env")
+            self.stderr.write(
+                self.style.ERROR(
+                    "Error: Faltan credenciales OAuth2 en .env.\n"
+                    "Configurá GOOGLE_DRIVE_CLIENT_ID y GOOGLE_DRIVE_CLIENT_SECRET\n"
+                    "Guía: https://console.cloud.google.com/apis/credentials"
+                )
+            )
             return
 
-        # Crear el flujo OAuth2
         flow = InstalledAppFlow.from_client_config(
             {
                 "web": {
@@ -43,37 +64,76 @@ class Command(BaseCommand):
             scopes=SCOPES,
         )
 
-        # Ejecutar el flow localmente
         self.stdout.write(
-            "\nSe abrirá tu navegador para autorizar la app.\nSi no se abre, copiá esta URL y pegala en tu navegador:\n"
+            "\nSe abrirá tu navegador para autorizar la app.\n"
+            "Si no se abre, copiá esta URL y pegala en tu navegador:\n"
         )
 
-        credentials = flow.run_local_server(
-            port=8090,
-            authorization_prompt_message="Abriendo navegador...",
-            success_message="¡Autorización exitosa! Podés cerrar esta pestaña.",
-            open_browser=True,
-            access_type="offline",
-            prompt="consent",
-        )
+        try:
+            credentials = flow.run_local_server(
+                port=8090,
+                authorization_prompt_message="Abriendo navegador...",
+                success_message="¡Autorización exitosa! Podés cerrar esta pestaña.",
+                open_browser=True,
+                access_type="offline",
+                prompt="consent",
+            )
+        except Exception as exc:
+            self.stderr.write(
+                self.style.ERROR(
+                    f"Error durante la autorización: {exc}\n"
+                    "Verificá que:\n"
+                    "1. Tengas acceso a internet\n"
+                    "2. El puerto 8090 no esté en uso\n"
+                    "3. Autorizaste la app en el navegador"
+                )
+            )
+            return
 
         refresh_token = credentials.refresh_token
 
         if not refresh_token:
-            self.stderr.write("Error: No se obtuvo el refresh token")
+            self.stderr.write(
+                self.style.ERROR(
+                    "Error: No se obtuvo el refresh token.\n"
+                    "Esto puede pasar si ya autorizaste antes.\n"
+                    "Intentá revocar el acceso en: https://myaccount.google.com/permissions"
+                )
+            )
             return
 
-        # Guardar en .env
         env_path = os.path.join(os.getcwd(), ".env")
 
-        self._update_env("GOOGLE_DRIVE_REFRESH_TOKEN", refresh_token, env_path)
+        try:
+            self._update_env("GOOGLE_DRIVE_REFRESH_TOKEN", refresh_token, env_path)
+        except OSError as exc:
+            self.stderr.write(
+                self.style.ERROR(f"Error al guardar en .env: {exc}")
+            )
+            return
 
         self.stdout.write(
-            self.style.SUCCESS(f"\n¡Listo! Refresh token guardado en .env\nToken: {refresh_token[:20]}...\n")
+            self.style.SUCCESS(
+                f"\n¡Listo! Refresh token guardado en .env\n"
+                f"Token: {refresh_token[:20]}...\n"
+                f"Archivo: {env_path}\n"
+            )
         )
 
     def _update_env(self, key, value, env_path):
-        """Agrega o actualiza una variable en el archivo .env."""
+        """Agrega o actualiza una variable en el archivo .env.
+
+        Si la variable ya existe, la reemplaza.
+        Si no existe, la agrega al final del archivo.
+
+        Args:
+            key (str): Nombre de la variable.
+            value (str): Valor de la variable.
+            env_path (str): Ruta al archivo .env.
+
+        Raises:
+            OSError: Si no se puede leer o escribir el archivo.
+        """
         lines = []
         found = False
 
