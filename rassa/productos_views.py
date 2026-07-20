@@ -8,6 +8,7 @@ import uuid
 from django.db import transaction
 from rest_framework import generics, parsers, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from rassa.filters import ProductoFilter
@@ -58,6 +59,10 @@ class ProductoListView(generics.ListCreateAPIView):
     search_fields = ["nombre_producto", "descripcion"]
     ordering_fields = ["nombre_producto", "precio", "creado_en"]
 
+    def get_throttles(self):
+        self.throttle_scope = "catalog_write" if self.request.method in ("POST",) else "catalog_read"
+        return [ScopedRateThrottle()]
+
     def get_serializer_class(self):
         if self.request.method in ("POST",):
             return ProductoDetailSerializer
@@ -88,6 +93,11 @@ class ProductoDetailView(generics.RetrieveUpdateDestroyAPIView):
     )
     serializer_class = ProductoDetailSerializer
     permission_classes = [IsAdminOrReadOnly]
+
+    def get_throttles(self):
+        is_read = self.request.method in ("GET", "HEAD", "OPTIONS")
+        self.throttle_scope = "catalog_read" if is_read else "catalog_write"
+        return [ScopedRateThrottle()]
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -308,6 +318,7 @@ class ProductoImagenDeleteView(APIView):
     """DELETE /api/productos/<id>/imagen/<id_imagen>/ — delete a product image."""
 
     permission_classes = [IsAdminOrReadOnly]
+    throttle_scope = "catalog_write"
 
     def delete(self, request, pk, id_imagen):
         try:
@@ -322,18 +333,24 @@ class ProductoImagenDeleteView(APIView):
         was_principal = imagen.es_principal
         drive_file_id = imagen.drive_file_id
 
-        delete_image(drive_file_id)
-        imagen.delete()
+        if drive_file_id and not delete_image(drive_file_id):
+            return _ok(
+                message="Error al eliminar la imagen de Google Drive.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        if was_principal:
-            otra_imagen = ProductoImagen.objects.filter(fk_producto=producto).first()
-            if otra_imagen:
-                otra_imagen.es_principal = True
-                otra_imagen.save(update_fields=["es_principal"])
-                producto.imagen = otra_imagen.url
-            else:
-                producto.imagen = None
-            producto.save(update_fields=["imagen"])
+        with transaction.atomic():
+            imagen.delete()
+
+            if was_principal:
+                otra_imagen = ProductoImagen.objects.filter(fk_producto=producto).first()
+                if otra_imagen:
+                    otra_imagen.es_principal = True
+                    otra_imagen.save(update_fields=["es_principal"])
+                    producto.imagen = otra_imagen.url
+                else:
+                    producto.imagen = None
+                producto.save(update_fields=["imagen"])
 
         return _ok(message="Imagen eliminada exitosamente.")
 
@@ -369,7 +386,12 @@ class ProductoImagenDeleteView(APIView):
                 imagen.es_principal = False
                 imagen.save(update_fields=["es_principal"])
                 otra = ProductoImagen.objects.filter(fk_producto=producto).exclude(pk=imagen.pk).first()
-                producto.imagen = otra.url if otra else None
+                if otra:
+                    otra.es_principal = True
+                    otra.save(update_fields=["es_principal"])
+                    producto.imagen = otra.url
+                else:
+                    producto.imagen = None
                 producto.save(update_fields=["imagen"])
 
         return _ok(message="Imagen actualizada exitosamente.")

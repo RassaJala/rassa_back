@@ -20,7 +20,7 @@ def _mock_upload(file_bytes, filename, product_id, mime_type="image/jpeg"):
 
 
 def _mock_delete(file_id):
-    pass
+    return True
 
 
 def _create_user_with_role(nombre_rol, username):

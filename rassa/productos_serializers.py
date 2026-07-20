@@ -64,7 +64,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
     categoria = CategoriaSerializer(source="fk_categoria", read_only=True)
     unidad = ProductoUnidadSerializer(source="fk_unidad", read_only=True)
     imagenes = ProductoImagenSerializer(source="productoimagen_set", many=True, read_only=True)
-    fk_categoria = serializers.PrimaryKeyRelatedField(queryset=CategoriaProducto.objects.all())
+    fk_categoria = serializers.PrimaryKeyRelatedField(queryset=CategoriaProducto.objects.filter(estado=True))
     fk_unidad = serializers.PrimaryKeyRelatedField(queryset=Unidad.objects.all(), required=False, allow_null=True)
 
     class Meta:
@@ -85,7 +85,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
             "imagenes",
             "creado_en",
         ]
-        read_only_fields = ["imagen"]
+        read_only_fields = ["imagen", "estado"]
 
     def validate_nombre_producto(self, value):
         if not value or not value.strip():

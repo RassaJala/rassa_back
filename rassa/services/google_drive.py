@@ -102,20 +102,25 @@ def upload_image(file_bytes, filename, product_id, mime_type="image/jpeg"):
 
 
 def delete_image(file_id):
-    """Delete a file from Google Drive by its ID."""
+    """Delete a file from Google Drive by its ID.
+
+    Returns True on success or if file_id is empty, False on failure.
+    """
     if not file_id:
-        return
+        return True
     try:
         service = get_drive_service()
         service.files().delete(fileId=file_id).execute()
         logger.info("Image deleted from Drive: %s", file_id)
+        return True
     except Exception:
         logger.warning("Failed to delete image from Drive: %s", file_id, exc_info=True)
+        return False
 
 
 def _get_or_create_folder(service, name, parent_id):
     """Find or create a folder by name inside parent_id. Returns folder ID."""
-    safe_name = name.replace("'", "\\'")
+    safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
     query = (
         f"mimeType='application/vnd.google-apps.folder'"
         f" and name='{safe_name}'"
