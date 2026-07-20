@@ -60,6 +60,42 @@ def _usuario_not_found():
     )
 
 
+def _get_requesting_admin(request):
+    """Return the Usuario for the authenticated user, or None if missing."""
+
+    try:
+        return request.user.usuario
+    except ObjectDoesNotExist:
+        return None
+
+
+def _admin_error_response(error):
+    """Map a mutation exception to the appropriate Response.
+
+    Returns a Response if the error is handled, else None.
+    """
+
+    if isinstance(error, Usuario.DoesNotExist):
+        return Response(
+            {"detail": "Usuario no encontrado."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if isinstance(error, IntegrityError):
+        return Response(
+            {"detail": "Error de integridad al guardar."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    if isinstance(error, OperationalError):
+        return Response(
+            {"detail": "El recurso está bloqueado. Intenta nuevamente."},
+            status=status.HTTP_423_LOCKED,
+        )
+
+    return None
+
+
 class AdminUsuarioViewSet(viewsets.GenericViewSet):
     """Endpoints administrativos para gestionar usuarios.
 
@@ -169,32 +205,41 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
     def partial_update(self, request, pk=None):
         """Editar datos de un usuario (teléfono, nombre, rol, etc.)."""
 
-        try:
-            requesting_admin = request.user.usuario
-        except ObjectDoesNotExist:
+        requesting_admin = _get_requesting_admin(request)
+
+        if requesting_admin is None:
             return _usuario_not_found()
+
+        serializer = AdminUserUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
 
         try:
             with transaction.atomic():
-                usuario = Usuario.objects.select_related("fk_persona", "fk_rol").select_for_update().get(pk=pk)
+                usuario = Usuario.objects.select_related("fk_rol").select_for_update().get(pk=pk)
 
-                if usuario.id_usuario == requesting_admin.id_usuario and "role" in request.data:
+                if usuario.id_usuario == requesting_admin.id_usuario and "role" in serializer.validated_data:
                     return Response(
                         {"detail": "No puedes cambiar tu propio rol de administrador."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                if "role" in request.data and request.data["role"] != ADMIN_ROLE_KEY:
-                    blocked = _ensure_single_admin_protected(usuario)
+                if "role" in serializer.validated_data and serializer.validated_data["role"] != ADMIN_ROLE_KEY:
+                    if usuario.estado:
+                        blocked = _ensure_single_admin_protected(usuario)
 
-                    if blocked:
-                        return blocked
+                        if blocked:
+                            return blocked
 
-                serializer = AdminUserUpdateSerializer(usuario, data=request.data, partial=True)
-
-                serializer.is_valid(raise_exception=True)
-
+                serializer.instance = usuario
                 updated = serializer.save()
+
+                campos = list(serializer.validated_data.keys())
+                admin_id = requesting_admin.id_usuario
+                _log(
+                    request.user,
+                    f"Actualización de usuario: id={updated.id_usuario} campos={campos} por admin id={admin_id}",
+                    request,
+                )
 
         except Usuario.DoesNotExist:
             return _usuario_not_found()
@@ -211,14 +256,6 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_423_LOCKED,
             )
 
-        campos = list(serializer.validated_data.keys())
-        admin_id = requesting_admin.id_usuario
-        _log(
-            request.user,
-            f"Actualización de usuario: id={updated.id_usuario} campos={campos} por admin id={admin_id}",
-            request,
-        )
-
         return _ok(
             data=AdminUserSerializer(updated).data,
             message="Usuario actualizado exitosamente.",
@@ -228,9 +265,9 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
     def toggle_estado(self, request, pk=None):
         """Activar o desactivar un usuario."""
 
-        try:
-            requesting_admin = request.user.usuario
-        except ObjectDoesNotExist:
+        requesting_admin = _get_requesting_admin(request)
+
+        if requesting_admin is None:
             return _usuario_not_found()
 
         try:
@@ -253,6 +290,14 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
 
                 usuario.save(update_fields=["estado"])
 
+                accion = "activado" if usuario.estado else "desactivado"
+
+                _log(
+                    request.user,
+                    f"Toggle usuario id={usuario.id_usuario} -> {accion} por admin id={requesting_admin.id_usuario}",
+                    request,
+                )
+
         except Usuario.DoesNotExist:
             return _usuario_not_found()
 
@@ -267,14 +312,6 @@ class AdminUsuarioViewSet(viewsets.GenericViewSet):
                 {"detail": "El recurso está bloqueado. Intenta nuevamente."},
                 status=status.HTTP_423_LOCKED,
             )
-
-        accion = "activado" if usuario.estado else "desactivado"
-
-        _log(
-            request.user,
-            f"Toggle de usuario: id={usuario.id_usuario} -> {accion} por admin id={requesting_admin.id_usuario}",
-            request,
-        )
 
         return _ok(
             data=AdminUserSerializer(usuario).data,

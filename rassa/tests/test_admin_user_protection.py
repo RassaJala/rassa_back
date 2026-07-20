@@ -779,7 +779,7 @@ class AdminUserProtectionTest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        log_entry = Log.objects.filter(descripcion__startswith="Toggle de usuario").latest("creado_en")
+        log_entry = Log.objects.filter(descripcion__startswith="Toggle usuario").latest("creado_en")
         self.assertIn(f"id={self.user_usuario.id_usuario}", log_entry.descripcion)
         self.assertIn("desactivado", log_entry.descripcion)
 
