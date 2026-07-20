@@ -242,7 +242,7 @@ class FamiliaUsuario(models.Model):
     """Relación entre un usuario y su familia."""
 
     id_familia_usuario = models.AutoField(primary_key=True)
-    fk_usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
+    fk_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
     fk_familia = models.ForeignKey(Familia, on_delete=models.CASCADE, db_column="fk_familia")
     estado = models.BooleanField(default=True)
     creado_en = models.DateTimeField(auto_now_add=True)

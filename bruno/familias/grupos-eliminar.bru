@@ -1,0 +1,15 @@
+meta {
+  name: Grupos - Eliminar
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/familias/grupos/1/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

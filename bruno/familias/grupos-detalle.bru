@@ -1,0 +1,15 @@
+meta {
+  name: Grupos - Detalle
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/familias/grupos/1/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
