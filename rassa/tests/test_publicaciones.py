@@ -652,11 +652,13 @@ class PublicacionSeguridadTests(PublicacionBaseTestCase):
         self.assertEqual(body["data"]["estado"], "activo")
 
     def test_unique_agricultor_semana(self):
+        """Verifica que no se pueda crear otra publicación para el mismo agricultor en la misma semana."""
+        semana = self.pub_data["semana"]
         with self.assertRaises(IntegrityError):
             PublicacionSemanal.objects.create(
                 fk_agricultor=self.agricultor.usuario,
-                fecha_publicacion="2026-07-20",
-                semana=30,
+                fecha_publicacion=self.pub_data["fecha_publicacion"],
+                semana=semana,
                 estado="borrador",
             )
 
