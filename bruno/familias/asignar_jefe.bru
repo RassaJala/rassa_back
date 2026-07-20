@@ -1,0 +1,22 @@
+meta {
+  name: Asignar Jefe de Familia
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/familias/grupos/1/asignar-jefe/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fk_jefe_familia": 2
+  }
+}

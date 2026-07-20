@@ -1,0 +1,23 @@
+meta {
+  name: Grupos - Actualizar
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/api/familias/grupos/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "nombre_familia": "Familia González Modificada",
+    "detalle_familia": "Detalle actualizado de la familia productora"
+  }
+}

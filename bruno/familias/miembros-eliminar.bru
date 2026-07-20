@@ -1,0 +1,15 @@
+meta {
+  name: Miembros - Eliminar
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/api/familias/miembros/1/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

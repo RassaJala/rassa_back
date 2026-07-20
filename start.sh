@@ -512,7 +512,7 @@ _start_server() {
     _dim "  Presiona Ctrl+C para detener el servidor."
     echo ""
 
-    python manage.py runserver
+    python manage.py runserver 0.0.0.0:8000
 }
 
 # ---------------------------------------------------------------------------
