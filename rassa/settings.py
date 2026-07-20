@@ -12,6 +12,7 @@ Variables requeridas:
     - CORS_ALLOWED_ORIGINS: Orígenes CORS permitidos (separados por coma).
 """
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -153,6 +154,10 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_write": "30/minute",
     "admin_users": "30/minute",
 }
+
+# === TEST: disable throttling so test suites don't exhaust rate limits ===
+if "test" in sys.argv or "pytest" in sys.modules:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
 
 # === CORS ===
 CORS_ALLOWED_ORIGINS = config(
