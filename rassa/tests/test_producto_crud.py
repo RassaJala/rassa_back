@@ -156,7 +156,7 @@ class ProductoCRUDTests(TestCase):
         )
         response = self.client.get(reverse("producto_list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        data = response.json()["data"]
+        data = response.json()["data"]["results"]
         self.assertGreaterEqual(len(data), 1)
 
     def test_retrieve_producto(self):

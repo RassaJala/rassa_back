@@ -174,12 +174,13 @@ class ProductoImagenUploadView(APIView):
     Límites: 5 MB máximo, solo imágenes (jpg, jpeg, png, gif, webp).
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]
     parser_classes = [MultiPartParser, FormParser, parsers.JSONParser]
+    throttle_scope = "catalog_write"
 
     def post(self, request, pk):
         try:
-            producto = Producto.objects.get(pk=pk)
+            producto = Producto.objects.get(pk=pk, estado=True)
         except Producto.DoesNotExist:
             return _ok(
                 message="Producto no encontrado.",
@@ -310,7 +311,7 @@ class ProductoImagenDeleteView(APIView):
 
     def delete(self, request, pk, id_imagen):
         try:
-            producto = Producto.objects.get(pk=pk)
+            producto = Producto.objects.get(pk=pk, estado=True)
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
         except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
             return _ok(
@@ -320,9 +321,9 @@ class ProductoImagenDeleteView(APIView):
 
         was_principal = imagen.es_principal
         drive_file_id = imagen.drive_file_id
-        imagen.delete()
 
         delete_image(drive_file_id)
+        imagen.delete()
 
         if was_principal:
             otra_imagen = ProductoImagen.objects.filter(fk_producto=producto).first()
@@ -338,7 +339,7 @@ class ProductoImagenDeleteView(APIView):
 
     def patch(self, request, pk, id_imagen):
         try:
-            producto = Producto.objects.get(pk=pk)
+            producto = Producto.objects.get(pk=pk, estado=True)
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
         except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
             return _ok(
@@ -364,10 +365,11 @@ class ProductoImagenDeleteView(APIView):
                 producto.save(update_fields=["imagen"])
 
         elif not es_principal and imagen.es_principal:
-            imagen.es_principal = False
-            imagen.save(update_fields=["es_principal"])
-            otra = ProductoImagen.objects.filter(fk_producto=producto).exclude(pk=imagen.pk).first()
-            producto.imagen = otra.url if otra else None
-            producto.save(update_fields=["imagen"])
+            with transaction.atomic():
+                imagen.es_principal = False
+                imagen.save(update_fields=["es_principal"])
+                otra = ProductoImagen.objects.filter(fk_producto=producto).exclude(pk=imagen.pk).first()
+                producto.imagen = otra.url if otra else None
+                producto.save(update_fields=["imagen"])
 
         return _ok(message="Imagen actualizada exitosamente.")

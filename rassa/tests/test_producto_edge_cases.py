@@ -140,6 +140,27 @@ class EdgeCaseSerializerTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_put_full_replacement(self):
+        """PUT con todos los campos requeridos debe reemplazar el producto."""
+        p = Producto.objects.create(
+            nombre_producto="Manzana",
+            fk_categoria=self.categoria,
+            precio=10,
+        )
+        response = self.client.put(
+            reverse("producto_detail", args=[p.id_producto]),
+            {
+                "nombre_producto": "Pera",
+                "precio": "20.00",
+                "fk_categoria": self.categoria.id_categoria,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()["data"]
+        self.assertEqual(data["nombre_producto"], "Pera")
+        self.assertEqual(data["precio"], "20.00")
+
     def test_put_missing_required_fields(self):
         """PUT (reemplazo completo) sin campos requeridos debe fallar."""
         p = Producto.objects.create(
@@ -362,6 +383,8 @@ class EdgeCaseImageDeleteTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.producto.refresh_from_db()
+        self.assertIsNone(self.producto.imagen)
 
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA)

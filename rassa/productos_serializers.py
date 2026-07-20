@@ -41,7 +41,6 @@ class ProductoListSerializer(serializers.ModelSerializer):
             "stock",
             "es_perecedero",
             "imagen",
-            "estado",
             "categoria",
             "unidad",
             "imagen_principal",

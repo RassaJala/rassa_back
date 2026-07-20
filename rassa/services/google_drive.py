@@ -55,8 +55,12 @@ def _get_credentials():
 
 def get_drive_service():
     """Return an authorized Google Drive API service instance."""
+    import httplib2
+
     creds = _get_credentials()
-    return build("drive", "v3", credentials=creds)
+    http = httplib2.Http(timeout=30)
+    creds.refresh(httplib2.Request())
+    return build("drive", "v3", credentials=creds, http=http)
 
 
 def upload_image(file_bytes, filename, product_id, mime_type="image/jpeg"):
@@ -134,9 +138,6 @@ def _get_or_create_folder(service, name, parent_id):
 
 
 def _set_public_permission(service, file_id):
-    """Make a file readable by anyone with the link."""
-    try:
-        permission = {"type": "anyone", "role": "reader"}
-        service.permissions().create(fileId=file_id, body=permission).execute()
-    except Exception:
-        logger.warning("Failed to set public permission for: %s", file_id, exc_info=True)
+    """Make a file readable by anyone with the link. Raises on failure."""
+    permission = {"type": "anyone", "role": "reader"}
+    service.permissions().create(fileId=file_id, body=permission).execute()
