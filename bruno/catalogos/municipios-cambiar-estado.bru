@@ -1,0 +1,22 @@
+meta {
+  name: Municipios - Cambiar Estado
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/municipios/1/estado/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "estado": false
+  }
+}

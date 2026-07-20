@@ -151,6 +151,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "admin_write": "30/hour",
     "chat_read": "60/minute",
     "chat_write": "30/minute",
+    "admin_users": "30/minute",
 }
 
 # === CORS ===

@@ -1,0 +1,15 @@
+meta {
+  name: Buscar usuario por nombre o correo
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/admin/usuarios/?search={{searchTerm}}
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

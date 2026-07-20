@@ -1,0 +1,15 @@
+meta {
+  name: Listar usuarios (admin)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/admin/usuarios/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

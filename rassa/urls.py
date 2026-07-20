@@ -16,6 +16,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
+from rassa.admin_views import AdminUsuarioViewSet
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
@@ -33,9 +34,11 @@ from rassa.views import (
     CategoriaProductoViewSet,
     ChangePasswordView,
     LocalidadByMunicipioListCreateView,
+    LocalidadCambiarEstadoView,
     LocalidadDetailView,
     LocalidadRestoreView,
     MeView,
+    MunicipioCambiarEstadoView,
     MunicipioDetailView,
     MunicipioListCreateView,
     MunicipioRestoreView,
@@ -48,6 +51,7 @@ logger = logging.getLogger(__name__)
 router = DefaultRouter()
 router.register(r"api/categorias", CategoriaProductoViewSet, basename="categoria-producto")
 router.register(r"api/unidades", UnidadViewSet, basename="unidad")
+router.register(r"api/admin/usuarios", AdminUsuarioViewSet, basename="admin-usuarios")
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -103,6 +107,7 @@ urlpatterns = [
     path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
     path("api/municipios/<int:pk>/", MunicipioDetailView.as_view(), name="municipio-detail"),
     path("api/municipios/<int:pk>/restore/", MunicipioRestoreView.as_view(), name="municipio-restore"),
+    path("api/municipios/<int:pk>/estado/", MunicipioCambiarEstadoView.as_view(), name="municipio-cambiar-estado"),
     path(
         "api/municipios/<int:pk>/localidades/",
         LocalidadByMunicipioListCreateView.as_view(),
@@ -111,6 +116,7 @@ urlpatterns = [
     path("api/localidades/", LocalidadByMunicipioListCreateView.as_view(), name="localidades"),
     path("api/localidades/<int:pk>/", LocalidadDetailView.as_view(), name="localidad-detail"),
     path("api/localidades/<int:pk>/restore/", LocalidadRestoreView.as_view(), name="localidad-restore"),
+    path("api/localidades/<int:pk>/estado/", LocalidadCambiarEstadoView.as_view(), name="localidad-cambiar-estado"),
     path("api/productos/", ProductoListView.as_view(), name="producto_list"),
     path("api/productos/<int:pk>/", ProductoDetailView.as_view(), name="producto_detail"),
     path("api/productos/<int:pk>/imagen/", ProductoImagenUploadView.as_view(), name="producto_imagen"),

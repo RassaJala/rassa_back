@@ -1,0 +1,27 @@
+meta {
+  name: Editar rol de usuario
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/api/admin/usuarios/{{usuariosAdminId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "role": "farmer"
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://127.0.0.1:8000
+  usuariosAdminId: 1
+}

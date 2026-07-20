@@ -15,6 +15,7 @@ from rassa.auth_serializers import (
     UserSerializer,
 )
 from rassa.catalogos_serializers import (
+    CambiarEstadoSerializer,
     CategoriaProductoSerializer,
     LocalidadSerializer,
     MunicipioSerializer,
@@ -552,5 +553,61 @@ class MunicipioRestoreView(CatalogRestoreView):
 
 
 class LocalidadRestoreView(CatalogRestoreView):
+    queryset = Localidad.objects.all()
+    serializer_class = LocalidadSerializer
+
+
+# ======================================================================
+# Cambiar estado (activar/desactivar)
+# ======================================================================
+
+
+class CambiarEstadoView(generics.GenericAPIView):
+    """PATCH endpoint to toggle active/inactive state for catalog resources.
+
+    Subclasses must set ``queryset`` and ``serializer_class``.
+    URL: PATCH /api/{resource}/<pk>/estado/  →  {"estado": true|false}
+    """
+
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    throttle_scope = "catalog_write"
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+    def get_queryset(self):
+        # Include ALL records (including soft-deleted) so we can reactivate
+        return self.queryset.model.objects.all()
+
+    def patch(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = CambiarEstadoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        nuevo_estado = serializer.validated_data["estado"]
+        instance.estado = nuevo_estado
+        instance.save(update_fields=["estado"])
+
+        model_name = type(instance).__name__
+        accion = "activado" if nuevo_estado else "desactivado"
+        _log(
+            request.user,
+            f"{model_name} {accion}: {instance.nombre} (id={instance.pk})",
+            request,
+        )
+
+        output_serializer = self.serializer_class(instance)
+        return _ok(
+            data=output_serializer.data,
+            message=f"{model_name} {accion} exitosamente.",
+        )
+
+
+class MunicipioCambiarEstadoView(CambiarEstadoView):
+    queryset = Municipio.objects.all()
+    serializer_class = MunicipioSerializer
+
+
+class LocalidadCambiarEstadoView(CambiarEstadoView):
     queryset = Localidad.objects.all()
     serializer_class = LocalidadSerializer

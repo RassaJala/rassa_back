@@ -1,0 +1,20 @@
+meta {
+  name: Activar/Desactivar usuario
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/api/admin/usuarios/{{usuariosAdminId}}/toggle-estado/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+vars:pre-request {
+  baseUrl: http://127.0.0.1:8000
+  usuariosAdminId: 1
+}
