@@ -6,20 +6,18 @@ import logging
 import uuid
 
 from django.db import transaction
-from rest_framework import generics, parsers, permissions, status
+from rest_framework import generics, parsers, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from rassa.filters import ProductoFilter
-from rassa.models import CategoriaProducto, Producto, ProductoImagen, Unidad
+from rassa.models import Producto, ProductoImagen
 from rassa.permissions.role_permissions import IsAdminOrReadOnly
 from rassa.productos_serializers import (
-    CategoriaSerializer,
     ProductoDetailSerializer,
     ProductoImagenSerializer,
     ProductoListSerializer,
-    ProductoUnidadSerializer,
 )
 from rassa.services.google_drive import delete_image, make_public, upload_image
 from rassa.views import _ok
@@ -117,32 +115,6 @@ class ProductoDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.estado = False
         instance.save(update_fields=["estado"])
         return _ok(message="Producto eliminado exitosamente.")
-
-
-class CategoriaListView(generics.ListAPIView):
-    """GET /api/categorias/ — list all active categories."""
-
-    queryset = CategoriaProducto.objects.filter(estado=True).order_by("id_categoria")
-    serializer_class = CategoriaSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None
-
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
-
-
-class UnidadListView(generics.ListAPIView):
-    """GET /api/unidades/ — list all active units."""
-
-    queryset = Unidad.objects.filter(estado=True).order_by("id_unidad")
-    serializer_class = ProductoUnidadSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None
-
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        return _ok(data=response.data)
 
 
 def _detect_image_format(data):
@@ -298,7 +270,10 @@ class ProductoImagenUploadView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        make_public(drive_file_id)
+        try:
+            make_public(drive_file_id)
+        except Exception:
+            logging.getLogger(__name__).warning("make_public failed for %s", drive_file_id, exc_info=True)
 
         return _ok(
             data=ProductoImagenSerializer(imagen).data,
@@ -326,11 +301,11 @@ class ProductoImagenDeleteView(APIView):
         was_principal = imagen.es_principal
         drive_file_id = imagen.drive_file_id
 
-        if drive_file_id and not delete_image(drive_file_id):
-            return _ok(
-                message="Error al eliminar la imagen de Google Drive.",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        if drive_file_id:
+            try:
+                delete_image(drive_file_id)
+            except Exception:
+                logging.getLogger(__name__).warning("Drive delete failed for %s", drive_file_id, exc_info=True)
 
         with transaction.atomic():
             imagen.delete()

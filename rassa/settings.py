@@ -17,11 +17,14 @@ from pathlib import Path
 
 import dj_database_url
 from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # === SECURITY ===
 SECRET_KEY = config("SECRET_KEY", default="changeme-in-production")
+if SECRET_KEY == "changeme-in-production" and not config("DEBUG", default=False, cast=bool):
+    raise ImproperlyConfigured("SECRET_KEY must be overridden in production.")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
@@ -146,6 +149,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones": "30/hour",
     "publicaciones_write": "10/hour",
     "admin_write": "30/hour",
+    "chat_read": "60/minute",
+    "chat_write": "30/minute",
 }
 
 # === CORS ===
@@ -177,3 +182,6 @@ GOOGLE_DRIVE_FOLDER_ID = config("GOOGLE_DRIVE_FOLDER_ID", default=None)
 GOOGLE_DRIVE_CLIENT_ID = config("GOOGLE_DRIVE_CLIENT_ID", default=None)
 GOOGLE_DRIVE_CLIENT_SECRET = config("GOOGLE_DRIVE_CLIENT_SECRET", default=None)
 GOOGLE_DRIVE_REFRESH_TOKEN = config("GOOGLE_DRIVE_REFRESH_TOKEN", default=None)
+
+# === TRUSTED PROXIES ===
+TRUSTED_PROXIES = config("TRUSTED_PROXIES", default="", cast=Csv())

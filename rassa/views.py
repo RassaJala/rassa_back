@@ -26,6 +26,7 @@ from rassa.permissions.role_permissions import HasRole, IsAdminOrReadOnly
 
 def _log(user, descripcion, request):
     """Create an audit log entry — failures never break the caller."""
+    request._audit_logged = True
     try:
         Log.objects.create(
             fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
@@ -280,8 +281,16 @@ class CatalogViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="permanent")
     def permanent(self, request, pk=None, *args, **kwargs):
         """Eliminación permanente de un registro desactivado."""
+        from django.db.models import ProtectedError
+
         instance = self.get_object()
-        instance.delete()
+        try:
+            instance.delete()
+        except ProtectedError:
+            return _ok(
+                message="No se puede eliminar: tiene registros dependientes protegidos.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         return _ok(message="Registro eliminado permanentemente.")
 
 
@@ -383,14 +392,16 @@ class CatalogDetailView(CatalogPermissionMixin, generics.RetrieveUpdateDestroyAP
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         model_name = type(instance).__name__
-        _log(request.user, f"{model_name} actualizado: {instance.nombre} (id={instance.pk})", request)
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
+        _log(request.user, f"{model_name} actualizado: {nombre} (id={instance.pk})", request)
         return _ok(data=serializer.data, message=self.update_message)
 
     def perform_destroy(self, instance):
         instance.estado = False
         instance.save(update_fields=["estado"])
         model_name = type(instance).__name__
-        _log(self.request.user, f"{model_name} eliminado (soft): {instance.nombre} (id={instance.pk})", self.request)
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
+        _log(self.request.user, f"{model_name} eliminado (soft): {nombre} (id={instance.pk})", self.request)
 
     def initial(self, request, *args, **kwargs):
         """Apply ScopedRateThrottle only on write operations."""
@@ -526,9 +537,10 @@ class CatalogRestoreView(generics.GenericAPIView):
         instance.save(update_fields=[self.soft_delete_field])
         serializer = self.get_serializer(instance)
         model_name = type(instance).__name__
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
         _log(
             request.user,
-            f"{model_name} restaurado: {instance.nombre} (id={instance.pk})",
+            f"{model_name} restaurado: {nombre} (id={instance.pk})",
             request,
         )
         return _ok(data=serializer.data, message="Registro restaurado correctamente.")

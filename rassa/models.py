@@ -425,8 +425,7 @@ class PedidoCabecera(models.Model):
         return f"Pedido #{self.id_pedido} — {str(self.fk_cliente)}"
 
     def save(self, *args, **kwargs):
-        if self.total is None:
-            self.total = self.subtotal + self.iva
+        self.total = self.subtotal + self.iva
         super().save(*args, **kwargs)
 
 

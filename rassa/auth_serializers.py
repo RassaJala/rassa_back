@@ -339,6 +339,8 @@ class ChangePasswordSerializer(serializers.Serializer):
             validate_password(value)
         except ValidationError as exc:
             raise serializers.ValidationError(list(exc.messages)) from exc
+        if value == self.initial_data.get("old_password"):
+            raise serializers.ValidationError("La nueva contraseña debe ser diferente a la actual.")
         return value
 
     def save(self, **kwargs):

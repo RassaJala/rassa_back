@@ -54,6 +54,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """Login with Spanish error messages."""
 
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_scope = "login"
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
