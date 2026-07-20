@@ -1,0 +1,23 @@
+meta {
+  name: Agregar Miembro
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/familias/miembros/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fk_usuario": 2,
+    "fk_familia": 1
+  }
+}
