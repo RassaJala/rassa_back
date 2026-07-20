@@ -1,0 +1,15 @@
+meta {
+  name: Filtrar usuarios por estado
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/admin/usuarios/?estado={{estadoFilter}}
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
