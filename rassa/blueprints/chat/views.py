@@ -4,7 +4,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import OuterRef, Prefetch, Subquery
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -12,7 +12,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from rassa.models import Conversacion, Documento, Integrante, Mensaje, MensajeDocumento, Usuario
+from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
 from .serializers import (
@@ -49,7 +49,8 @@ class MensajeListView(generics.ListAPIView):
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return _ok(data=serializer.data)
+            paginated = self.get_paginated_response(serializer.data).data
+            return _ok(data=paginated)
         serializer = self.get_serializer(queryset, many=True)
         return _ok(data=serializer.data)
 
@@ -164,7 +165,7 @@ class ConversacionPrivadaCreateView(APIView):
 
     def post(self, request):
         usuario1 = request.user.usuario
-        usuario2_id = request.data.get("usuario2")
+        usuario2_id = request.data.get("usuario2") or request.data.get("fk_usuario")
 
         if not usuario2_id:
             return Response(
@@ -250,10 +251,22 @@ class ConversacionGrupalCreateView(APIView):
             )
 
         usuario_creador = request.user.usuario
+        fk_usuarios = request.data.get("fk_usuarios") or []
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
             Integrante.objects.create(fk_usuario=usuario_creador, fk_conversacion=conv)
+
+            for uid in fk_usuarios:
+                try:
+                    usuario = Usuario.objects.get(pk=uid, estado=True)
+                except Usuario.DoesNotExist:
+                    continue
+                Integrante.objects.get_or_create(
+                    fk_usuario=usuario,
+                    fk_conversacion=conv,
+                    defaults={"estado": True},
+                )
 
         return Response(
             {
@@ -319,7 +332,7 @@ class ConversacionAgregarIntegranteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, conversacion_id):
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.data.get("usuario_id") or request.data.get("fk_usuario")
 
         if not usuario_id:
             return Response(
@@ -434,6 +447,13 @@ class ConversacionListView(APIView):
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
 
+        no_leidos_subq = Mensaje.objects.filter(
+            fk_conversacion=OuterRef("pk"),
+            fk_emisor__isnull=False,
+            estado=True,
+            leido=False,
+        ).exclude(fk_emisor=usuario)
+
         conversaciones = (
             Conversacion.objects.filter(
                 integrante__fk_usuario=usuario,
@@ -443,6 +463,11 @@ class ConversacionListView(APIView):
             .annotate(
                 ultimo_mensaje_contenido=Subquery(ultimo_subq.values("contenido")[:1]),
                 ultimo_mensaje_creado_en=Subquery(ultimo_subq.values("creado_en")[:1]),
+                no_leidos_count=Count("mensaje", filter=Q(
+                    mensaje__leido=False,
+                    mensaje__estado=True,
+                    mensaje__fk_emisor__isnull=False,
+                ) & ~Q(mensaje__fk_emisor=usuario)),
             )
             .prefetch_related(
                 Prefetch(
@@ -467,6 +492,13 @@ class ConversacionListView(APIView):
                 else:
                     nombre = "Sin nombre"
 
+            es_familia = False
+            if conv.tipo and conv.nombre:
+                es_familia = Familia.objects.filter(
+                    nombre_familia=conv.nombre,
+                    estado=True,
+                ).exists()
+
             result.append(
                 {
                     "id_conversacion": conv.id_conversacion,
@@ -476,6 +508,8 @@ class ConversacionListView(APIView):
                     "ultimo_mensaje_creado_en": (
                         conv.ultimo_mensaje_creado_en.isoformat() if conv.ultimo_mensaje_creado_en else None
                     ),
+                    "no_leidos": conv.no_leidos_count,
+                    "es_familia": es_familia,
                 }
             )
 
@@ -490,8 +524,14 @@ class MensajeDocumentoCreateView(APIView):
         return {"usuario": self.request.user.usuario}
 
     def post(self, request):
+        mutable_data = request.data.copy()
+        if "conversacion" in mutable_data and "fk_conversacion" not in mutable_data:
+            mutable_data["fk_conversacion"] = mutable_data.pop("conversacion")
+        if "documento" in mutable_data and "archivo" not in mutable_data:
+            mutable_data["archivo"] = mutable_data.pop("documento")
+
         serializer = MensajeDocumentoCreateSerializer(
-            data=request.data,
+            data=mutable_data,
             context={"usuario": request.user.usuario},
         )
         serializer.is_valid(raise_exception=True)
