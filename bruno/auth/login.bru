@@ -16,8 +16,12 @@ headers {
 
 body:json {
   {
-    "email": "maria.garcia@ejemplo.com",
+    "email": "admin@rassa.com",
     "password": "{{userPassword}}"
   }
 }
 
+vars:pre-request {
+  userPassword: admin123
+  baseUrl: http://127.0.0.1:8000/
+}

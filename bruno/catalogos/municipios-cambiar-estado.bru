@@ -1,0 +1,30 @@
+meta {
+  name: Municipios - Cambiar Estado
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/api/municipios/1/estado/
+  body: json
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NTI2NDEyLCJpYXQiOjE3ODQ1MTkyMTIsImp0aSI6ImU3MDc5ZTAyYjlkMzQzYjViZTUyYjdjMzYxN2UwOTMyIiwidXNlcl9pZCI6MTJ9.dUStxwJHuPjVyVnZSfTyV9Xq5_-LAdZg_WpteWwDwkw
+}
+
+body:json {
+  {
+    "estado": false
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8000
+}

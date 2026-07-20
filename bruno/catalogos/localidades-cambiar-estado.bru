@@ -1,0 +1,26 @@
+meta {
+  name: Localidades - Cambiar Estado
+  type: http
+  seq: 13
+}
+
+patch {
+  url: {{baseUrl}}/api/localidades/1/estado/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "estado": false
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8000
+}
