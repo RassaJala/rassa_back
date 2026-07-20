@@ -934,3 +934,165 @@ class CatalogosCRUDTest(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("nombre", resp.data)
+
+    # ==================================================================
+    # Cambiar estado (activar/desactivar)
+    # ==================================================================
+
+    def test_municipio_cambiar_estado_admin_desactivar(self):
+        """Admin can desactivar (estado=false) a municipio."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {"estado": False},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        self.municipio.refresh_from_db()
+        self.assertFalse(self.municipio.estado)
+
+    def test_municipio_cambiar_estado_admin_activar(self):
+        """Admin can reactivar (estado=true) a soft-deleted municipio."""
+        self.municipio.estado = False
+        self.municipio.save(update_fields=["estado"])
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {"estado": True},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.municipio.refresh_from_db()
+        self.assertTrue(self.municipio.estado)
+
+    def test_municipio_cambiar_estado_nonadmin_forbidden(self):
+        """Non-admin gets 403 when changing estado."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {"estado": False},
+            format="json",
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_municipio_cambiar_estado_unauthenticated(self):
+        """Unauthenticated gets 401 when changing estado."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {"estado": False},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_municipio_cambiar_estado_not_found(self):
+        """PATCH /municipios/99999/estado/ returns 404."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": 99999}),
+            {"estado": False},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_municipio_cambiar_estado_missing_field(self):
+        """PATCH without estado field returns 400."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", resp.data)
+
+    def test_municipio_cambiar_estado_invalid_type(self):
+        """PATCH with non-boolean estado returns 400."""
+        resp = self.client.patch(
+            reverse("municipio-cambiar-estado", kwargs={"pk": self.municipio.id_municipio}),
+            {"estado": "no es bool"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", resp.data)
+
+    # --- Localidad cambiar estado ---
+
+    def test_localidad_cambiar_estado_admin_desactivar(self):
+        """Admin can desactivar (estado=false) a localidad."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": False},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        self.localidad.refresh_from_db()
+        self.assertFalse(self.localidad.estado)
+
+    def test_localidad_cambiar_estado_admin_activar(self):
+        """Admin can reactivar (estado=true) a soft-deleted localidad."""
+        self.localidad.estado = False
+        self.localidad.save(update_fields=["estado"])
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": True},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.localidad.refresh_from_db()
+        self.assertTrue(self.localidad.estado)
+
+    def test_localidad_cambiar_estado_nonadmin_forbidden(self):
+        """Non-admin gets 403 when changing estado."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": False},
+            format="json",
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_localidad_cambiar_estado_unauthenticated(self):
+        """Unauthenticated gets 401 when changing estado."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": False},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_localidad_cambiar_estado_not_found(self):
+        """PATCH /localidades/99999/estado/ returns 404."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": 99999}),
+            {"estado": False},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_localidad_cambiar_estado_missing_field(self):
+        """PATCH without estado field returns 400."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", resp.data)
+
+    def test_localidad_cambiar_estado_invalid_type(self):
+        """PATCH with non-boolean estado returns 400."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": "no es bool"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", resp.data)
