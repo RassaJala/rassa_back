@@ -652,6 +652,11 @@ class PublicacionSeguridadTests(PublicacionBaseTestCase):
         self.assertEqual(body["data"]["estado"], "activo")
 
     def test_unique_agricultor_semana(self):
+        # Freeze date so _create_publicacion generates a deterministic week.
+        with patch("rassa.blueprints.publicacion.views.date") as mock_date:
+            mock_date.today.return_value = date(2026, 7, 15)  # Wed -> next Mon 2026-07-20, week 30
+            self._create_publicacion()
+
         with self.assertRaises(IntegrityError):
             PublicacionSemanal.objects.create(
                 fk_agricultor=self.agricultor.usuario,
