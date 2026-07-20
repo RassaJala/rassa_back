@@ -21,7 +21,7 @@ from rassa.productos_serializers import (
     ProductoListSerializer,
     ProductoUnidadSerializer,
 )
-from rassa.services.google_drive import delete_image, upload_image
+from rassa.services.google_drive import delete_image, make_public, upload_image
 from rassa.views import _ok
 
 EXTENSIONES_PERMITIDAS = {"jpg", "jpeg", "png", "gif", "webp"}
@@ -174,6 +174,68 @@ def _guardar_imagen_bytes(data, ext, product_id):
     return url, file_id
 
 
+def _validate_file_upload(imagen_archivo):
+    """Validate an uploaded file. Returns (raw_bytes, ext). Raises ValueError."""
+    if imagen_archivo.size > MAX_FILE_SIZE:
+        raise ValueError("El archivo excede el tamaño máximo de 5 MB.")
+
+    nombre_raw = imagen_archivo.name or ""
+    if "." not in nombre_raw:
+        raise ValueError("El archivo debe tener una extensión válida.")
+
+    ext = nombre_raw.rsplit(".", 1)[-1].lower()
+    if ext not in EXTENSIONES_PERMITIDAS:
+        raise ValueError("Tipo de archivo no permitido. Use: jpg, jpeg, png, gif o webp.")
+
+    raw_bytes = b"".join(imagen_archivo.chunks())
+
+    if not _validar_imagen_bytes(raw_bytes):
+        raise ValueError("El archivo no es una imagen válida.")
+
+    return raw_bytes, ext
+
+
+def _validate_base64_upload(imagen_base64):
+    """Validate and decode a base64 image. Returns (raw_bytes, ext). Raises ValueError."""
+    clean_b64 = imagen_base64
+    if ";" in clean_b64:
+        clean_b64 = clean_b64.split(",", 1)[1]
+
+    try:
+        raw_bytes = base64.b64decode(clean_b64)
+    except (binascii.Error, ValueError):
+        raise ValueError("Formato base64 inválido.") from None
+
+    if len(raw_bytes) > MAX_FILE_SIZE:
+        raise ValueError("El contenido excede el tamaño máximo de 5 MB.")
+
+    if not _validar_imagen_bytes(raw_bytes):
+        raise ValueError("El contenido no es una imagen válida.")
+
+    ext = _detect_image_format(raw_bytes) or "png"
+    return raw_bytes, ext
+
+
+def _save_imagen_to_db(producto, url, drive_file_id, es_principal):
+    """Save image record to DB within atomic transaction. Returns ProductoImagen."""
+    with transaction.atomic():
+        if es_principal:
+            ProductoImagen.objects.filter(fk_producto=producto).update(es_principal=False)
+
+        imagen = ProductoImagen.objects.create(
+            fk_producto=producto,
+            url=url,
+            drive_file_id=drive_file_id,
+            es_principal=es_principal,
+        )
+
+        if es_principal:
+            producto.imagen = url
+            producto.save(update_fields=["imagen"])
+
+    return imagen
+
+
 class ProductoImagenUploadView(APIView):
     """POST /api/productos/<id>/imagen/ — upload or replace product image.
 
@@ -204,108 +266,39 @@ class ProductoImagenUploadView(APIView):
         es_principal_str = str(data.get("es_principal", "true")).lower()
         es_principal = es_principal_str in ("true", "1", "yes")
 
-        url_guardada = None
         drive_file_id = None
-
-        if imagen_archivo:
-            if imagen_archivo.size > MAX_FILE_SIZE:
+        try:
+            if imagen_archivo:
+                raw_bytes, ext = _validate_file_upload(imagen_archivo)
+            elif imagen_base64:
+                raw_bytes, ext = _validate_base64_upload(imagen_base64)
+            else:
                 return _ok(
-                    message="El archivo excede el tamaño máximo de 5 MB.",
+                    message="Se requiere el campo 'imagen' (archivo) o 'imagen_base64'.",
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            nombre_raw = imagen_archivo.name or ""
-            if "." not in nombre_raw:
-                return _ok(
-                    message="El archivo debe tener una extensión válida.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            ext = nombre_raw.rsplit(".", 1)[-1].lower()
-            if ext not in EXTENSIONES_PERMITIDAS:
-                return _ok(
-                    message="Tipo de archivo no permitido. Use: jpg, jpeg, png, gif o webp.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            raw_bytes = b"".join(imagen_archivo.chunks())
-
-            if not _validar_imagen_bytes(raw_bytes):
-                return _ok(
-                    message="El archivo no es una imagen válida.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            try:
-                url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
-            except Exception:
-                logging.getLogger(__name__).error("Error subiendo imagen a Drive (file upload): %s", exc_info=True)
-                return _ok(
-                    message="Error al subir la imagen a Google Drive.",
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-        elif imagen_base64:
-            try:
-                if ";" in imagen_base64:
-                    imagen_base64 = imagen_base64.split(",", 1)[1]
-                raw_bytes = base64.b64decode(imagen_base64)
-            except (binascii.Error, ValueError):
-                return _ok(
-                    message="Formato base64 inválido.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if len(raw_bytes) > MAX_FILE_SIZE:
-                return _ok(
-                    message="El contenido excede el tamaño máximo de 5 MB.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if not _validar_imagen_bytes(raw_bytes):
-                return _ok(
-                    message="El contenido no es una imagen válida.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-            ext = _detect_image_format(raw_bytes) or "png"
-            try:
-                url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
-            except Exception:
-                logging.getLogger(__name__).error("Error subiendo imagen a Drive (base64): %s", exc_info=True)
-                return _ok(
-                    message="Error al subir la imagen a Google Drive.",
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-        else:
+            url_guardada, drive_file_id = _guardar_imagen_bytes(raw_bytes, ext, pk)
+        except ValueError as e:
+            return _ok(message=str(e), status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logging.getLogger(__name__).error("Error subiendo imagen a Drive: %s", exc_info=True)
             return _ok(
-                message="Se requiere el campo 'imagen' (archivo) o 'imagen_base64'.",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                message="Error al subir la imagen a Google Drive.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         try:
-            with transaction.atomic():
-                if es_principal:
-                    ProductoImagen.objects.filter(fk_producto=producto).update(es_principal=False)
-
-                imagen = ProductoImagen.objects.create(
-                    fk_producto=producto,
-                    url=url_guardada,
-                    drive_file_id=drive_file_id,
-                    es_principal=es_principal,
-                )
-
-                if es_principal:
-                    producto.imagen = url_guardada
-                    producto.save(update_fields=["imagen"])
+            imagen = _save_imagen_to_db(producto, url_guardada, drive_file_id, es_principal)
         except Exception as exc:
-            if drive_file_id:
-                delete_image(drive_file_id)
+            delete_image(drive_file_id)
             logging.getLogger(__name__).error("Error guardando imagen en DB: %s", exc, exc_info=True)
             return _ok(
                 message="Error al guardar la imagen en la base de datos.",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        make_public(drive_file_id)
 
         return _ok(
             data=ProductoImagenSerializer(imagen).data,

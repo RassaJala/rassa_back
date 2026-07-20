@@ -225,10 +225,13 @@ class ProductoImagenTests(TestCase):
     def setUp(self):
         self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
         self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._make_public_patcher = patch("rassa.productos_views.make_public", side_effect=lambda x: True)
         self._upload_patcher.start()
         self._delete_patcher.start()
+        self._make_public_patcher.start()
         self.addCleanup(self._upload_patcher.stop)
         self.addCleanup(self._delete_patcher.stop)
+        self.addCleanup(self._make_public_patcher.stop)
         self.admin = _create_user_with_role("Admin", "admin_img")
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
