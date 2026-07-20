@@ -70,9 +70,7 @@ class Command(BaseCommand):
                         [table],
                     )
                 except Exception as err:
-                    self.stdout.write(
-                        self.style.WARNING(f"Skipping {table}: {err}")
-                    )
+                    self.stdout.write(self.style.WARNING(f"Skipping {table}: {err}"))
                     continue
 
                 row = cursor.fetchone()
@@ -98,8 +96,4 @@ class Command(BaseCommand):
                 cursor.execute(sql)
                 self.stdout.write(self.style.SUCCESS(sql))
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"\n{len(reset_statements)} secuencias resincronizadas correctamente."
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"\n{len(reset_statements)} secuencias resincronizadas correctamente."))

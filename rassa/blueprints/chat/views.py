@@ -447,13 +447,6 @@ class ConversacionListView(APIView):
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
 
-        no_leidos_subq = Mensaje.objects.filter(
-            fk_conversacion=OuterRef("pk"),
-            fk_emisor__isnull=False,
-            estado=True,
-            leido=False,
-        ).exclude(fk_emisor=usuario)
-
         conversaciones = (
             Conversacion.objects.filter(
                 integrante__fk_usuario=usuario,
@@ -463,11 +456,15 @@ class ConversacionListView(APIView):
             .annotate(
                 ultimo_mensaje_contenido=Subquery(ultimo_subq.values("contenido")[:1]),
                 ultimo_mensaje_creado_en=Subquery(ultimo_subq.values("creado_en")[:1]),
-                no_leidos_count=Count("mensaje", filter=Q(
-                    mensaje__leido=False,
-                    mensaje__estado=True,
-                    mensaje__fk_emisor__isnull=False,
-                ) & ~Q(mensaje__fk_emisor=usuario)),
+                no_leidos_count=Count(
+                    "mensaje",
+                    filter=Q(
+                        mensaje__leido=False,
+                        mensaje__estado=True,
+                        mensaje__fk_emisor__isnull=False,
+                    )
+                    & ~Q(mensaje__fk_emisor=usuario),
+                ),
             )
             .prefetch_related(
                 Prefetch(
