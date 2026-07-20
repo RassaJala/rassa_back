@@ -16,6 +16,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
+from rassa.admin_views import AdminUsuarioViewSet
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 router = DefaultRouter()
 router.register(r"api/categorias", CategoriaProductoViewSet, basename="categoria-producto")
 router.register(r"api/unidades", UnidadViewSet, basename="unidad")
+router.register(r"api/admin/usuarios", AdminUsuarioViewSet, basename="admin-usuarios")
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
