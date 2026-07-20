@@ -1,0 +1,22 @@
+meta {
+  name: Enviar mensaje con documento
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/chat/mensajes/enviar-con-documento/
+  body: multipart-form
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+body:multipart-form {
+  fk_conversacion: 1
+  tipo_documento: imagen
+  contenido: Te envío la foto del producto
+  archivo: @file(ruta/al/archivo.jpg)
+}

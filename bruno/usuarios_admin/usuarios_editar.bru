@@ -1,0 +1,28 @@
+meta {
+  name: Editar usuario
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/admin/usuarios/{{usuariosAdminId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "telefono": "4619999999",
+    "nombre": "Admin"
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://127.0.0.1:8000
+  usuariosAdminId: 1
+}

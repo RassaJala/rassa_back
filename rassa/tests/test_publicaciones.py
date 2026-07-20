@@ -652,11 +652,12 @@ class PublicacionSeguridadTests(PublicacionBaseTestCase):
         self.assertEqual(body["data"]["estado"], "activo")
 
     def test_unique_agricultor_semana(self):
+        existing = PublicacionSemanal.objects.get(pk=self.pub_id)
         with self.assertRaises(IntegrityError):
             PublicacionSemanal.objects.create(
                 fk_agricultor=self.agricultor.usuario,
-                fecha_publicacion="2026-07-20",
-                semana=30,
+                fecha_publicacion=existing.fecha_publicacion,
+                semana=existing.semana,
                 estado="borrador",
             )
 

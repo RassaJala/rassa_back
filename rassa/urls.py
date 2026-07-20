@@ -16,7 +16,10 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from logs.utils import get_client_ip
+from rassa.admin_views import AdminUsuarioViewSet
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
+from rassa.blueprints.chat.urls import urlpatterns as chat_urls
+from rassa.blueprints.familias.urls import urlpatterns as familias_urls
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
 from rassa.views import (
@@ -40,6 +43,7 @@ logger = logging.getLogger(__name__)
 router = DefaultRouter()
 router.register(r"api/categorias", CategoriaProductoViewSet, basename="categoria-producto")
 router.register(r"api/unidades", UnidadViewSet, basename="unidad")
+router.register(r"api/admin/usuarios", AdminUsuarioViewSet, basename="admin-usuarios")
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -104,4 +108,6 @@ urlpatterns = [
     path("api/localidades/<int:pk>/restore/", LocalidadRestoreView.as_view(), name="localidad-restore"),
     path("", include(router.urls)),
     path("", include(publicacion_urls)),
+    path("", include(chat_urls)),
+    path("", include(familias_urls)),
 ]
