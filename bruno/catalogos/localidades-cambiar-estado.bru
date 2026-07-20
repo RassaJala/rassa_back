@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/api/localidades/1/estado/
+  url: {{baseUrl}}/localidades/1/estado/
   body: json
   auth: inherit
 }
@@ -19,8 +19,4 @@ body:json {
   {
     "estado": false
   }
-}
-
-vars:pre-request {
-  baseUrl: http://localhost:8000
 }

@@ -62,12 +62,10 @@ class CambiarEstadoSerializer(serializers.Serializer):
     Accepts only a boolean ``estado`` field.
     """
 
-    estado = serializers.BooleanField(required=True)
-
-    def validate_estado(self, value):
-        if not isinstance(value, bool):
-            raise serializers.ValidationError("El estado debe ser un valor booleano.")
-        return value
+    estado = serializers.BooleanField(
+        required=True,
+        error_messages={"required": "El campo estado es obligatorio."},
+    )
 
 
 class UnidadSerializer(serializers.ModelSerializer):

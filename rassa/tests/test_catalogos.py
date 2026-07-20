@@ -1085,3 +1085,14 @@ class CatalogosCRUDTest(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("estado", resp.data)
+
+    def test_localidad_cambiar_estado_invalid_type(self):
+        """PATCH with non-boolean estado returns 400."""
+        resp = self.client.patch(
+            reverse("localidad-cambiar-estado", kwargs={"pk": self.localidad.id_localidad}),
+            {"estado": "no es bool"},
+            format="json",
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", resp.data)
