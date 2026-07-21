@@ -1281,3 +1281,83 @@ class CatalogosCRUDTest(APITestCase):
             **self._admin_auth(),
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ==================================================================
+    # CASCADE protection
+    # ==================================================================
+
+    def test_municipio_permanent_delete_cascade_blocked(self):
+        """Cannot hard-delete a municipio that has associated localidades."""
+        temp_muni = Municipio.objects.create(nombre="Muni con Hijos")
+        temp_muni.estado = False
+        temp_muni.save(update_fields=["estado"])
+        # Create a localidad (even inactive) under this municipio
+        Localidad.objects.create(
+            nombre="Hija",
+            fk_municipio=temp_muni,
+            estado=False,
+        )
+
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp_muni.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        # Municipio should still exist
+        self.assertTrue(Municipio.objects.filter(pk=temp_muni.id_municipio).exists())
+        # Localidad should still exist too
+        self.assertTrue(Localidad.objects.filter(fk_municipio=temp_muni).exists())
+
+    def test_municipio_permanent_delete_cascade_allowed_no_hijos(self):
+        """Can hard-delete a municipio WITHOUT associated localidades."""
+        temp_muni = Municipio.objects.create(nombre="Muni Solitario")
+        temp_muni.estado = False
+        temp_muni.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp_muni.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertFalse(Municipio.objects.filter(pk=temp_muni.id_municipio).exists())
+
+    def test_municipio_permanent_delete_twice_returns_404(self):
+        """Second permanent delete on same pk returns 404."""
+        temp = Municipio.objects.create(nombre="Doble Delete")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        # First delete succeeds
+        resp1 = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+
+        # Second delete returns 404 (already gone)
+        resp2 = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_localidad_permanent_delete_twice_returns_404(self):
+        """Second permanent delete on same localidad pk returns 404."""
+        temp = Localidad.objects.create(
+            nombre="Doble Delete Localidad",
+            fk_municipio=self.municipio,
+        )
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp1 = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+
+        resp2 = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_404_NOT_FOUND)

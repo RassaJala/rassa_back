@@ -612,13 +612,18 @@ class CatalogTrashListView(PublicReadAdminWriteMixin, generics.ListAPIView):
     Public reads (AllowAny), admin-only writes (no write actions defined,
     but the mixin is here for consistency with other catalog endpoints).
 
-    Subclasses must set ``queryset`` and ``serializer_class``.
+    Subclasses must set ``queryset``, ``serializer_class``, and ``ordering``.
     URL: GET /api/{resource}/trash/  →  [{...}, ...]
+
+    Note: No pagination (``pagination_class = None``) to match the existing
+    ``MunicipioListCreateView`` pattern. If the trash grows large, add
+    ``CatalogPagination`` here and update the frontend to read from
+    ``results`` inside the paginated envelope.
     """
 
+    pagination_class = None
     throttle_classes = [ScopedRateThrottle, UserRateThrottle]
     throttle_scope = "catalog_read"
-    pagination_class = None
 
     def get_queryset(self):
         return self.queryset.model.objects.filter(estado=False)
@@ -633,9 +638,7 @@ class MunicipioTrashListView(CatalogTrashListView):
 
     queryset = Municipio.objects.all()
     serializer_class = MunicipioSerializer
-
-    def get_queryset(self):
-        return Municipio.objects.filter(estado=False).order_by("nombre")
+    ordering = ["nombre"]
 
 
 class LocalidadTrashListView(CatalogTrashListView):
@@ -643,9 +646,7 @@ class LocalidadTrashListView(CatalogTrashListView):
 
     queryset = Localidad.objects.all()
     serializer_class = LocalidadSerializer
-
-    def get_queryset(self):
-        return Localidad.objects.filter(estado=False).order_by("nombre")
+    ordering = ["nombre"]
 
 
 # ======================================================================
@@ -685,9 +686,26 @@ class CatalogPermanentDeleteView(generics.GenericAPIView):
 
 
 class MunicipioPermanentDeleteView(CatalogPermanentDeleteView):
-    """Permanently delete a soft-deleted municipio."""
+    """Permanently delete a soft-deleted municipio.
+
+    Blocks deletion if the municipio still has associated localidades
+    (even inactive ones) to prevent accidental CASCADE data loss.
+    """
 
     queryset = Municipio.objects.all()
+
+    def post(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if Localidad.objects.filter(fk_municipio=instance).exists():
+            raise ValidationError(
+                {
+                    "non_field_errors": [
+                        "No se puede eliminar el municipio porque tiene localidades asociadas. "
+                        "Elimine o reasigne las localidades primero."
+                    ]
+                }
+            )
+        return super().post(request, *args, **kwargs)
 
 
 class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
