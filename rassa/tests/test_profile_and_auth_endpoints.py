@@ -695,3 +695,72 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         # Admin user passes
         request = type("Req", (), {"user": self.admin_user, "method": "POST"})()
         self.assertTrue(hr.has_permission(request, None))
+
+    # ==================================================================
+    # SEARCH USERS TESTS
+    # ==================================================================
+
+    def test_search_users_success(self):
+        """GET /api/auth/search-users/ with query returns matching active non-admin users."""
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        # Search for "Juan" (self.usuario has name "Juan")
+        response = self.client.get(
+            reverse("search-users"),
+            {"q": "Juan"},
+            **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 1)
+        self.assertEqual(response.data["data"][0]["email"], self.email)
+
+    def test_search_users_missing_query_param(self):
+        """GET /api/auth/search-users/ without 'q' parameter returns 400 Bad Request."""
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        response = self.client.get(
+            reverse("search-users"),
+            {},
+            **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("q", response.data)
+
+    def test_search_users_query_too_short(self):
+        """GET /api/auth/search-users/ with query < 3 chars returns 400 Bad Request."""
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        response = self.client.get(
+            reverse("search-users"),
+            {"q": "Ju"},
+            **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("q", response.data)
+
+    def test_search_users_excludes_admins(self):
+        """GET /api/auth/search-users/ does not return Admin users."""
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        # Search for "Admin" (self.admin_usuario has name "Admin")
+        response = self.client.get(
+            reverse("search-users"),
+            {"q": "Admin"},
+            **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 0)
+
+    def test_search_users_excludes_users_with_family(self):
+        """GET /api/auth/search-users/ does not return users already in an active family."""
+        # Create a family and add self.usuario to it
+        from rassa.models import Familia, FamiliaUsuario
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario, fk_familia=familia)
+
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        # Search for "Juan" (should now be excluded because they are in an active family)
+        response = self.client.get(
+            reverse("search-users"),
+            {"q": "Juan"},
+            **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 0)
+

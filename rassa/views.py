@@ -712,3 +712,41 @@ class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
     """Permanently delete a soft-deleted localidad."""
 
     queryset = Localidad.objects.all()
+
+
+class SearchUsersView(APIView):
+    """Endpoint para buscar usuarios activos por nombre o correo."""
+
+    permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
+
+    def get(self, request):
+        from django.db.models import Q
+        from rassa.models import FamiliaUsuario
+        
+        if "q" not in request.query_params:
+            raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
+            
+        query = request.query_params.get("q", "").strip()
+        if not query:
+            raise ValidationError({"q": "El parámetro de búsqueda 'q' no puede estar vacío."})
+            
+        if len(query) < 3:
+            raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
+
+        usuarios_con_familia = FamiliaUsuario.objects.filter(
+            estado=True,
+            fk_familia__estado=True
+        ).values_list("fk_usuario_id", flat=True)
+
+        usuarios = Usuario.objects.filter(estado=True).exclude(
+            fk_rol__nombre_rol="Admin"
+        ).filter(
+            Q(correo__icontains=query) |
+            Q(fk_persona__nombre__icontains=query) |
+            Q(fk_persona__apellido_paterno__icontains=query) |
+            Q(fk_persona__apellido_materno__icontains=query)
+        ).exclude(id_usuario__in=usuarios_con_familia)[:10]
+
+        serializer = UserSerializer(usuarios, many=True)
+        return _ok(data=serializer.data)
+
