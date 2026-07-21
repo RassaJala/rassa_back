@@ -1096,3 +1096,188 @@ class CatalogosCRUDTest(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("estado", resp.data)
+
+    # ==================================================================
+    # Trash — listar inactivos
+    # ==================================================================
+
+    def test_municipio_trash_list_admin_success(self):
+        """Admin can list soft-deleted municipios in trash."""
+        Municipio.objects.create(nombre="Eliminado Test")
+        temp = Municipio.objects.get(nombre="Eliminado Test")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.get(
+            reverse("municipios-trash"),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("data", resp.data)
+        names = [m["nombre"] for m in resp.data["data"]]
+        self.assertIn("Eliminado Test", names)
+        self.assertNotIn("Celaya", names)  # Celaya is active, not in trash
+
+    def test_municipio_trash_list_unauthenticated(self):
+        """Unauthenticated can list trash (public read)."""
+        resp = self.client.get(reverse("municipios-trash"))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("data", resp.data)
+
+    def test_municipio_trash_list_empty(self):
+        """Trash returns empty list when no records are inactive."""
+        resp = self.client.get(
+            reverse("municipios-trash"),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]), 0)
+
+    def test_municipio_trash_list_includes_estado_field(self):
+        """Trash response includes estado field (should be False)."""
+        temp = Municipio.objects.create(nombre="Inactivo Test")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.get(
+            reverse("municipios-trash"),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        for item in resp.data["data"]:
+            self.assertIn("estado", item)
+            self.assertFalse(item["estado"])
+
+    def test_localidad_trash_list_admin_success(self):
+        """Admin can list soft-deleted localidades in trash."""
+        temp = Localidad.objects.create(
+            nombre="Localidad Eliminada",
+            fk_municipio=self.municipio,
+        )
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.get(
+            reverse("localidades-trash"),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("data", resp.data)
+        names = [l["nombre"] for l in resp.data["data"]]
+        self.assertIn("Localidad Eliminada", names)
+        self.assertNotIn("Centro", names)  # Centro is active
+
+    def test_localidad_trash_list_unauthenticated(self):
+        """Unauthenticated can list localidad trash (public read)."""
+        resp = self.client.get(reverse("localidades-trash"))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("data", resp.data)
+
+    # ==================================================================
+    # Permanent delete (hard delete)
+    # ==================================================================
+
+    def test_municipio_permanent_delete_admin_success(self):
+        """Admin can permanently delete a soft-deleted municipio."""
+        temp = Municipio.objects.create(nombre="Para Eliminar")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        # Verify it's actually gone
+        self.assertFalse(Municipio.objects.filter(pk=temp.id_municipio).exists())
+
+    def test_municipio_permanent_delete_active_forbidden(self):
+        """Cannot permanently delete an active municipio."""
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": self.municipio.id_municipio}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        # Record should still exist
+        self.assertTrue(Municipio.objects.filter(pk=self.municipio.id_municipio).exists())
+
+    def test_municipio_permanent_delete_nonadmin_forbidden(self):
+        """Non-admin gets 403 for permanent delete."""
+        temp = Municipio.objects.create(nombre="Temporal")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp.id_municipio}),
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_municipio_permanent_delete_unauthenticated(self):
+        """Unauthenticated gets 401 for permanent delete."""
+        temp = Municipio.objects.create(nombre="Temporal")
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": temp.id_municipio}),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_municipio_permanent_delete_not_found(self):
+        """Permanent delete on non-existent pk returns 404."""
+        resp = self.client.post(
+            reverse("municipio-permanent", kwargs={"pk": 99999}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_localidad_permanent_delete_admin_success(self):
+        """Admin can permanently delete a soft-deleted localidad."""
+        temp = Localidad.objects.create(
+            nombre="Localidad Temp",
+            fk_municipio=self.municipio,
+        )
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": temp.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("message", resp.data)
+        self.assertFalse(Localidad.objects.filter(pk=temp.id_localidad).exists())
+
+    def test_localidad_permanent_delete_active_forbidden(self):
+        """Cannot permanently delete an active localidad."""
+        resp = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": self.localidad.id_localidad}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Localidad.objects.filter(pk=self.localidad.id_localidad).exists())
+
+    def test_localidad_permanent_delete_nonadmin_forbidden(self):
+        """Non-admin gets 403 for permanent delete of localidad."""
+        temp = Localidad.objects.create(
+            nombre="Temp Localidad",
+            fk_municipio=self.municipio,
+        )
+        temp.estado = False
+        temp.save(update_fields=["estado"])
+
+        resp = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": temp.id_localidad}),
+            **self._nonadmin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_localidad_permanent_delete_not_found(self):
+        """Permanent delete on non-existent localidad pk returns 404."""
+        resp = self.client.post(
+            reverse("localidad-permanent", kwargs={"pk": 99999}),
+            **self._admin_auth(),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
