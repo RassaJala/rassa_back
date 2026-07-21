@@ -1163,7 +1163,7 @@ class CatalogosCRUDTest(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn("data", resp.data)
-        names = [l["nombre"] for l in resp.data["data"]]
+        names = [loc["nombre"] for loc in resp.data["data"]]
         self.assertIn("Localidad Eliminada", names)
         self.assertNotIn("Centro", names)  # Centro is active
 
