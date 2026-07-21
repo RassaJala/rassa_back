@@ -4,15 +4,16 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import OuterRef, Prefetch, Subquery
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from rassa.models import Conversacion, Documento, Integrante, Mensaje, MensajeDocumento, Usuario
+from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
 from .serializers import (
@@ -26,6 +27,7 @@ from .serializers import (
 class MensajeListView(generics.ListAPIView):
     serializer_class = MensajeSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = PageNumberPagination
 
     def get_queryset(self):
         conversacion_id = self.kwargs.get("conversacion_id")
@@ -49,7 +51,8 @@ class MensajeListView(generics.ListAPIView):
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return _ok(data=serializer.data)
+            paginated = self.get_paginated_response(serializer.data).data
+            return _ok(data=paginated)
         serializer = self.get_serializer(queryset, many=True)
         return _ok(data=serializer.data)
 
@@ -164,7 +167,7 @@ class ConversacionPrivadaCreateView(APIView):
 
     def post(self, request):
         usuario1 = request.user.usuario
-        usuario2_id = request.data.get("usuario2")
+        usuario2_id = request.data.get("usuario2") or request.data.get("fk_usuario")
 
         if not usuario2_id:
             return Response(
@@ -250,10 +253,52 @@ class ConversacionGrupalCreateView(APIView):
             )
 
         usuario_creador = request.user.usuario
+        fk_usuarios = request.data.get("fk_usuarios") or []
+
+        # Validate fk_usuarios is a list of integers
+        invalid_ids = []
+        cleaned_ids = []
+        for uid in fk_usuarios:
+            try:
+                cleaned_ids.append(int(uid))
+            except (TypeError, ValueError):
+                invalid_ids.append(uid)
+
+        if invalid_ids:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "fk_usuarios debe contener solo IDs numéricos.",
+                    "data": {"invalidos": invalid_ids},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Resolve users and report missing IDs before creating anything
+        usuarios = []
+        missing_ids = []
+        for uid in cleaned_ids:
+            try:
+                usuarios.append(Usuario.objects.get(pk=uid, estado=True))
+            except Usuario.DoesNotExist:
+                missing_ids.append(uid)
+
+        if missing_ids:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "Algunos usuarios no existen.",
+                    "data": {"no_encontrados": missing_ids},
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
             Integrante.objects.create(fk_usuario=usuario_creador, fk_conversacion=conv)
+
+            for usuario in usuarios:
+                Integrante.objects.create(fk_usuario=usuario, fk_conversacion=conv)
 
         return Response(
             {
@@ -319,7 +364,7 @@ class ConversacionAgregarIntegranteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, conversacion_id):
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.data.get("usuario_id") or request.data.get("fk_usuario")
 
         if not usuario_id:
             return Response(
@@ -362,16 +407,20 @@ class ConversacionAgregarIntegranteView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if conv.integrante_set.filter(fk_usuario=usuario_nuevo, estado=True).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "El usuario ya es miembro de esta conversación.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        Integrante.objects.create(fk_usuario=usuario_nuevo, fk_conversacion=conv)
+        integrante = Integrante.objects.filter(fk_usuario=usuario_nuevo, fk_conversacion=conv).first()
+        if integrante:
+            if integrante.estado:
+                return Response(
+                    {
+                        "ok": False,
+                        "mensaje": "El usuario ya es miembro de esta conversación.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            integrante.estado = True
+            integrante.save(update_fields=["estado"])
+        else:
+            Integrante.objects.create(fk_usuario=usuario_nuevo, fk_conversacion=conv)
 
         return Response(
             {
@@ -433,6 +482,7 @@ class ConversacionListView(APIView):
         usuario = request.user.usuario
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
+        es_familia_subq = Familia.objects.filter(nombre_familia=OuterRef("nombre"), estado=True)
 
         conversaciones = (
             Conversacion.objects.filter(
@@ -443,6 +493,16 @@ class ConversacionListView(APIView):
             .annotate(
                 ultimo_mensaje_contenido=Subquery(ultimo_subq.values("contenido")[:1]),
                 ultimo_mensaje_creado_en=Subquery(ultimo_subq.values("creado_en")[:1]),
+                no_leidos_count=Count(
+                    "mensaje",
+                    filter=Q(
+                        mensaje__leido=False,
+                        mensaje__estado=True,
+                        mensaje__fk_emisor__isnull=False,
+                    )
+                    & ~Q(mensaje__fk_emisor=usuario),
+                ),
+                es_familia=Exists(es_familia_subq),
             )
             .prefetch_related(
                 Prefetch(
@@ -476,6 +536,8 @@ class ConversacionListView(APIView):
                     "ultimo_mensaje_creado_en": (
                         conv.ultimo_mensaje_creado_en.isoformat() if conv.ultimo_mensaje_creado_en else None
                     ),
+                    "no_leidos": conv.no_leidos_count,
+                    "es_familia": conv.es_familia,
                 }
             )
 
@@ -486,12 +548,16 @@ class MensajeDocumentoCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    def get_serializer_context(self):
-        return {"usuario": self.request.user.usuario}
-
     def post(self, request):
+        data = {key: request.data[key] for key in request.data.keys()}
+
+        if "conversacion" in data and "fk_conversacion" not in data:
+            data["fk_conversacion"] = data.pop("conversacion")
+        if "documento" in data and "archivo" not in data:
+            data["archivo"] = data.pop("documento")
+
         serializer = MensajeDocumentoCreateSerializer(
-            data=request.data,
+            data=data,
             context={"usuario": request.user.usuario},
         )
         serializer.is_valid(raise_exception=True)
