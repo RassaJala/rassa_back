@@ -17,8 +17,8 @@ from rest_framework.exceptions import NotFound
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.throttling import ScopedRateThrottle
 
-from rassa.models import Producto, ProductoImagen
-from rassa.permissions.role_permissions import HasRole
+from rassa.models import Producto, ProductoImagen, PublicacionSemanal
+from rassa.permissions.role_permissions import ADMIN, HasRole
 from rassa.services.google_drive import delete_file, upload_image
 from rassa.views import _ok
 
@@ -96,6 +96,40 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         except Producto.DoesNotExist:
             raise NotFound("Producto no encontrado.") from None
 
+    def _check_ownership(self, request, producto_id):
+        """Verifica que un Agricultor tenga permiso sobre las imágenes de un producto.
+
+        Admin siempre tiene acceso. Agricultor solo puede modificar imágenes
+        de productos que haya publicado al menos una vez (via PublicacionSemanal).
+
+        Args:
+            request: Request HTTP con usuario autenticado.
+            producto_id (int): ID del producto.
+
+        Raises:
+            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
+        """
+        from rest_framework.exceptions import PermissionDenied
+
+        try:
+            rol = request.user.usuario.fk_rol.nombre_rol
+        except AttributeError:
+            raise PermissionDenied("No se pudo verificar el rol del usuario.") from None
+
+        if rol == ADMIN:
+            return
+
+        tiene_publicacion = PublicacionSemanal.objects.filter(
+            fk_agricultor=request.user.usuario,
+            productosemanal__fk_producto_id=producto_id,
+        ).exists()
+
+        if not tiene_publicacion:
+            raise PermissionDenied(
+                "No tenés publicaciones con este producto. "
+                "Solo podés gestionar imágenes de productos que hayas publicado."
+            )
+
     def list(self, request, producto_id=None):
         """Lista todas las imágenes de un producto específico.
 
@@ -135,6 +169,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 o error con status 400.
         """
         self._get_producto_or_404(producto_id)
+        self._check_ownership(request, producto_id)
 
         archivo = request.FILES.get("archivo")
         url = request.data.get("url", "").strip() if not archivo else None
@@ -155,6 +190,12 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 return _ok(
                     message=str(e),
                     status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            except Exception as e:
+                logger.error("Error al subir imagen a Google Drive: %s", e)
+                return _ok(
+                    message="Error al subir la imagen a Google Drive. Intentá de nuevo.",
+                    status_code=status.HTTP_502_BAD_GATEWAY,
                 )
 
         data = {
@@ -184,6 +225,9 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         Si la eliminación de Drive falla, se registra un warning pero
         el registro se elimina igualmente.
 
+        Verifica ownership: Admin puede eliminar cualquier imagen;
+        Agricultor solo puede eliminar imágenes de productos publicados.
+
         Args:
             request: Request HTTP con autenticación.
             producto_id (int): ID del producto padre.
@@ -194,8 +238,10 @@ class ProductoImagenViewSet(viewsets.ViewSet):
 
         Raises:
             NotFound: Si el producto o la imagen no existen.
+            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
         """
         self._get_producto_or_404(producto_id)
+        self._check_ownership(request, producto_id)
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:
@@ -210,6 +256,46 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         imagen.delete()
         return _ok(message="Imagen eliminada correctamente.")
 
+    def partial_update(self, request, producto_id=None, pk=None):
+        """Actualiza parcialmente los campos editables de una imagen (URL, orden).
+
+        Verifica ownership: Admin puede actualizar cualquier imagen;
+        Agricultor solo puede actualizar imágenes de productos publicados.
+
+        Args:
+            request: Request HTTP con autenticación.
+            producto_id (int): ID del producto padre.
+            pk (int): ID de la imagen a actualizar.
+
+        Returns:
+            Response: Datos de la imagen actualizada con status 200.
+
+        Raises:
+            NotFound: Si el producto o la imagen no existen.
+            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
+        """
+        self._get_producto_or_404(producto_id)
+        self._check_ownership(request, producto_id)
+        try:
+            imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
+        except ProductoImagen.DoesNotExist:
+            raise NotFound("Imagen no encontrada.") from None
+
+        allowed_fields = {"url", "orden"}
+        data = {k: v for k, v in request.data.items() if k in allowed_fields}
+
+        if not data:
+            return _ok(
+                message="No se proporcionaron campos para actualizar.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ProductoImagenSerializer(imagen, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return _ok(data=serializer.data, message="Imagen actualizada correctamente.")
+
     @action(detail=True, methods=["patch"], url_path="set-principal")
     def set_principal(self, request, producto_id=None, pk=None):
         """Marca una imagen como principal del producto.
@@ -217,6 +303,9 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         Garantiza que solo una imagen sea principal por producto
         usando una transacción atómica: primero desmarca todas las
         imágenes principales del producto, luego marca la seleccionada.
+
+        Verifica ownership: Admin puede marcar cualquier imagen;
+        Agricultor solo puede marcar imágenes de productos publicados.
 
         Args:
             request: Request HTTP con autenticación.
@@ -228,8 +317,10 @@ class ProductoImagenViewSet(viewsets.ViewSet):
 
         Raises:
             NotFound: Si el producto o la imagen no existen.
+            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
         """
         self._get_producto_or_404(producto_id)
+        self._check_ownership(request, producto_id)
         try:
             imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
         except ProductoImagen.DoesNotExist:

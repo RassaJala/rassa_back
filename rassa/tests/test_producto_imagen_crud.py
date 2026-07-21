@@ -3,7 +3,16 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import CategoriaProducto, Persona, Producto, ProductoImagen, Rol, Usuario
+from rassa.models import (
+    CategoriaProducto,
+    Persona,
+    Producto,
+    ProductoImagen,
+    ProductoSemanal,
+    PublicacionSemanal,
+    Rol,
+    Usuario,
+)
 
 
 def _create_user_with_role(nombre_rol, username):
@@ -259,3 +268,156 @@ class ProductoImagenCrudTests(APITestCase):
             reverse("producto-imagen-set-principal", args=[self.producto.id_producto, self.imagen.id_imagen])
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ── PARTIAL UPDATE (PATCH) ───────────────────────────────────
+
+    def test_patch_actualiza_url(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "https://example.com/nueva-manzana.jpg"},
+            format="json",
+        )
+        data = self._assert_success_envelope(response, message="Imagen actualizada correctamente.")
+        self.assertEqual(data["url"], "https://example.com/nueva-manzana.jpg")
+        self.imagen.refresh_from_db()
+        self.assertEqual(self.imagen.url, "https://example.com/nueva-manzana.jpg")
+
+    def test_patch_actualiza_orden(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"orden": 99},
+            format="json",
+        )
+        data = self._assert_success_envelope(response, message="Imagen actualizada correctamente.")
+        self.assertEqual(data["orden"], 99)
+
+    def test_patch_actualiza_url_y_orden_simultaneamente(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "https://example.com/updated.jpg", "orden": 5},
+            format="json",
+        )
+        data = self._assert_success_envelope(response, message="Imagen actualizada correctamente.")
+        self.assertEqual(data["url"], "https://example.com/updated.jpg")
+        self.assertEqual(data["orden"], 5)
+
+    def test_patch_campos_no_permitidos_ignorados(self):
+        self.imagen.es_principal = True
+        self.imagen.save(update_fields=["es_principal"])
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"es_principal": False, "url": "https://example.com/test.jpg"},
+            format="json",
+        )
+        self._assert_success_envelope(response, message="Imagen actualizada correctamente.")
+        self.imagen.refresh_from_db()
+        self.assertTrue(self.imagen.es_principal)
+
+    def test_patch_sin_campos_validos_returns_400(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"campo_invalido": "valor"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_url_inexistente_returns_404(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, 9999]),
+            {"url": "https://example.com/test.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_url_http_rejected(self):
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "http://example.com/test.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_reader_no_puede_parchar_imagen(self):
+        self.client.force_authenticate(self.reader)
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "https://example.com/test.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ── OWNERSHIP ────────────────────────────────────────────────
+
+    def test_agricultor_con_publicacion_puede_crear_imagen(self):
+        agricultor = _create_user_with_role("Agricultor", "agri_owner")
+        publicacion = PublicacionSemanal.objects.create(
+            fk_agricultor=agricultor.usuario,
+            fecha_publicacion="2026-07-21",
+            semana=29,
+            estado="publicado",
+        )
+        from rassa.models import Unidad
+
+        unidad, _ = Unidad.objects.get_or_create(
+            tipo="Peso",
+            defaults={"nombre": "Kilogramo", "abreviatura": "kg"},
+        )
+        ProductoSemanal.objects.create(
+            fk_publicacion=publicacion,
+            fk_producto=self.producto,
+            fk_unidad=unidad,
+            stock=10,
+            precio=25.00,
+        )
+        self.client.force_authenticate(agricultor)
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "https://example.com/agri.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_agricultor_sin_publicacion_no_puede_crear_imagen(self):
+        agricultor = _create_user_with_role("Agricultor", "agri_no_pub")
+        self.client.force_authenticate(agricultor)
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {"url": "https://example.com/test.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_agricultor_sin_publicacion_no_puede_eliminar_imagen(self):
+        agricultor = _create_user_with_role("Agricultor", "agri_del")
+        self.client.force_authenticate(agricultor)
+        response = self.client.delete(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen])
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_agricultor_sin_publicacion_no_puede_parchar_imagen(self):
+        agricultor = _create_user_with_role("Agricultor", "agri_patch")
+        self.client.force_authenticate(agricultor)
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "https://example.com/new.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_agricultor_sin_publicacion_no_puede_set_principal(self):
+        agricultor = _create_user_with_role("Agricultor", "agri_principal")
+        self.client.force_authenticate(agricultor)
+        response = self.client.patch(
+            reverse("producto-imagen-set-principal", args=[self.producto.id_producto, self.imagen.id_imagen])
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_puede_parchar_imagen_de_cualquier_producto(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen]),
+            {"url": "https://example.com/admin-update.jpg"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

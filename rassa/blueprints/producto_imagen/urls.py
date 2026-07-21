@@ -10,7 +10,7 @@ urlpatterns = [
     ),
     path(
         "api/productos/<int:producto_id>/imagenes/<int:pk>/",
-        ProductoImagenViewSet.as_view({"delete": "destroy"}),
+        ProductoImagenViewSet.as_view({"delete": "destroy", "patch": "partial_update"}),
         name="producto-imagen-detail",
     ),
     path(

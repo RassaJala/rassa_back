@@ -166,6 +166,88 @@ class DeleteFileTests(SimpleTestCase):
         with self.assertRaises(RuntimeError):
             delete_file("abc123")
 
+    @patch("rassa.services.google_drive.time.sleep")
+    @patch("rassa.services.google_drive._get_drive_service")
+    def test_delete_retries_on_429(self, mock_get_service, mock_sleep):
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        resp = MagicMock()
+        resp.status = 429
+        error_429 = HttpError(resp, b"rate limited")
+
+        call_count = 0
+
+        def execute_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise error_429
+            return {}
+
+        mock_service.files().delete().execute.side_effect = execute_side_effect
+
+        delete_file("abc123")
+        self.assertEqual(call_count, 2)
+        mock_sleep.assert_called_once()
+
+    @patch("rassa.services.google_drive.time.sleep")
+    @patch("rassa.services.google_drive._get_drive_service")
+    def test_delete_retries_on_500(self, mock_get_service, mock_sleep):
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        resp = MagicMock()
+        resp.status = 500
+        error_500 = HttpError(resp, b"server error")
+
+        call_count = 0
+
+        def execute_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise error_500
+            return {}
+
+        mock_service.files().delete().execute.side_effect = execute_side_effect
+
+        delete_file("abc123")
+        self.assertEqual(call_count, 3)
+
+    @patch("rassa.services.google_drive.time.sleep")
+    @patch("rassa.services.google_drive._get_drive_service")
+    def test_delete_raises_after_exhausted_retries(self, mock_get_service, mock_sleep):
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        resp = MagicMock()
+        resp.status = 500
+        error_500 = HttpError(resp, b"server error")
+
+        mock_service.files().delete().execute.side_effect = error_500
+
+        with self.assertRaises(HttpError):
+            delete_file("abc123")
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("rassa.services.google_drive.time.sleep")
+    @patch("rassa.services.google_drive._get_drive_service")
+    def test_delete_non_retryable_error_raises_immediately(self, mock_get_service, mock_sleep):
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+        mock_service.files().delete().execute.side_effect = ValueError("bad input")
+
+        with self.assertRaises(ValueError):
+            delete_file("abc123")
+        mock_sleep.assert_not_called()
+
 
 class ExecuteWithRetryTests(SimpleTestCase):
     @patch("rassa.services.google_drive.time.sleep")
