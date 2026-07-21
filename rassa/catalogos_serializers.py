@@ -32,7 +32,7 @@ def _validate_nombre(self, value):
 class MunicipioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Municipio
-        fields = ["id_municipio", "nombre"]
+        fields = ["id_municipio", "nombre", "estado"]
         read_only_fields = ["estado"]
 
     validate_nombre = _validate_nombre
@@ -43,7 +43,7 @@ class LocalidadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Localidad
-        fields = ["id_localidad", "nombre", "municipio_id"]
+        fields = ["id_localidad", "nombre", "municipio_id", "estado"]
         read_only_fields = ["fk_municipio", "estado"]
 
     validate_nombre = _validate_nombre

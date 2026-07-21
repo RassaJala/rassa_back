@@ -1,0 +1,16 @@
+meta {
+  name: Localidades - Listar Trash (inactivas)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/localidades/trash/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}

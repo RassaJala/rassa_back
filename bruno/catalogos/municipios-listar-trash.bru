@@ -1,0 +1,16 @@
+meta {
+  name: Municipios - Listar Trash (inactivos)
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/municipios/trash/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}

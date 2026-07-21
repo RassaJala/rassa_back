@@ -300,3 +300,94 @@ class FamiliasTestCase(TestCase):
             format="json",
         )
         self.assertEqual(response_patch.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_list_miembros_filtrado_por_familia_exito(self):
+        """Valida el listado correcto filtrado por una familia existente."""
+        familia = Familia.objects.create(nombre_familia="Familia Filtro")
+        rel1 = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+        rel2 = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente2, fk_familia=familia, estado=True)
+
+        response = self.client.get(
+            "/api/familias/miembros/",
+            {"fk_familia": familia.id_familia},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 2)
+        ids = [item["id_familia_usuario"] for item in response.data["results"]]
+        self.assertIn(rel1.id_familia_usuario, ids)
+        self.assertIn(rel2.id_familia_usuario, ids)
+
+    def test_list_miembros_invalid_familia_id_format(self):
+        """Valida que pasar un fk_familia no numérico devuelva error 400."""
+        response = self.client.get(
+            "/api/familias/miembros/",
+            {"fk_familia": "no-numerico"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_familia", response.data)
+
+    def test_list_miembros_nonexistent_or_inactive_familia(self):
+        """Valida que pasar un fk_familia inexistente o inactivo devuelva error 400."""
+        response1 = self.client.get(
+            "/api/familias/miembros/",
+            {"fk_familia": 99999},
+            format="json",
+        )
+        self.assertEqual(response1.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_familia", response1.data)
+
+        familia_inactiva = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        response2 = self.client.get(
+            "/api/familias/miembros/",
+            {"fk_familia": familia_inactiva.id_familia},
+            format="json",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_familia", response2.data)
+
+    def test_papelera_familias_exito(self):
+        """Valida que una familia inactiva aparezca en la papelera y no en la lista activa."""
+        Familia.objects.create(nombre_familia="Familia Activa", estado=True)
+        Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+
+        # Listar activas
+        response_activa = self.client.get("/api/familias/grupos/", format="json")
+        self.assertEqual(response_activa.status_code, status.HTTP_200_OK)
+        nombres_activos = [f["nombre_familia"] for f in response_activa.data["results"]]
+        self.assertIn("Familia Activa", nombres_activos)
+        self.assertNotIn("Familia Inactiva", nombres_activos)
+
+        # Listar papelera
+        response_trash = self.client.get("/api/familias/grupos/trash/", format="json")
+        self.assertEqual(response_trash.status_code, status.HTTP_200_OK)
+        nombres_trash = [f["nombre_familia"] for f in response_trash.data["results"]]
+        self.assertNotIn("Familia Activa", nombres_trash)
+        self.assertIn("Familia Inactiva", nombres_trash)
+
+    def test_restaurar_familia_exito(self):
+        """Valida la restauración de una familia inactiva y de sus miembros."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        miembro = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=False)
+
+        response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/restore/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verificar estado restaurado
+        familia.refresh_from_db()
+        miembro.refresh_from_db()
+        self.assertTrue(familia.estado)
+        self.assertTrue(miembro.estado)
+
+    def test_eliminacion_permanente_familia_exito(self):
+        """Valida la eliminación física definitiva de una familia inactiva."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        miembro = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=False)
+
+        response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/permanent/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verificar eliminación de la DB
+        self.assertFalse(Familia.objects.filter(id_familia=familia.id_familia).exists())
+        self.assertFalse(FamiliaUsuario.objects.filter(id_familia_usuario=miembro.id_familia_usuario).exists())
