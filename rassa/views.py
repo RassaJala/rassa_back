@@ -599,3 +599,116 @@ class MunicipioCambiarEstadoView(CambiarEstadoView):
 class LocalidadCambiarEstadoView(CambiarEstadoView):
     queryset = Localidad.objects.all()
     serializer_class = LocalidadSerializer
+
+
+# ======================================================================
+# Trash (papelera — listar inactivos)
+# ======================================================================
+
+
+class CatalogTrashListView(PublicReadAdminWriteMixin, generics.ListAPIView):
+    """Base view to list soft-deleted (inactive) catalog records.
+
+    Public reads (AllowAny), admin-only writes (no write actions defined,
+    but the mixin is here for consistency with other catalog endpoints).
+
+    Subclasses must set ``queryset``, ``serializer_class``, and ``ordering``.
+    URL: GET /api/{resource}/trash/  →  [{...}, ...]
+
+    Note: No pagination (``pagination_class = None``) to match the existing
+    ``MunicipioListCreateView`` pattern. If the trash grows large, add
+    ``CatalogPagination`` here and update the frontend to read from
+    ``results`` inside the paginated envelope.
+    """
+
+    pagination_class = None
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    throttle_scope = "catalog_read"
+
+    def get_queryset(self):
+        return self.queryset.model.objects.filter(estado=False)
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        return _ok(data=response.data)
+
+
+class MunicipioTrashListView(CatalogTrashListView):
+    """List inactive (soft-deleted) municipios."""
+
+    queryset = Municipio.objects.all()
+    serializer_class = MunicipioSerializer
+    ordering = ["nombre"]
+
+
+class LocalidadTrashListView(CatalogTrashListView):
+    """List inactive (soft-deleted) localidades."""
+
+    queryset = Localidad.objects.all()
+    serializer_class = LocalidadSerializer
+    ordering = ["nombre"]
+
+
+# ======================================================================
+# Permanent delete (hard delete desde la BD)
+# ======================================================================
+
+
+class CatalogPermanentDeleteView(generics.GenericAPIView):
+    """Base view to permanently delete a soft-deleted catalog record.
+
+    Subclasses must set ``queryset``.
+    URL: POST /api/{resource}/<pk>/permanent/  →  hard delete
+    """
+
+    throttle_classes = [ScopedRateThrottle, UserRateThrottle]
+    throttle_scope = "catalog_write"
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasRole("Admin")]
+
+    def get_queryset(self):
+        # Only allow permanent delete on already-inactive records
+        return self.queryset.model.objects.filter(estado=False)
+
+    def post(self, request, *args, **kwargs):
+        instance = self.get_object()
+        model_name = type(instance).__name__
+        nombre = getattr(instance, "nombre", "")
+        pk = instance.pk
+        instance.delete()
+        _log(
+            request.user,
+            f"{model_name} eliminado permanentemente: {nombre} (id={pk})",
+            request,
+        )
+        return _ok(message="Registro eliminado permanentemente.")
+
+
+class MunicipioPermanentDeleteView(CatalogPermanentDeleteView):
+    """Permanently delete a soft-deleted municipio.
+
+    Blocks deletion if the municipio still has associated localidades
+    (even inactive ones) to prevent accidental CASCADE data loss.
+    """
+
+    queryset = Municipio.objects.all()
+
+    def post(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if Localidad.objects.filter(fk_municipio=instance).exists():
+            raise ValidationError(
+                {
+                    "non_field_errors": [
+                        "No se puede eliminar el municipio porque tiene localidades asociadas. "
+                        "Elimine o reasigne las localidades primero."
+                    ]
+                }
+            )
+        return super().post(request, *args, **kwargs)
+
+
+class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
+    """Permanently delete a soft-deleted localidad."""
+
+    queryset = Localidad.objects.all()
