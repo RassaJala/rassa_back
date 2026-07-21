@@ -80,10 +80,24 @@ class FamiliaViewSet(viewsets.ModelViewSet):
 class FamiliaMiembroViewSet(viewsets.ModelViewSet):
     """ViewSet para la administración de integrantes de familias."""
 
-    queryset = FamiliaUsuario.objects.filter(estado=True)
     serializer_class = FamiliaMiembroSerializer
     permission_classes = [IsAuthenticated, HasRole("Admin")]
     http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        queryset = FamiliaUsuario.objects.filter(estado=True)
+        familia_id = self.request.query_params.get("fk_familia")
+        if familia_id is not None:
+            try:
+                familia_id_int = int(familia_id)
+            except (ValueError, TypeError) as err:
+                raise ValidationError({"fk_familia": "El parámetro 'fk_familia' debe ser un número entero."}) from err
+
+            if not Familia.objects.filter(id_familia=familia_id_int, estado=True).exists():
+                raise ValidationError({"fk_familia": "La familia especificada no existe o está inactiva."})
+
+            queryset = queryset.filter(fk_familia_id=familia_id_int)
+        return queryset
 
     def perform_destroy(self, instance):
         """Realiza un borrado lógico de la asociación del miembro."""
