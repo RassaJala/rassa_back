@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -21,7 +22,7 @@ from rassa.catalogos_serializers import (
     MunicipioSerializer,
     UnidadSerializer,
 )
-from rassa.models import CategoriaProducto, Localidad, Log, Municipio, Unidad, Usuario
+from rassa.models import CategoriaProducto, FamiliaUsuario, Localidad, Log, Municipio, Unidad, Usuario
 from rassa.permissions.role_permissions import HasRole, IsAdminOrReadOnly
 
 
@@ -720,10 +721,6 @@ class SearchUsersView(APIView):
     permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
 
     def get(self, request):
-        from django.db.models import Q
-
-        from rassa.models import FamiliaUsuario
-
         if "q" not in request.query_params:
             raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
 
