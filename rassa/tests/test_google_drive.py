@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 
 from rassa.services.google_drive import (
     MAX_FILE_SIZE_MB,
+    _execute_with_retry,
     _sanitize_filename,
     _validate_magic_bytes,
     delete_file,
@@ -84,6 +85,10 @@ class ValidateMagicBytesTests(SimpleTestCase):
         f = self._make_file(b"", "image/jpeg")
         self.assertFalse(_validate_magic_bytes(f, "image/jpeg"))
 
+    def test_truncated_jpeg_rejected(self):
+        f = self._make_file(b"\xff\xd8", "image/jpeg")
+        self.assertFalse(_validate_magic_bytes(f, "image/jpeg"))
+
 
 class UploadImageTests(SimpleTestCase):
     def _make_image(self, content_type="image/jpeg"):
@@ -160,3 +165,107 @@ class DeleteFileTests(SimpleTestCase):
 
         with self.assertRaises(RuntimeError):
             delete_file("abc123")
+
+
+class ExecuteWithRetryTests(SimpleTestCase):
+    @patch("rassa.services.google_drive.time.sleep")
+    def test_succeeds_on_first_attempt(self, _mock_sleep):
+        mock_request = MagicMock()
+        mock_request.execute.return_value = {"id": "ok"}
+
+        result = _execute_with_retry(lambda: mock_request)
+        self.assertEqual(result, {"id": "ok"})
+        _mock_sleep.assert_not_called()
+
+    @patch("rassa.services.google_drive.time.sleep")
+    def test_succeeds_after_retryable_error(self, _mock_sleep):
+        from googleapiclient.errors import HttpError
+
+        resp = MagicMock()
+        resp.status = 429
+        error_429 = HttpError(resp, b"rate limited")
+
+        mock_request_ok = MagicMock()
+        mock_request_ok.execute.return_value = {"id": "ok"}
+
+        call_count = 0
+
+        def factory():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_fail = MagicMock()
+                mock_fail.execute.side_effect = error_429
+                return mock_fail
+            return mock_request_ok
+
+        result = _execute_with_retry(factory)
+        self.assertEqual(result, {"id": "ok"})
+        _mock_sleep.assert_called_once()
+
+    @patch("rassa.services.google_drive.time.sleep")
+    def test_raises_after_exhausted_retries(self, _mock_sleep):
+        from googleapiclient.errors import HttpError
+
+        resp = MagicMock()
+        resp.status = 500
+        error_500 = HttpError(resp, b"server error")
+
+        mock_request = MagicMock()
+        mock_request.execute.side_effect = error_500
+
+        with self.assertRaises(HttpError):
+            _execute_with_retry(lambda: mock_request)
+        self.assertEqual(_mock_sleep.call_count, 2)
+
+    @patch("rassa.services.google_drive.time.sleep")
+    def test_non_retryable_error_raises_immediately(self, _mock_sleep):
+        mock_request = MagicMock()
+        mock_request.execute.side_effect = ValueError("bad input")
+
+        with self.assertRaises(ValueError):
+            _execute_with_retry(lambda: mock_request)
+        _mock_sleep.assert_not_called()
+
+    @patch("rassa.services.google_drive.time.sleep")
+    def test_retryable_exception_triggers_retry(self, _mock_sleep):
+        mock_request_ok = MagicMock()
+        mock_request_ok.execute.return_value = {"id": "ok"}
+
+        call_count = 0
+
+        def factory():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_fail = MagicMock()
+                mock_fail.execute.side_effect = TimeoutError("timeout")
+                return mock_fail
+            return mock_request_ok
+
+        result = _execute_with_retry(factory)
+        self.assertEqual(result, {"id": "ok"})
+        _mock_sleep.assert_called_once()
+
+
+class UploadOrphanRollbackTests(SimpleTestCase):
+    def _make_image(self):
+        content = b"\xff\xd8\xff\xe0" + b"\x00" * 1024
+        return SimpleUploadedFile("test.jpg", content, content_type="image/jpeg")
+
+    @patch("rassa.services.google_drive.delete_file")
+    @patch("rassa.services.google_drive._get_drive_service")
+    @patch("rassa.services.google_drive.config", return_value="fake_folder_id")
+    def test_orphan_file_deleted_when_permissions_fail(self, _cfg, mock_get_service, mock_delete):
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+        mock_service.files().create().execute.return_value = {
+            "id": "orphan123",
+            "webViewLink": "https://drive.google.com/file/d/orphan123",
+        }
+        mock_service.permissions().create().execute.side_effect = RuntimeError("perm denied")
+
+        with self.assertRaises(RuntimeError):
+            upload_image(self._make_image(), "test.jpg")
+
+        mock_delete.assert_called_once_with("orphan123")

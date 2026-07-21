@@ -22,7 +22,7 @@ from decouple import config
 from django.core.management.base import BaseCommand
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+from rassa.services.drive_config import SCOPES
 
 REDIRECT_URI = "http://localhost:8090/"
 
@@ -109,11 +109,7 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Error al guardar en .env: {exc}"))
             return
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"\n¡Listo! Refresh token guardado en .env\nToken: {refresh_token[:20]}...\nArchivo: {env_path}\n"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"\n¡Listo! Refresh token guardado en .env\nArchivo: {env_path}\n"))
 
     def _update_env(self, key, value, env_path):
         """Agrega o actualiza una variable en el archivo .env.
@@ -129,6 +125,8 @@ class Command(BaseCommand):
         Raises:
             OSError: Si no se puede leer o escribir el archivo.
         """
+        value = value.replace("\n", "").replace("\r", "").strip()
+
         lines = []
         found = False
 

@@ -47,11 +47,13 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from .drive_config import (
+    ALLOWED_MIME_TYPES,
+    API_TIMEOUT_SECONDS,
     MAGIC_BYTES,
     MAX_FILE_SIZE_MB,
     MAX_FILENAME_LENGTH,
     MAX_RETRIES,
-    MIME_TYPES,
+    MB,
     RETRY_BACKOFF_BASE,
     RETRYABLE_STATUS_CODES,
     SCOPES,
@@ -94,6 +96,7 @@ def _get_drive_service():
     """Construye y retorna un servicio de Google Drive autenticado.
 
     Refresca el token de acceso antes de retornar el servicio.
+    Aplica API_TIMEOUT_SECONDS para evitar bloqueos indefinidos.
 
     Returns:
         Resource: Servicio de Google Drive autenticado.
@@ -106,7 +109,10 @@ def _get_drive_service():
         from google.auth.transport.requests import Request
 
         credentials.refresh(Request())
-        return build("drive", "v3", credentials=credentials)
+        import httplib2
+
+        http = httplib2.Http(timeout=API_TIMEOUT_SECONDS)
+        return build("drive", "v3", credentials=credentials, http=http)
     except Exception as exc:
         logger.error("Error al autenticar con Google Drive: %s", exc)
         raise
@@ -165,6 +171,21 @@ def _validate_magic_bytes(file, expected_type):
     return header[: len(magic)] == magic
 
 
+def _get_status_code(exc):
+    """Extrae el código de estado HTTP de una excepción de la API de Drive.
+
+    Args:
+        exc: Excepción capturada de la API.
+
+    Returns:
+        int or None: Código de estado HTTP, o None si no está disponible.
+    """
+    resp = getattr(exc, "resp", None)
+    if resp is None:
+        return None
+    return getattr(resp, "status", None)
+
+
 def _execute_with_retry(func, *args, **kwargs):
     """Ejecuta una función de la API de Drive con reintento y exponential backoff.
 
@@ -188,8 +209,7 @@ def _execute_with_retry(func, *args, **kwargs):
             return func(*args, **kwargs).execute(num_retries=0)
         except Exception as exc:
             last_exc = exc
-            status = getattr(exc, "resp", None)
-            status_code = getattr(status, "status", None) if status else None
+            status_code = _get_status_code(exc)
             is_retryable = status_code in RETRYABLE_STATUS_CODES or isinstance(
                 exc, (TimeoutError, ConnectionError, OSError)
             )
@@ -243,9 +263,9 @@ def upload_image(file, filename, folder_id=None):
     safe_name = _sanitize_filename(filename)
 
     content_type = file.content_type
-    if content_type not in MIME_TYPES:
+    if content_type not in ALLOWED_MIME_TYPES:
         raise ValueError(
-            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(MIME_TYPES.keys())}"
+            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
         )
 
     if not _validate_magic_bytes(file, content_type):
@@ -255,7 +275,7 @@ def upload_image(file, filename, folder_id=None):
         )
 
     file.seek(0, os.SEEK_END)
-    file_size_mb = file.tell() / (1024 * 1024)
+    file_size_mb = file.tell() / MB
     file.seek(0)
     if file_size_mb > MAX_FILE_SIZE_MB:
         raise ValueError(f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB.")
@@ -266,6 +286,7 @@ def upload_image(file, filename, folder_id=None):
         for chunk in file.chunks():
             tmp.write(chunk)
         tmp_path = tmp.name
+    os.chmod(tmp_path, 0o600)
 
     try:
         file_metadata = {
@@ -291,11 +312,19 @@ def upload_image(file, filename, folder_id=None):
     # Visibilidad pública (W3): las imágenes se hacen públicas automáticamente
     # para que los clientes puedan verlas desde el frontend.
     # Ver docstring del módulo para el análisis completo de esta decisión.
-    _execute_with_retry(
-        service.permissions().create,
-        fileId=file_id,
-        body={"type": "anyone", "role": "reader"},
-    )
+    try:
+        _execute_with_retry(
+            service.permissions().create,
+            fileId=file_id,
+            body={"type": "anyone", "role": "reader"},
+        )
+    except Exception:
+        logger.error("Fallo al asignar permisos públicos, eliminando archivo huérfano %s", file_id)
+        try:
+            delete_file(file_id)
+        except Exception:
+            logger.warning("No se pudo eliminar archivo huérfano %s", file_id)
+        raise
 
     url = f"https://drive.google.com/uc?id={file_id}&export=download"
     logger.info("Archivo subido a Drive: %s (%s) → %s", safe_name, content_type, url)

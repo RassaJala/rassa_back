@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 WRITE_METHODS = frozenset({"POST", "PATCH", "DELETE"})
 
+# Permisos por método HTTP. Admin y Agricultor pueden escribir;
+# cualquier usuario autenticado puede leer (GET).
 PERMISSION_MAP = {
     "GET": [permissions.IsAuthenticated],
     "POST": [permissions.IsAuthenticated, HasRole("Admin", "Agricultor")],

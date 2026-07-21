@@ -6,12 +6,14 @@ subida a Drive y manejo de errores de la API.
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-MIME_TYPES = {
-    "image/jpeg": "image/jpeg",
-    "image/png": "image/png",
-    "image/webp": "image/webp",
-    "image/gif": "image/gif",
-}
+ALLOWED_MIME_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }
+)
 
 MAGIC_BYTES = {
     "image/jpeg": b"\xff\xd8\xff",
@@ -20,6 +22,7 @@ MAGIC_BYTES = {
     "image/gif": b"GIF8",
 }
 
+MB = 1024 * 1024
 MAX_FILE_SIZE_MB = 10
 MAX_FILENAME_LENGTH = 200
 API_TIMEOUT_SECONDS = 60
