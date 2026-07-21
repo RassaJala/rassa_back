@@ -721,15 +721,16 @@ class SearchUsersView(APIView):
 
     def get(self, request):
         from django.db.models import Q
+
         from rassa.models import FamiliaUsuario
-        
+
         if "q" not in request.query_params:
             raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
-            
+
         query = request.query_params.get("q", "").strip()
         if not query:
             raise ValidationError({"q": "El parámetro de búsqueda 'q' no puede estar vacío."})
-            
+
         if len(query) < 3:
             raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
 
