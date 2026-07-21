@@ -318,7 +318,6 @@ class FamiliasTestCase(TestCase):
         self.assertIn(rel1.id_familia_usuario, ids)
         self.assertIn(rel2.id_familia_usuario, ids)
 
-
     def test_list_miembros_invalid_familia_id_format(self):
         """Valida que pasar un fk_familia no numérico devuelva error 400."""
         response = self.client.get(
@@ -347,4 +346,3 @@ class FamiliasTestCase(TestCase):
         )
         self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_familia", response2.data)
-

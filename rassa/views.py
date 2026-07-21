@@ -731,20 +731,21 @@ class SearchUsersView(APIView):
         if len(query) < 3:
             raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
 
-        usuarios_con_familia = FamiliaUsuario.objects.filter(
-            estado=True,
-            fk_familia__estado=True
-        ).values_list("fk_usuario_id", flat=True)
+        usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
+            "fk_usuario_id", flat=True
+        )
 
-        usuarios = Usuario.objects.filter(estado=True).exclude(
-            fk_rol__nombre_rol="Admin"
-        ).filter(
-            Q(correo__icontains=query) |
-            Q(fk_persona__nombre__icontains=query) |
-            Q(fk_persona__apellido_paterno__icontains=query) |
-            Q(fk_persona__apellido_materno__icontains=query)
-        ).exclude(id_usuario__in=usuarios_con_familia)[:10]
+        usuarios = (
+            Usuario.objects.filter(estado=True)
+            .exclude(fk_rol__nombre_rol="Admin")
+            .filter(
+                Q(correo__icontains=query)
+                | Q(fk_persona__nombre__icontains=query)
+                | Q(fk_persona__apellido_paterno__icontains=query)
+                | Q(fk_persona__apellido_materno__icontains=query)
+            )
+            .exclude(id_usuario__in=usuarios_con_familia)[:10]
+        )
 
         serializer = UserSerializer(usuarios, many=True)
         return _ok(data=serializer.data)
-

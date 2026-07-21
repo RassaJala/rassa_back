@@ -99,7 +99,6 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(fk_familia_id=familia_id_int)
         return queryset
 
-
     def perform_destroy(self, instance):
         """Realiza un borrado lógico de la asociación del miembro."""
         with transaction.atomic():
