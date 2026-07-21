@@ -56,6 +56,18 @@ class CategoriaProductoSerializer(serializers.ModelSerializer):
         read_only_fields = ["id_categoria", "creado_en"]
 
 
+class CambiarEstadoSerializer(serializers.Serializer):
+    """Serializer for toggling active/inactive state of catalog resources.
+
+    Accepts only a boolean ``estado`` field.
+    """
+
+    estado = serializers.BooleanField(
+        required=True,
+        error_messages={"required": "El campo estado es obligatorio."},
+    )
+
+
 class UnidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Unidad

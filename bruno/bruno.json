@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "name": "Rassa Auth API",
+  "name": "Rassa API",
   "type": "collection",
   "ignore": [
     "node_modules",

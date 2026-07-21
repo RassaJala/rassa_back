@@ -1,0 +1,319 @@
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import IntegrityError, OperationalError, transaction
+from django.db.models import Q
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+
+from rassa.admin_serializers import AdminUserSerializer, AdminUserUpdateSerializer
+from rassa.auth_serializers import ROLE_REVERSE_MAPPING
+from rassa.models import Usuario
+from rassa.permissions.role_permissions import HasRole
+from rassa.views import _log, _ok
+
+ADMIN = "Admin"
+
+
+ADMIN_ROLE_KEY = ROLE_REVERSE_MAPPING[ADMIN]
+
+
+ADMIN_PAGE_SIZE = 20
+
+
+MAX_SEARCH_LENGTH = 100
+
+
+class AdminUsuarioPagination(PageNumberPagination):
+    page_size = ADMIN_PAGE_SIZE
+
+
+def _get_active_admin_count():
+    """Count active admins with row-level locking (nowait) to prevent TOCTOU races and deadlocks."""
+
+    return Usuario.objects.select_for_update(nowait=True).filter(fk_rol__nombre_rol=ADMIN, estado=True).count()
+
+
+def _ensure_single_admin_protected(usuario):
+    """Return Response if action would leave zero active admins, else None.
+
+    Must be called inside a transaction.atomic() block with select_for_update.
+    """
+
+    if usuario.fk_rol and usuario.fk_rol.nombre_rol == ADMIN:
+        if _get_active_admin_count() <= 1:
+            return Response(
+                {"detail": "No se puede alterar al único administrador activo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    return None
+
+
+def _usuario_not_found():
+    """Return a standardized 404 response for missing users."""
+
+    return Response(
+        {"detail": "Usuario no encontrado."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _get_requesting_admin(request):
+    """Return the Usuario for the authenticated user, or None if missing."""
+
+    try:
+        return request.user.usuario
+    except ObjectDoesNotExist:
+        return None
+
+
+def _admin_error_response(error):
+    """Map a mutation exception to the appropriate Response.
+
+    Returns a Response if the error is handled, else None.
+    """
+
+    if isinstance(error, Usuario.DoesNotExist):
+        return Response(
+            {"detail": "Usuario no encontrado."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if isinstance(error, IntegrityError):
+        return Response(
+            {"detail": "Error de integridad al guardar."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    if isinstance(error, OperationalError):
+        return Response(
+            {"detail": "El recurso está bloqueado. Intenta nuevamente."},
+            status=status.HTTP_423_LOCKED,
+        )
+
+    return None
+
+
+class AdminUsuarioViewSet(viewsets.GenericViewSet):
+    """Endpoints administrativos para gestionar usuarios.
+
+    Solo accesible por usuarios con rol Admin.
+
+    Acciones:
+
+        list     GET    /api/admin/usuarios/
+
+        retrieve GET    /api/admin/usuarios/{id}/
+
+        update   PATCH  /api/admin/usuarios/{id}/
+
+        toggle   PATCH  /api/admin/usuarios/{id}/toggle-estado/
+
+    """
+
+    pagination_class = AdminUsuarioPagination
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "admin_users"
+
+    def get_permissions(self):
+
+        return [permissions.IsAuthenticated(), HasRole(ADMIN)]
+
+    def list(self, request):
+        """Listar usuarios con búsqueda y filtros.
+
+        Query params:
+
+            search  — Busca en nombre, apellido_paterno, apellido_materno, correo
+
+            rol     — Filtra por nombre de rol
+
+            estado  — Filtra por estado (true/false)
+
+        """
+
+        queryset = Usuario.objects.select_related("fk_persona", "fk_rol", "fk_persona__fk_localidad").all()
+
+        search = request.query_params.get("search")
+
+        if search:
+            if len(search) > MAX_SEARCH_LENGTH:
+                return _ok(data={"count": 0, "next": None, "previous": None, "results": []})
+
+            queryset = queryset.filter(
+                Q(correo__icontains=search)
+                | Q(fk_persona__nombre__icontains=search)
+                | Q(fk_persona__apellido_paterno__icontains=search)
+                | Q(fk_persona__apellido_materno__icontains=search)
+            )
+
+        rol = request.query_params.get("rol")
+
+        if rol:
+            queryset = queryset.filter(fk_rol__nombre_rol__icontains=rol)
+
+        estado = request.query_params.get("estado")
+
+        if estado is not None and estado != "":
+            estado_bool = estado.lower() == "true"
+
+            queryset = queryset.filter(estado=estado_bool)
+
+        queryset = queryset.order_by("id_usuario")
+
+        try:
+            page = self.paginate_queryset(queryset)
+
+            if page is not None:
+                serializer = AdminUserSerializer(page, many=True)
+
+                paginated = self.paginator.get_paginated_response(serializer.data).data
+
+                return _ok(data=paginated)
+
+            serializer = AdminUserSerializer(queryset, many=True)
+
+            return _ok(data=serializer.data)
+
+        except OperationalError:
+            return Response(
+                {"detail": "Error de conexión con la base de datos."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    def retrieve(self, request, pk=None):
+        """Obtener detalle de un usuario específico."""
+
+        try:
+            usuario = Usuario.objects.select_related("fk_persona", "fk_rol", "fk_persona__fk_localidad").get(pk=pk)
+
+        except Usuario.DoesNotExist:
+            return _usuario_not_found()
+
+        except OperationalError:
+            return Response(
+                {"detail": "Error de conexión con la base de datos."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = AdminUserSerializer(usuario)
+
+        return _ok(data=serializer.data)
+
+    def partial_update(self, request, pk=None):
+        """Editar datos de un usuario (teléfono, nombre, rol, etc.)."""
+
+        requesting_admin = _get_requesting_admin(request)
+
+        if requesting_admin is None:
+            return _usuario_not_found()
+
+        serializer = AdminUserUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                usuario = Usuario.objects.select_related("fk_rol").select_for_update().get(pk=pk)
+
+                if usuario.id_usuario == requesting_admin.id_usuario and "role" in serializer.validated_data:
+                    return Response(
+                        {"detail": "No puedes cambiar tu propio rol de administrador."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if "role" in serializer.validated_data and serializer.validated_data["role"] != ADMIN_ROLE_KEY:
+                    if usuario.estado:
+                        blocked = _ensure_single_admin_protected(usuario)
+
+                        if blocked:
+                            return blocked
+
+                serializer.instance = usuario
+                updated = serializer.save()
+
+                campos = list(serializer.validated_data.keys())
+                admin_id = requesting_admin.id_usuario
+                _log(
+                    request.user,
+                    f"Actualización de usuario: id={updated.id_usuario} campos={campos} por admin id={admin_id}",
+                    request,
+                )
+
+        except Usuario.DoesNotExist:
+            return _usuario_not_found()
+
+        except IntegrityError:
+            return Response(
+                {"detail": "Error de integridad al guardar."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        except OperationalError:
+            return Response(
+                {"detail": "El recurso está bloqueado. Intenta nuevamente."},
+                status=status.HTTP_423_LOCKED,
+            )
+
+        return _ok(
+            data=AdminUserSerializer(updated).data,
+            message="Usuario actualizado exitosamente.",
+        )
+
+    @action(detail=True, methods=["patch"], url_path="toggle-estado")
+    def toggle_estado(self, request, pk=None):
+        """Activar o desactivar un usuario."""
+
+        requesting_admin = _get_requesting_admin(request)
+
+        if requesting_admin is None:
+            return _usuario_not_found()
+
+        try:
+            with transaction.atomic():
+                usuario = Usuario.objects.select_related("fk_rol").select_for_update().get(pk=pk)
+
+                if usuario.id_usuario == requesting_admin.id_usuario:
+                    return Response(
+                        {"detail": "No puedes alterar tu propio estado de cuenta."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if usuario.estado:
+                    blocked = _ensure_single_admin_protected(usuario)
+
+                    if blocked:
+                        return blocked
+
+                usuario.estado = not usuario.estado
+
+                usuario.save(update_fields=["estado"])
+
+                accion = "activado" if usuario.estado else "desactivado"
+
+                _log(
+                    request.user,
+                    f"Toggle usuario id={usuario.id_usuario} -> {accion} por admin id={requesting_admin.id_usuario}",
+                    request,
+                )
+
+        except Usuario.DoesNotExist:
+            return _usuario_not_found()
+
+        except IntegrityError:
+            return Response(
+                {"detail": "Error de integridad al guardar."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        except OperationalError:
+            return Response(
+                {"detail": "El recurso está bloqueado. Intenta nuevamente."},
+                status=status.HTTP_423_LOCKED,
+            )
+
+        return _ok(
+            data=AdminUserSerializer(usuario).data,
+            message=f"Usuario {accion} exitosamente.",
+        )
