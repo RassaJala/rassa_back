@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Rassa — Iniciar Backend (PowerShell)
 # ============================================================================
 # Ejecuta los test automáticamente. Si pasan, enciende el servidor.
@@ -443,7 +443,7 @@ function Start-Server {
         Write-Host "  Presiona Ctrl+C para detener el servidor." -ForegroundColor DarkGray
         Write-Host ""
 
-        python manage.py runserver
+        python manage.py runserver 0.0.0.0:8000
     } finally {
         Pop-Location
     }
