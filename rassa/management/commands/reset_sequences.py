@@ -1,0 +1,97 @@
+"""Django management command para resincronizar secuencias de PostgreSQL.
+
+Después de cargar datos de prueba con INSERT o fixtures, las secuencias
+autoincrementales de PostgreSQL quedan desfasadas respecto al máximo ID
+existente. Esto causa errores como:
+
+    IntegrityError: llave duplicada viola restricción de unicidad
+
+Ejecuta:
+    python manage.py reset_sequences
+    python manage.py reset_sequences --database=default --dry-run
+"""
+
+from django.core.management.base import BaseCommand
+from django.db import connections
+
+
+class Command(BaseCommand):
+    help = "Resincroniza las secuencias de PostgreSQL con el máximo ID de cada tabla."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--database",
+            default="default",
+            help="Nombre de la conexión de base de datos a usar (default: default).",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Muestra las sentencias SQL sin ejecutarlas.",
+        )
+
+    def handle(self, *args, **options):
+        database = options["database"]
+        dry_run = options["dry_run"]
+        connection = connections[database]
+
+        if connection.vendor != "postgresql":
+            self.stderr.write(self.style.ERROR("Este comando solo funciona con PostgreSQL."))
+            return
+
+        tables = connection.introspection.table_names()
+        reset_statements = []
+
+        with connection.cursor() as cursor:
+            for table in tables:
+                try:
+                    # Check if the table has a serial / identity primary key column
+                    cursor.execute(
+                        """
+                        SELECT a.attname
+                        FROM pg_index i
+                        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                        WHERE i.indrelid = %s::regclass
+                          AND i.indisprimary
+                          AND a.atttypid = 'integer'::regtype
+                        LIMIT 1;
+                        """,
+                        [table],
+                    )
+                except Exception as err:
+                    self.stdout.write(self.style.WARNING(f"Skipping {table}: {err}"))
+                    continue
+
+                row = cursor.fetchone()
+                if not row:
+                    continue
+
+                pk_column = row[0]
+                sequence_name = f"{table}_{pk_column}_seq"
+
+                # Check if the sequence exists
+                cursor.execute(
+                    "SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = %s",
+                    [sequence_name],
+                )
+                if not cursor.fetchone():
+                    continue
+
+                reset_statements.append(
+                    f"SELECT setval('{sequence_name}', COALESCE((SELECT MAX({pk_column}) FROM {table}), 1));"
+                )
+
+            if dry_run:
+                self.stdout.write(self.style.NOTICE("Dry-run. Sentencias que se ejecutarían:"))
+            else:
+                self.stdout.write(self.style.NOTICE("Ejecutando reset de secuencias..."))
+
+            for sql in reset_statements:
+                if dry_run:
+                    self.stdout.write(sql)
+                else:
+                    cursor.execute(sql)
+                    self.stdout.write(self.style.SUCCESS(sql))
+
+        action = "a resincronizar" if dry_run else "resincronizadas"
+        self.stdout.write(self.style.SUCCESS(f"\n{len(reset_statements)} secuencias {action} correctamente."))
