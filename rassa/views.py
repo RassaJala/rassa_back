@@ -721,9 +721,13 @@ class SearchUsersView(APIView):
     permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
 
     def get(self, request):
-        query = request.query_params.get("q", "").strip()
-        if not query or len(query) < 1:
-            return _ok(data=[])
+        raw_q = request.query_params.get("q")
+        if raw_q is None or raw_q.strip() == "":
+            return Response({"q": ["Este campo es requerido."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        query = raw_q.strip()
+        if len(query) < 3:
+            return Response({"q": ["Este campo debe tener al menos 3 caracteres."]}, status=status.HTTP_400_BAD_REQUEST)
 
         include_assigned = request.query_params.get("include_assigned", "false").lower() in ["true", "1"]
 
