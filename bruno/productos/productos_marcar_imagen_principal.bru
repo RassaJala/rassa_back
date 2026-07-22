@@ -1,0 +1,22 @@
+meta {
+  name: Marcar imagen como principal
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/api/productos/1/imagen/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "es_principal": true
+  }
+}

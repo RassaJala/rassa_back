@@ -138,6 +138,7 @@ class Command(BaseCommand):
             LimiteCliente,
             FamiliaUsuario,
             Familia,
+            Log,
             Usuario,
             Persona,
             Localidad,
@@ -149,8 +150,10 @@ class Command(BaseCommand):
             CategoriaProducto,
             Rol,
         ]
+        User = get_user_model()
         for model in models:
             model.objects.all().delete()
+        User.objects.all().delete()
 
     # ------------------------------------------------------------------
     # 1. TABLAS BASE

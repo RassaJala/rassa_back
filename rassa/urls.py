@@ -22,6 +22,12 @@ from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
+from rassa.productos_views import (
+    ProductoDetailView,
+    ProductoImagenDeleteView,
+    ProductoImagenUploadView,
+    ProductoListView,
+)
 from rassa.views import (
     AdminCreateAgricultorView,
     AuthHealthView,
@@ -57,6 +63,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """Login with Spanish error messages."""
 
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_scope = "login"
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -135,6 +142,14 @@ urlpatterns = [
         "api/localidades/<int:pk>/permanent/",
         LocalidadPermanentDeleteView.as_view(),
         name="localidad-permanent",
+    ),
+    path("api/productos/", ProductoListView.as_view(), name="producto_list"),
+    path("api/productos/<int:pk>/", ProductoDetailView.as_view(), name="producto_detail"),
+    path("api/productos/<int:pk>/imagen/", ProductoImagenUploadView.as_view(), name="producto_imagen"),
+    path(
+        "api/productos/<int:pk>/imagen/<int:id_imagen>/",
+        ProductoImagenDeleteView.as_view(),
+        name="producto_imagen_delete",
     ),
     path("", include(router.urls)),
     path("", include(publicacion_urls)),

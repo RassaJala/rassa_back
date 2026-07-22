@@ -286,8 +286,13 @@ class Producto(models.Model):
 
     id_producto = models.AutoField(primary_key=True)
     nombre_producto = models.CharField(max_length=150)
-    fk_categoria = models.ForeignKey(CategoriaProducto, on_delete=models.CASCADE, db_column="fk_categoria")
+    descripcion = models.TextField(blank=True, default="")
+    fk_categoria = models.ForeignKey(CategoriaProducto, on_delete=models.PROTECT, db_column="fk_categoria")
+    fk_unidad = models.ForeignKey(Unidad, on_delete=models.PROTECT, db_column="fk_unidad", null=True, blank=True)
+    precio = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    stock = models.PositiveIntegerField(default=0)
     es_perecedero = models.BooleanField(default=False)
+    imagen = models.TextField(blank=True, null=True)
     estado = models.BooleanField(default=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -420,8 +425,7 @@ class PedidoCabecera(models.Model):
         return f"Pedido #{self.id_pedido} — {str(self.fk_cliente)}"
 
     def save(self, *args, **kwargs):
-        if self.total is None:
-            self.total = self.subtotal + self.iva
+        self.total = self.subtotal + self.iva
         super().save(*args, **kwargs)
 
 
@@ -700,12 +704,20 @@ class ProductoImagen(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
     url = models.TextField()
+    drive_file_id = models.CharField(max_length=255, blank=True, null=True)
     es_principal = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "producto_imagen"
         ordering = ["id_imagen"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_producto"],
+                condition=models.Q(es_principal=True),
+                name="unique_es_principal_per_producto",
+            ),
+        ]
 
     def __str__(self):
         return f"Imagen #{self.id_imagen} — {str(self.fk_producto)}"

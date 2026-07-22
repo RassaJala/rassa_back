@@ -26,6 +26,7 @@ from .serializers import (
 class MensajeListView(generics.ListAPIView):
     serializer_class = MensajeSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
 
     def get_queryset(self):
         conversacion_id = self.kwargs.get("conversacion_id")
@@ -57,6 +58,7 @@ class MensajeListView(generics.ListAPIView):
 class MensajeCreateView(generics.CreateAPIView):
     serializer_class = MensajeCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -77,6 +79,7 @@ class MensajeCreateView(generics.CreateAPIView):
 class MensajeUpdateView(generics.UpdateAPIView):
     serializer_class = MensajeUpdateSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def get_object(self):
         if not hasattr(self, "_mensaje_cache"):
@@ -106,6 +109,7 @@ class MensajeUpdateView(generics.UpdateAPIView):
 
 class MensajeLeerView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
 
     def patch(self, request, mensaje_id):
         try:
@@ -124,6 +128,7 @@ class MensajeLeerView(APIView):
 
 class MensajeInactivarView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def patch(self, request, mensaje_id):
         try:
@@ -161,6 +166,7 @@ class MensajeInactivarView(APIView):
 
 class ConversacionPrivadaCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def post(self, request):
         usuario1 = request.user.usuario
@@ -190,38 +196,28 @@ class ConversacionPrivadaCreateView(APIView):
             )
 
         with transaction.atomic():
-            conv_ids = list(
+            all_integrantes = list(
                 Integrante.objects.filter(
-                    fk_usuario=usuario1,
+                    fk_usuario__in=[usuario1.id_usuario, usuario2.id_usuario],
                     estado=True,
-                    fk_conversacion__tipo=False,
-                    fk_conversacion__estado=True,
-                )
-                .select_for_update()
-                .values_list("fk_conversacion_id", flat=True)
-            )
-
-            existing = (
-                Integrante.objects.filter(
-                    fk_usuario=usuario2,
-                    estado=True,
-                    fk_conversacion_id__in=conv_ids,
                     fk_conversacion__tipo=False,
                     fk_conversacion__estado=True,
                 )
                 .select_for_update()
                 .select_related("fk_conversacion")
-                .first()
             )
 
-            if existing:
-                return Response(
-                    {
-                        "ok": True,
-                        "mensaje": "La conversación ya existe.",
-                        "data": {"id_conversacion": existing.fk_conversacion_id},
-                    }
-                )
+            conv_ids_user1 = {i.fk_conversacion_id for i in all_integrantes if i.fk_usuario_id == usuario1.id_usuario}
+
+            for integrante in all_integrantes:
+                if integrante.fk_usuario_id == usuario2.id_usuario and integrante.fk_conversacion_id in conv_ids_user1:
+                    return Response(
+                        {
+                            "ok": True,
+                            "mensaje": "La conversación ya existe.",
+                            "data": {"id_conversacion": integrante.fk_conversacion_id},
+                        }
+                    )
 
             conv = Conversacion.objects.create(tipo=False)
             Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
@@ -239,6 +235,7 @@ class ConversacionPrivadaCreateView(APIView):
 
 class ConversacionGrupalCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def post(self, request):
         nombre = request.data.get("nombre")
@@ -267,6 +264,7 @@ class ConversacionGrupalCreateView(APIView):
 
 class ConversacionRenombrarView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def patch(self, request, conversacion_id):
         nombre = request.data.get("nombre")
@@ -317,6 +315,7 @@ class ConversacionRenombrarView(APIView):
 
 class ConversacionAgregarIntegranteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
 
     def post(self, request, conversacion_id):
         usuario_id = request.data.get("usuario_id")
@@ -385,6 +384,7 @@ class ConversacionAgregarIntegranteView(APIView):
 
 class ConversacionIntegrantesListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
 
     def get(self, request, conversacion_id):
         try:
@@ -428,6 +428,7 @@ class ConversacionIntegrantesListView(APIView):
 
 class ConversacionListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
 
     def get(self, request):
         usuario = request.user.usuario
@@ -485,6 +486,7 @@ class ConversacionListView(APIView):
 class MensajeDocumentoCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = "chat_write"
 
     def get_serializer_context(self):
         return {"usuario": self.request.user.usuario}
@@ -503,7 +505,7 @@ class MensajeDocumentoCreateView(APIView):
         docs_dir = Path(settings.MEDIA_ROOT) / "documentos"
         docs_dir.mkdir(parents=True, exist_ok=True)
 
-        nombre_archivo = f"{uuid.uuid4().hex}_{archivo.name}"
+        nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
         with open(ruta, "wb") as f:
             for chunk in archivo.chunks():

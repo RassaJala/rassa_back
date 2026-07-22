@@ -373,7 +373,7 @@ class FamiliasTestCase(TestCase):
 
         response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/restore/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         # Verificar estado restaurado
         familia.refresh_from_db()
         miembro.refresh_from_db()
@@ -387,7 +387,7 @@ class FamiliasTestCase(TestCase):
 
         response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/permanent/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         # Verificar eliminación de la DB
         self.assertFalse(Familia.objects.filter(id_familia=familia.id_familia).exists())
         self.assertFalse(FamiliaUsuario.objects.filter(id_familia_usuario=miembro.id_familia_usuario).exists())
