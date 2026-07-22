@@ -167,18 +167,18 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_destroy(self, instance):
-        """Realiza un borrado lógico de la asociación del miembro."""
+        """Elimina físicamente la membresía del miembro de la familia."""
         with transaction.atomic():
             familia = instance.fk_familia
-            # Si el miembro a remover es el jefe, limpiar fk_jefe_familia
             if familia.fk_jefe_familia == instance.fk_usuario:
                 familia.fk_jefe_familia = None
                 familia.save()
 
-            instance.estado = False
-            instance.save()
+            correo = instance.fk_usuario.correo
+            nombre = familia.nombre_familia
+            instance.delete()
             _log(
                 self.request.user,
-                f"remover_miembro usuario={instance.fk_usuario.correo} familia={familia.nombre_familia}",
+                f"remover_miembro usuario={correo} familia={nombre}",
                 self.request,
             )
