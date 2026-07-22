@@ -2,8 +2,9 @@ import logging
 from datetime import date, timedelta
 
 from django.db import transaction
+from django.db.models import Prefetch
 from rest_framework import permissions, status, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -13,7 +14,11 @@ from rassa.permissions.role_permissions import AGRICULTOR, HasRole
 from rassa.views import CatalogPagination, _log
 from rassa.views import _ok as ok_response
 
-from .serializers import ProductoSemanalSerializer, PublicacionSerializer
+from .serializers import (
+    ProductoSemanalSerializer,
+    PublicacionCurrentSerializer,
+    PublicacionSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +79,12 @@ class PublicacionViewSet(viewsets.ViewSet):
         return ok_response(data=self.paginator.get_paginated_response(serializer.data).data)
 
     def create(self, request):
+        if date.today().weekday() != 0:
+            return Response(
+                {"error": "Las publicaciones solo pueden crearse los lunes."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         prox_lunes, semana = calcular_proximo_lunes()
         publicacion = PublicacionSemanal.objects.create(
             fk_agricultor=request.user.usuario,
@@ -272,3 +283,25 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
         item.estado = ProductoSemanal.ESTADO_ACTIVO
         item.save(update_fields=["estado"])
         return ok_response(data=ProductoSemanalSerializer(item).data, message="Producto restaurado correctamente.")
+
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def publicaciones_current(request):
+    """Retorna las publicaciones publicadas de la semana actual (público)."""
+    hoy = date.today()
+    semana_actual = hoy.isocalendar()[1]
+
+    queryset = PublicacionSemanal.objects.filter(
+        semana=semana_actual,
+        estado=PublicacionSemanal.ESTADO_PUBLICADO,
+    ).prefetch_related(
+        Prefetch(
+            "productosemanal_set",
+            queryset=ProductoSemanal.objects.filter(estado=ProductoSemanal.ESTADO_ACTIVO),
+        ),
+        "fk_agricultor__fk_persona",
+    )
+
+    serializer = PublicacionCurrentSerializer(queryset, many=True)
+    return ok_response(data=serializer.data)
