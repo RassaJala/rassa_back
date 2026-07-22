@@ -164,6 +164,14 @@ class ChatTests(APITestCase):
         self.assertFalse(body["ok"])
         self.assertIn("abc", body["data"]["invalidos"])
 
+    def test_crear_conversacion_grupal_rechaza_fk_usuarios_string(self):
+        url = reverse("chat-conversaciones-crear-grupal")
+        payload = {"nombre": "Grupo", "fk_usuarios": "no es una lista"}
+        response = self.client.post(url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("lista", response.json()["mensaje"].lower())
+
     def test_agregar_integrante_acepta_alias_fk_usuario(self):
         conv = self._crear_conversacion_grupal()
         url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])

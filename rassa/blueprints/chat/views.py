@@ -24,6 +24,28 @@ from .serializers import (
 )
 
 
+def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupal=False):
+    """Obtiene una conversación activa y verifica que el usuario sea miembro.
+
+    Lanza NotFound si no existe, PermissionDenied si no es miembro,
+    y ValidationError si require_grupal=True y la conversación no es grupal.
+    """
+    from rest_framework.exceptions import ValidationError
+
+    try:
+        conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
+    except Conversacion.DoesNotExist as err:
+        raise NotFound("Conversación no encontrada.") from err
+
+    if require_grupal and not conv.tipo:
+        raise ValidationError("Esta acción solo aplica a conversaciones grupales.")
+
+    if not conv.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
+        raise PermissionDenied("No eres miembro de esta conversación.")
+
+    return conv
+
+
 class MensajeListView(generics.ListAPIView):
     serializer_class = MensajeSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -31,15 +53,7 @@ class MensajeListView(generics.ListAPIView):
 
     def get_queryset(self):
         conversacion_id = self.kwargs.get("conversacion_id")
-
-        try:
-            conversacion = Conversacion.objects.get(pk=conversacion_id, estado=True)
-        except Conversacion.DoesNotExist as err:
-            raise NotFound("Conversación no encontrada.") from err
-
-        if not conversacion.integrante_set.filter(fk_usuario=self.request.user.usuario, estado=True).exists():
-            raise PermissionDenied("No eres miembro de esta conversación.")
-
+        _get_active_conversation_for_user(conversacion_id, self.request.user.usuario)
         return (
             Mensaje.objects.filter(fk_conversacion_id=conversacion_id, estado=True)
             .select_related("fk_emisor__fk_persona")
@@ -131,20 +145,11 @@ class MensajeInactivarView(APIView):
     def patch(self, request, mensaje_id):
         try:
             mensaje = Mensaje.objects.get(pk=mensaje_id, estado=True)
-        except Mensaje.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "Mensaje no encontrado."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        except Mensaje.DoesNotExist as err:
+            raise NotFound("Mensaje no encontrado.") from err
 
         if mensaje.fk_emisor_id != request.user.usuario.id_usuario:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No puedes eliminar un mensaje que no te pertenece.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            raise PermissionDenied("No puedes eliminar un mensaje que no te pertenece.")
 
         antiguedad = timezone.now() - mensaje.creado_en
         if antiguedad > timedelta(minutes=15):
@@ -253,7 +258,18 @@ class ConversacionGrupalCreateView(APIView):
             )
 
         usuario_creador = request.user.usuario
-        fk_usuarios = request.data.get("fk_usuarios") or []
+        fk_usuarios = request.data.get("fk_usuarios")
+
+        if fk_usuarios is None:
+            fk_usuarios = []
+        if not isinstance(fk_usuarios, (list, tuple)):
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "fk_usuarios debe ser una lista de IDs.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Validate fk_usuarios is a list of integers
         invalid_ids = []
@@ -322,31 +338,11 @@ class ConversacionRenombrarView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
-        except Conversacion.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "Conversación no encontrada."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if not conv.tipo:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "Solo puedes renombrar conversaciones grupales.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not conv.integrante_set.filter(fk_usuario=request.user.usuario, estado=True).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No eres miembro de esta conversación.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        conv = _get_active_conversation_for_user(
+            conversacion_id,
+            request.user.usuario,
+            require_grupal=True,
+        )
 
         conv.nombre = nombre.strip()
         conv.save(update_fields=["nombre"])
@@ -372,32 +368,11 @@ class ConversacionAgregarIntegranteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
-        except Conversacion.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "Conversación no encontrada."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if not conv.tipo:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "Solo puedes agregar integrantes a conversaciones grupales.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        solicitante = request.user.usuario
-        if not conv.integrante_set.filter(fk_usuario=solicitante, estado=True).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No eres miembro de esta conversación.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        conv = _get_active_conversation_for_user(
+            conversacion_id,
+            request.user.usuario,
+            require_grupal=True,
+        )
 
         try:
             usuario_nuevo = Usuario.objects.get(pk=usuario_id, estado=True)
@@ -436,23 +411,7 @@ class ConversacionIntegrantesListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, conversacion_id):
-        try:
-            conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
-        except Conversacion.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "Conversación no encontrada."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        usuario = request.user.usuario
-        if not conv.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No eres miembro de esta conversación.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        conv = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
 
         integrantes = conv.integrante_set.filter(estado=True).select_related("fk_usuario__fk_persona")
 
