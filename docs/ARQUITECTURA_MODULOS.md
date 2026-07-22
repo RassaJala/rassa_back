@@ -399,6 +399,9 @@ rassa/
    - `HistorialEstadoSerializer` - Cambios de estado
    - `RecoleccionSerializer` - Programación de recolección
 
+   **Implementado (branch `feat/change-history-timeline`):**
+   - `HistorialEstadoPedidoSerializer` (`rassa/pedidos_serializers.py`) - Serializer de lectura con nombres anidados
+
 2. **Views** (`rassa/blueprints/pedidos/views.py`)
    - `PedidoViewSet` - CRUD con validación
    - `CarritoView` - Agregar/eliminar items
@@ -406,6 +409,10 @@ rassa/
    - `HistorialPedidoView` - Historial del cliente
    - `PanelVendedorView` - Pedidos activos
    - `RecoleccionViewSet` - Gestión de recolección
+
+   **Implementado (branch `feat/change-history-timeline`):**
+   - `PedidoHistorialView` (`rassa/pedidos_views.py`) - Historial de estados de un pedido específico
+   - Signal `registrar_cambio_estado` (`rassa/signals.py`) - Registra automáticamente cambios de estado
 
 3. **Flujo de Pedido**
 
@@ -426,15 +433,16 @@ rassa/
 
 #### Endpoints
 
-| Endpoint                       | Método   | Permisos        |
-| ------------------------------ | -------- | --------------- |
-| `/api/v1/pedidos/`             | CRUD     | Cliente         |
-| `/api/v1/pedidos/carrito/`     | GET/POST | Cliente         |
-| `/api/v1/pedidos/checkout/`    | POST     | Cliente         |
-| `/api/v1/pedidos/historial/`   | GET      | Cliente         |
-| `/api/v1/pedidos/vendedor/`    | GET      | Vendedor        |
-| `/api/v1/pedidos/{id}/estado/` | PUT      | Vendedor        |
-| `/api/v1/pedidos/recoleccion/` | CRUD     | Admin, Vendedor |
+| Endpoint                             | Método   | Permisos        | Estado         |
+| ------------------------------------ | -------- | --------------- | -------------- |
+| `/api/v1/pedidos/`                   | CRUD     | Cliente         | Planificado    |
+| `/api/v1/pedidos/carrito/`           | GET/POST | Cliente         | Planificado    |
+| `/api/v1/pedidos/checkout/`          | POST     | Cliente         | Planificado    |
+| `/api/v1/pedidos/historial/`         | GET      | Cliente         | Planificado    |
+| `/api/v1/pedidos/vendedor/`          | GET      | Vendedor        | Planificado    |
+| `/api/v1/pedidos/{id}/estado/`       | PUT      | Vendedor        | Planificado    |
+| `/api/v1/pedidos/recoleccion/`       | CRUD     | Admin, Vendedor | Planificado    |
+| `/api/pedidos/{id}/historial/`       | GET      | Authenticated   | **Implementado** |
 
 ---
 

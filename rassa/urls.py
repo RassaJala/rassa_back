@@ -22,6 +22,7 @@ from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
 from rassa.models import Log, Usuario
+from rassa.pedidos_views import PedidoHistorialView
 from rassa.views import (
     AdminCreateAgricultorView,
     AuthHealthView,
@@ -102,6 +103,7 @@ urlpatterns = [
     path("api/auth/search-users/", SearchUsersView.as_view(), name="search-users"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
+    path("api/pedidos/<int:pk>/historial/", PedidoHistorialView.as_view(), name="pedido-historial"),
     path("api/logs/", include("logs.urls")),
     path("api/municipios/", MunicipioListCreateView.as_view(), name="municipios"),
     path("api/municipios/trash/", MunicipioTrashListView.as_view(), name="municipios-trash"),

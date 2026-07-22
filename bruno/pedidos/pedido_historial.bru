@@ -1,0 +1,19 @@
+meta {
+  name: Pedido - Historial de estados
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/pedidos/{{pedidoId}}/historial/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+vars:pre-request {
+  pedidoId: 1
+}

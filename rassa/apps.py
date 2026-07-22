@@ -19,3 +19,6 @@ class RassaConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "rassa"
     verbose_name = "Rassa - Sistema de Gestión Agrícola"
+
+    def ready(self):
+        import rassa.signals  # noqa: F401 — registra signals de historial de estados
