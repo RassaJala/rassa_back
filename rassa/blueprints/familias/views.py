@@ -54,31 +54,23 @@ class FamiliaViewSet(viewsets.ModelViewSet):
 
         jefe_id = request.data.get("fk_jefe_familia")
         if not jefe_id:
-            raise ValidationError(
-                {"fk_jefe_familia": "El ID del jefe de familia es requerido para restaurar."}
-            )
+            raise ValidationError({"fk_jefe_familia": "El ID del jefe de familia es requerido para restaurar."})
 
         try:
             jefe = Usuario.objects.get(pk=int(jefe_id), estado=True)
         except (ValueError, TypeError, Usuario.DoesNotExist) as err:
-            raise ValidationError(
-                {"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}
-            ) from err
+            raise ValidationError({"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}) from err
 
         with transaction.atomic():
             familia.estado = True
             familia.fk_jefe_familia = jefe
             familia.save(update_fields=["estado", "fk_jefe_familia"])
 
-            existing = FamiliaUsuario.objects.filter(
-                fk_usuario=jefe, fk_familia=familia
-            )
+            existing = FamiliaUsuario.objects.filter(fk_usuario=jefe, fk_familia=familia)
             if existing.exists():
                 existing.update(estado=True)
             else:
-                FamiliaUsuario.objects.create(
-                    fk_usuario=jefe, fk_familia=familia, estado=True
-                )
+                FamiliaUsuario.objects.create(fk_usuario=jefe, fk_familia=familia, estado=True)
 
             _log(
                 request.user,
