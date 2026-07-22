@@ -82,9 +82,7 @@ def _get_credentials():
     Raises:
         ValueError: Si faltan variables de entorno requeridas.
     """
-    client_id = config("GOOGLE_DRIVE_CLIENT_ID", default=None) or getattr(
-        settings, "GOOGLE_DRIVE_CLIENT_ID", None
-    )
+    client_id = config("GOOGLE_DRIVE_CLIENT_ID", default=None) or getattr(settings, "GOOGLE_DRIVE_CLIENT_ID", None)
     client_secret = config("GOOGLE_DRIVE_CLIENT_SECRET", default=None) or getattr(
         settings, "GOOGLE_DRIVE_CLIENT_SECRET", None
     )
@@ -389,9 +387,7 @@ def upload_image(file, filename, folder_id=None):
             o falta la configuración de carpeta.
     """
     if folder_id is None:
-        folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(
-            settings, "GOOGLE_DRIVE_FOLDER_ID", None
-        )
+        folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(settings, "GOOGLE_DRIVE_FOLDER_ID", None)
     if not folder_id:
         raise ValueError("GOOGLE_DRIVE_FOLDER_ID no está configurado.")
 
@@ -438,9 +434,7 @@ def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg")
         raise ValueError("product_id must be an integer")
 
     service = _get_drive_service()
-    folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(
-        settings, "GOOGLE_DRIVE_FOLDER_ID", None
-    )
+    folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(settings, "GOOGLE_DRIVE_FOLDER_ID", None)
 
     if not folder_id:
         raise ValueError("GOOGLE_DRIVE_FOLDER_ID not configured.")
@@ -454,9 +448,7 @@ def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg")
     }
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
 
-    file = _execute_with_retry(
-        service.files().create, body=file_metadata, media_body=media, fields="id"
-    )
+    file = _execute_with_retry(service.files().create, body=file_metadata, media_body=media, fields="id")
 
     file_id = file.get("id")
     url = f"https://drive.google.com/uc?export=view&id={file_id}"
