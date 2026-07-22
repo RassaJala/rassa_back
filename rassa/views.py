@@ -739,9 +739,9 @@ class SearchUsersView(APIView):
         )
 
         if not include_assigned:
-            usuarios_con_familia = FamiliaUsuario.objects.filter(
-                estado=True, fk_familia__estado=True
-            ).values_list("fk_usuario_id", flat=True)
+            usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
+                "fk_usuario_id", flat=True
+            )
             base_query = base_query.exclude(id_usuario__in=usuarios_con_familia)
 
         usuarios = base_query[:10]
