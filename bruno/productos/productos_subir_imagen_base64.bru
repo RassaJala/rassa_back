@@ -1,0 +1,23 @@
+meta {
+  name: Subir imagen de producto (base64)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/productos/1/imagen/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "imagen_base64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "es_principal": true
+  }
+}

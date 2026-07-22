@@ -41,6 +41,7 @@ Limitaciones conocidas:
   retry + backoff antes de fallar. Pendiente implementar.
 """
 
+import io
 import logging
 import os
 import re
@@ -48,9 +49,10 @@ import tempfile
 import time
 
 from decouple import config
+from django.conf import settings
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 from .drive_config import (
     ALLOWED_MIME_TYPES,
@@ -68,6 +70,8 @@ from .drive_config import (
 
 logger = logging.getLogger(__name__)
 
+_service_cache = {"service": None}
+
 
 def _get_credentials():
     """Construye credenciales OAuth2 desde variables de entorno.
@@ -78,31 +82,49 @@ def _get_credentials():
     Raises:
         ValueError: Si faltan variables de entorno requeridas.
     """
-    client_id = config("GOOGLE_DRIVE_CLIENT_ID", default="")
-    client_secret = config("GOOGLE_DRIVE_CLIENT_SECRET", default="")
-    refresh_token = config("GOOGLE_DRIVE_REFRESH_TOKEN", default="")
+    client_id = config("GOOGLE_DRIVE_CLIENT_ID", default=None) or getattr(
+        settings, "GOOGLE_DRIVE_CLIENT_ID", None
+    )
+    client_secret = config("GOOGLE_DRIVE_CLIENT_SECRET", default=None) or getattr(
+        settings, "GOOGLE_DRIVE_CLIENT_SECRET", None
+    )
+    refresh_token = config("GOOGLE_DRIVE_REFRESH_TOKEN", default=None) or getattr(
+        settings, "GOOGLE_DRIVE_REFRESH_TOKEN", None
+    )
+    credentials_path = config("GOOGLE_DRIVE_CREDENTIALS_PATH", default=None) or getattr(
+        settings, "GOOGLE_DRIVE_CREDENTIALS_PATH", None
+    )
 
-    if not all([client_id, client_secret, refresh_token]):
-        raise ValueError(
-            "Faltan variables de entorno para Google Drive OAuth2: "
-            "GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, "
-            "GOOGLE_DRIVE_REFRESH_TOKEN"
+    if refresh_token and client_id and client_secret:
+        return Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES,
         )
 
-    return Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=SCOPES,
+    if credentials_path:
+        from google.oauth2.credentials import Credentials as FileCredentials
+
+        creds = FileCredentials.from_authorized_user_file(credentials_path, SCOPES)
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+
+            creds.refresh(Request())
+        return creds
+
+    raise ValueError(
+        "Google Drive credentials not configured. "
+        "Set GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_DRIVE_CLIENT_ID, "
+        "and GOOGLE_DRIVE_CLIENT_SECRET in environment."
     )
 
 
 def _get_drive_service():
-    """Construye y retorna un servicio de Google Drive autenticado.
+    """Construye y retorna un servicio de Google Drive autenticado (con cache).
 
-    Refresca el token de acceso antes de retornar el servicio.
     Aplica API_TIMEOUT_SECONDS para evitar bloqueos indefinidos.
 
     Returns:
@@ -111,6 +133,9 @@ def _get_drive_service():
     Raises:
         Exception: Si la autenticación falla.
     """
+    if _service_cache["service"] is not None:
+        return _service_cache["service"]
+
     try:
         credentials = _get_credentials()
         from google.auth.transport.requests import Request
@@ -119,10 +144,10 @@ def _get_drive_service():
         import httplib2
 
         http = httplib2.Http(timeout=API_TIMEOUT_SECONDS)
-        return build("drive", "v3", credentials=credentials, http=http)
+        service = build("drive", "v3", credentials=credentials, http=http)
+        _service_cache["service"] = service
+        return service
     except Exception as exc:
-        # W1: No filtrar metadata de tokens OAuth2 en logs.
-        # Logueamos solo el tipo de error, no el contenido completo.
         error_type = type(exc).__name__
         logger.error("Error al autenticar con Google Drive: %s", error_type)
         raise
@@ -130,13 +155,6 @@ def _get_drive_service():
 
 def _sanitize_filename(name):
     """Sanitiza el nombre del archivo para prevenir inyección y paths maliciosos.
-
-    Aplica las siguientes transformaciones:
-    - Extrae solo el nombre base (sin directorios)
-    - Remueve caracteres de control
-    - Reemplaza caracteres peligrosos por guiones bajos
-    - Limita la longitud a MAX_FILENAME_LENGTH
-    - Rechaza nombres que empiezan con punto
 
     Args:
         name (str): Nombre original del archivo.
@@ -156,9 +174,6 @@ def _sanitize_filename(name):
 
 def _validate_magic_bytes(file, expected_type):
     """Valida que los bytes reales del archivo coincidan con el tipo MIME declarado.
-
-    Previene suplantación de tipo de contenido donde un atacante envía
-    Content-Type: image/jpeg para un archivo HTML/JS.
 
     Args:
         file: Archivo con método seek() y read().
@@ -198,9 +213,6 @@ def _get_status_code(exc):
 
 def _execute_with_retry(func, *args, **kwargs):
     """Ejecuta una función de la API de Drive con reintento y exponential backoff.
-
-    Reintenta automáticamente en errores temporales (429, 500, 502, 503, timeout).
-    Usa exponential backoff con base RETRY_BACKOFF_BASE.
 
     Args:
         func: Función de la API de Drive a ejecutar.
@@ -281,6 +293,33 @@ def _validate_file(file, filename):
     return content_type
 
 
+def _get_or_create_folder(service, name, parent_id):
+    """Find or create a folder by name inside parent_id. Returns folder ID."""
+    if not isinstance(parent_id, str) or not parent_id.strip():
+        raise ValueError("parent_id must be a non-empty string")
+
+    safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
+    query = (
+        f"mimeType='application/vnd.google-apps.folder'"
+        f" and name='{safe_name}'"
+        f" and '{parent_id}' in parents"
+        f" and trashed=false"
+    )
+    results = _execute_with_retry(service.files().list, q=query, fields="files(id)", spaces="drive")
+    files = results.get("files", [])
+
+    if files:
+        return files[0]["id"]
+
+    folder_metadata = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = _execute_with_retry(service.files().create, body=folder_metadata, fields="id")
+    return folder["id"]
+
+
 def _upload_to_drive(service, tmp_path, content_type, safe_name, folder_id):
     """Sube un archivo temporal a Google Drive con retry.
 
@@ -350,7 +389,9 @@ def upload_image(file, filename, folder_id=None):
             o falta la configuración de carpeta.
     """
     if folder_id is None:
-        folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default="")
+        folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(
+            settings, "GOOGLE_DRIVE_FOLDER_ID", None
+        )
     if not folder_id:
         raise ValueError("GOOGLE_DRIVE_FOLDER_ID no está configurado.")
 
@@ -373,9 +414,6 @@ def upload_image(file, filename, folder_id=None):
         except OSError as exc:
             logger.warning("No se pudo eliminar archivo temporal %s: %s", tmp_path, exc)
 
-    # Visibilidad pública (W3): las imágenes se hacen públicas automáticamente
-    # para que los clientes puedan verlas desde el frontend.
-    # Ver docstring del módulo para el análisis completo de esta decisión.
     try:
         _set_public_permission(service, file_id)
     except Exception:
@@ -386,9 +424,62 @@ def upload_image(file, filename, folder_id=None):
             logger.warning("No se pudo eliminar archivo huérfano %s", file_id)
         raise
 
-    # W2: No loguear URL completa (es enumerable por cualquiera con acceso a logs).
     logger.info("Archivo subido a Drive: %s (%s) file_id=%s", safe_name, content_type, file_id)
     return {"url": f"https://drive.google.com/uc?id={file_id}&export=download", "file_id": file_id}
+
+
+def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg"):
+    """Upload an image to Google Drive under rassa/productos/{product_id}/.
+
+    Returns (url, file_id). The file is uploaded as PRIVATE — call
+    make_public() separately after confirming the DB transaction.
+    """
+    if not isinstance(product_id, int):
+        raise ValueError("product_id must be an integer")
+
+    service = _get_drive_service()
+    folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(
+        settings, "GOOGLE_DRIVE_FOLDER_ID", None
+    )
+
+    if not folder_id:
+        raise ValueError("GOOGLE_DRIVE_FOLDER_ID not configured.")
+
+    parent_folder_id = _get_or_create_folder(service, "productos", folder_id)
+    product_folder_id = _get_or_create_folder(service, str(product_id), parent_folder_id)
+
+    file_metadata = {
+        "name": filename,
+        "parents": [product_folder_id],
+    }
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
+
+    file = _execute_with_retry(
+        service.files().create, body=file_metadata, media_body=media, fields="id"
+    )
+
+    file_id = file.get("id")
+    url = f"https://drive.google.com/uc?export=view&id={file_id}"
+    logger.info("Image uploaded to Drive (private): %s -> %s", filename, file_id)
+    return url, file_id
+
+
+def make_public(file_id):
+    """Make a Drive file readable by anyone with the link.
+
+    Returns True on success, False on failure.
+    """
+    if not file_id:
+        return True
+    try:
+        service = _get_drive_service()
+        permission = {"type": "anyone", "role": "reader"}
+        _execute_with_retry(service.permissions().create, fileId=file_id, body=permission)
+        logger.info("Image made public on Drive: %s", file_id)
+        return True
+    except Exception:
+        logger.warning("Failed to make image public on Drive: %s", file_id, exc_info=True)
+        return False
 
 
 def delete_file(file_id):
@@ -411,3 +502,20 @@ def delete_file(file_id):
     except Exception as exc:
         logger.error("Error al eliminar archivo %s de Drive: %s", file_id, exc)
         raise
+
+
+def delete_image(file_id):
+    """Delete a file from Google Drive by its ID.
+
+    Returns True on success or if file_id is empty, False on failure.
+    """
+    if not file_id:
+        return True
+    try:
+        service = _get_drive_service()
+        _execute_with_retry(service.files().delete, fileId=file_id)
+        logger.info("Image deleted from Drive: %s", file_id)
+        return True
+    except Exception:
+        logger.warning("Failed to delete image from Drive: %s", file_id, exc_info=True)
+        return False

@@ -1,0 +1,28 @@
+meta {
+  name: Reemplazar producto (PUT)
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/api/productos/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "nombre_producto": "Manzana Roja Premium",
+    "descripcion": "Manzana roja premium del huerto",
+    "precio": "20.00",
+    "stock": 50,
+    "fk_categoria": 1,
+    "fk_unidad": 1,
+    "es_perecedero": true
+  }
+}

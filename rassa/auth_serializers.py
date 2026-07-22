@@ -90,6 +90,9 @@ def _create_usuario_db(validated_data, email, password, rol):
         if "telefono" in err_msg:
             raise serializers.ValidationError({"telefono": "Este teléfono ya está registrado."}) from err
         # Unknown constraint — surface a generic error so the caller isn't misled
+        import logging
+
+        logging.getLogger(__name__).error("IntegrityError en registro: %s", err, exc_info=True)
         raise serializers.ValidationError(
             {"non_field_errors": ["Error de integridad al crear el usuario. Contacte al administrador."]}
         ) from err
@@ -336,6 +339,8 @@ class ChangePasswordSerializer(serializers.Serializer):
             validate_password(value)
         except ValidationError as exc:
             raise serializers.ValidationError(list(exc.messages)) from exc
+        if value == self.initial_data.get("old_password"):
+            raise serializers.ValidationError("La nueva contraseña debe ser diferente a la actual.")
         return value
 
     def save(self, **kwargs):

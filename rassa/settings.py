@@ -12,16 +12,20 @@ Variables requeridas:
     - CORS_ALLOWED_ORIGINS: Orígenes CORS permitidos (separados por coma).
 """
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
 from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # === SECURITY ===
 SECRET_KEY = config("SECRET_KEY", default="changeme-in-production")
+if SECRET_KEY == "changeme-in-production" and not config("DEBUG", default=False, cast=bool):
+    raise ImproperlyConfigured("SECRET_KEY must be overridden in production.")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
@@ -39,6 +43,7 @@ THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
+    "django_filters",
 ]
 
 INSTALLED_APPS = (
@@ -107,6 +112,11 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
+    "DEFAULT_FILTER_BACKENDS": (
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ),
 }
 
 # === LOGGING ===
@@ -130,6 +140,7 @@ SIMPLE_JWT = {
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = [
     "rest_framework.throttling.AnonRateThrottle",
     "rest_framework.throttling.UserRateThrottle",
+    "rest_framework.throttling.ScopedRateThrottle",
 ]
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "anon": "60/minute",
@@ -144,8 +155,14 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "admin_write": "30/hour",
     "producto_imagen": "60/hour",
     "imagen_upload": "20/hour",
+    "chat_read": "60/minute",
+    "chat_write": "30/minute",
     "admin_users": "30/minute",
 }
+
+# === TEST: disable throttling so test suites don't exhaust rate limits ===
+if "test" in sys.argv or "pytest" in sys.modules:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
 
 # === CORS ===
 CORS_ALLOWED_ORIGINS = config(
@@ -169,3 +186,13 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # === DEFAULT ===
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# === GOOGLE DRIVE ===
+GOOGLE_DRIVE_CREDENTIALS_PATH = config("GOOGLE_DRIVE_CREDENTIALS_PATH", default=None)
+GOOGLE_DRIVE_FOLDER_ID = config("GOOGLE_DRIVE_FOLDER_ID", default=None)
+GOOGLE_DRIVE_CLIENT_ID = config("GOOGLE_DRIVE_CLIENT_ID", default=None)
+GOOGLE_DRIVE_CLIENT_SECRET = config("GOOGLE_DRIVE_CLIENT_SECRET", default=None)
+GOOGLE_DRIVE_REFRESH_TOKEN = config("GOOGLE_DRIVE_REFRESH_TOKEN", default=None)
+
+# === TRUSTED PROXIES ===
+TRUSTED_PROXIES = config("TRUSTED_PROXIES", default="", cast=Csv())
