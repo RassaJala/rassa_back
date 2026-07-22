@@ -13,7 +13,7 @@ import logging
 from django.db import transaction
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.throttling import ScopedRateThrottle
 
@@ -156,9 +156,8 @@ class ProductoImagenViewSet(viewsets.ViewSet):
            (se sube a Google Drive y se almacena la URL resultante)
         2. URL directa: JSON con campo 'url' (se almacena tal cual)
 
-        La creación está envuelta en una transacción atómica para
-        garantizar consistencia entre la subida a Drive y el guardado
-        en base de datos.
+        Si la subida a Drive es exitosa pero el guardado en DB falla,
+        el archivo remoto se elimina automáticamente (rollback defensivo).
 
         Args:
             request: Request HTTP con autenticación.
@@ -166,7 +165,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
 
         Returns:
             Response: Datos de la imagen creada con status 201,
-                o error con status 400.
+                o error con status 400/502.
         """
         self._get_producto_or_404(producto_id)
         self._check_ownership(request, producto_id)
@@ -181,11 +180,13 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             )
 
         drive_file_id = ""
+        uploaded_file_id = None
         if archivo:
             try:
                 result = upload_image(archivo, archivo.name)
                 url = result["url"]
                 drive_file_id = result.get("file_id", "")
+                uploaded_file_id = drive_file_id
             except ValueError as e:
                 return _ok(
                     message=str(e),
@@ -201,15 +202,28 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         data = {
             "fk_producto": producto_id,
             "url": url,
-            "drive_file_id": drive_file_id,
             "es_principal": request.data.get("es_principal", False),
             "orden": request.data.get("orden", 0),
         }
 
-        with transaction.atomic():
-            serializer = ProductoImagenSerializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
+        try:
+            with transaction.atomic():
+                serializer = ProductoImagenSerializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(drive_file_id=drive_file_id)
+        except ValidationError:
+            raise
+        except Exception as e:
+            if uploaded_file_id:
+                try:
+                    delete_file(uploaded_file_id)
+                except Exception:
+                    logger.warning("No se pudo limpiar archivo huérfano %s", uploaded_file_id)
+            logger.error("Error al guardar imagen en base de datos: %s", e)
+            return _ok(
+                message="Error al guardar la imagen. Intentá de nuevo.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return _ok(
             data=serializer.data,

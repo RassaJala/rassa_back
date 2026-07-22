@@ -1,8 +1,12 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from rassa.blueprints.producto_imagen.serializers import ProductoImagenSerializer
 from rassa.models import (
     CategoriaProducto,
     Persona,
@@ -421,3 +425,86 @@ class ProductoImagenCrudTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    # ── INTEGRATION: FILE UPLOAD (CRÍTICO 4 y 5) ─────────────────
+
+    def test_upload_archivo_returns_201_y_persiste_drive_file_id(self):
+        """CRÍTICO 4: Test de integración — upload multipart vía endpoint HTTP."""
+        fake_image = SimpleUploadedFile(
+            "tomate.jpg",
+            b"\xff\xd8\xff\xe0" + b"\x00" * 1024,
+            content_type="image/jpeg",
+        )
+        with patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload:
+            mock_upload.return_value = {
+                "url": "https://drive.google.com/uc?id=abc123&export=download",
+                "file_id": "abc123",
+            }
+            response = self.client.post(
+                reverse("producto-imagen-list", args=[self.producto.id_producto]),
+                {"archivo": fake_image},
+            )
+        data = self._assert_success_envelope(
+            response,
+            status_code=status.HTTP_201_CREATED,
+            message="Imagen registrada correctamente.",
+        )
+        self.assertEqual(data["url"], "https://drive.google.com/uc?id=abc123&export=download")
+        self.assertEqual(data["drive_file_id"], "abc123")
+        imagen = ProductoImagen.objects.get(pk=data["id_imagen"])
+        self.assertEqual(imagen.drive_file_id, "abc123")
+
+    def test_upload_archivo_502_on_drive_error(self):
+        """CRÍTICO 5: Error de Drive retorna 502 desde el endpoint HTTP."""
+        fake_image = SimpleUploadedFile(
+            "tomate.jpg",
+            b"\xff\xd8\xff\xe0" + b"\x00" * 1024,
+            content_type="image/jpeg",
+        )
+        with patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload:
+            mock_upload.side_effect = RuntimeError("Drive API unavailable")
+            response = self.client.post(
+                reverse("producto-imagen-list", args=[self.producto.id_producto]),
+                {"archivo": fake_image},
+            )
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        body = response.json()
+        self.assertIn("Google Drive", body.get("message", ""))
+
+    def test_upload_archivo_value_error_returns_400(self):
+        """Error de validación de archivo retorna 400."""
+        fake_image = SimpleUploadedFile(
+            "tomate.exe",
+            b"\x00" * 100,
+            content_type="application/exe",
+        )
+        with patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload:
+            mock_upload.side_effect = ValueError("Tipo de archivo no permitido")
+            response = self.client.post(
+                reverse("producto-imagen-list", args=[self.producto.id_producto]),
+                {"archivo": fake_image},
+            )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_upload_db_fail_cleans_drive_file(self):
+        """CRÍTICO 2: Si falla el guardado en DB, se limpia el archivo de Drive."""
+        fake_image = SimpleUploadedFile(
+            "tomate.jpg",
+            b"\xff\xd8\xff\xe0" + b"\x00" * 1024,
+            content_type="image/jpeg",
+        )
+        with (
+            patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload,
+            patch("rassa.blueprints.producto_imagen.views.delete_file") as mock_delete,
+            patch.object(ProductoImagenSerializer, "save", side_effect=RuntimeError("DB error")),
+        ):
+            mock_upload.return_value = {
+                "url": "https://drive.google.com/uc?id=orphan456&export=download",
+                "file_id": "orphan456",
+            }
+            response = self.client.post(
+                reverse("producto-imagen-list", args=[self.producto.id_producto]),
+                {"archivo": fake_image},
+            )
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        mock_delete.assert_called_once_with("orphan456")

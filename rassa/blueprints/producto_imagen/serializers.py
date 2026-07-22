@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import URLValidator
 from rest_framework import serializers
 
@@ -17,6 +18,6 @@ class ProductoImagenSerializer(serializers.ModelSerializer):
         url_validator = URLValidator(schemes=["https"])
         try:
             url_validator(value)
-        except serializers.ValidationError:
+        except DjangoValidationError:
             raise serializers.ValidationError("Solo se permiten URLs HTTPS válidas.") from None
         return value
