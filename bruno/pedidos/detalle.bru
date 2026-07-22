@@ -1,0 +1,15 @@
+meta {
+  name: Detalle Pedido
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/pedidos/{{pedidoId}}/
+  auth: bearer
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
