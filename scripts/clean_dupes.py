@@ -1,4 +1,5 @@
 from django.db.models import Count
+
 from rassa.models import FamiliaUsuario
 
 dupes = (
