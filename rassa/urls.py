@@ -41,6 +41,7 @@ from rassa.views import (
     MunicipioRestoreView,
     MunicipioTrashListView,
     RegisterView,
+    SearchUsersView,
     UnidadViewSet,
 )
 
@@ -98,6 +99,7 @@ urlpatterns = [
     path("api/auth/register/", RegisterView.as_view(), name="register"),
     path("api/auth/create-farmer/", AdminCreateAgricultorView.as_view(), name="create-farmer"),
     path("api/auth/me/", MeView.as_view(), name="me"),
+    path("api/auth/search-users/", SearchUsersView.as_view(), name="search-users"),
     path("api/auth/change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("api/auth/health/", AuthHealthView.as_view(), name="auth_health"),
     path("api/logs/", include("logs.urls")),

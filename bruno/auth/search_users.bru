@@ -1,11 +1,11 @@
 meta {
-  name: Miembros - Listar
+  name: Search Users
   type: http
-  seq: 9
+  seq: 7
 }
 
 get {
-  url: {{baseUrl}}/api/familias/miembros/?fk_familia=1
+  url: {{baseUrl}}/api/auth/search-users/?q=juan
   body: none
   auth: inherit
 }
