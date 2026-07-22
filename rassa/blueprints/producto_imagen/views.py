@@ -73,6 +73,19 @@ class ProductoImagenViewSet(viewsets.ViewSet):
     throttle_scope = "producto_imagen"
     pagination_class = ProductoImagenPagination
 
+    def get_throttles(self):
+        """Retorna throttle scope diferente para uploads vs otras operaciones.
+
+        Uploads (POST) usan 'imagen_upload' (20/hour) para limitar
+        el uso de Google Drive API. Las demás operaciones usan
+        'producto_imagen' (60/hour).
+        """
+        if self.action == "create":
+            throttle = ScopedRateThrottle()
+            throttle.scope = "imagen_upload"
+            return [throttle]
+        return super().get_throttles()
+
     def get_permissions(self):
         """Retorna permisos según el método HTTP usando PERMISSION_MAP."""
         method = self.request.method
@@ -134,7 +147,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         """Lista todas las imágenes de un producto específico.
 
         Las imágenes se ordenan por campo 'orden' y luego por ID.
-        Respeta la paginación configurada.
+        Respeta la paginación configurada (20 por página, máx 100).
 
         Args:
             request: Request HTTP con autenticación.
@@ -145,6 +158,11 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         """
         self._get_producto_or_404(producto_id)
         imágenes = ProductoImagen.objects.filter(fk_producto_id=producto_id).order_by("orden", "id_imagen")
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(imágenes, request)
+        if page is not None:
+            serializer = ProductoImagenSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
         serializer = ProductoImagenSerializer(imágenes, many=True)
         return _ok(data=serializer.data)
 
@@ -231,6 +249,24 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             status_code=status.HTTP_201_CREATED,
         )
 
+    def _get_imagen_or_404(self, producto_id, pk):
+        """Busca una imagen por ID dentro de un producto o lanza NotFound.
+
+        Args:
+            producto_id (int): ID del producto padre.
+            pk (int): ID de la imagen a buscar.
+
+        Returns:
+            ProductoImagen: Instancia de la imagen encontrada.
+
+        Raises:
+            NotFound: Si la imagen no existe para ese producto.
+        """
+        try:
+            return ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
+        except ProductoImagen.DoesNotExist:
+            raise NotFound("Imagen no encontrada.") from None
+
     def destroy(self, request, producto_id=None, pk=None):
         """Elimina una imagen de un producto y su archivo en Google Drive.
 
@@ -256,10 +292,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         """
         self._get_producto_or_404(producto_id)
         self._check_ownership(request, producto_id)
-        try:
-            imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
-        except ProductoImagen.DoesNotExist:
-            raise NotFound("Imagen no encontrada.") from None
+        imagen = self._get_imagen_or_404(producto_id, pk)
 
         if imagen.drive_file_id:
             try:
@@ -290,10 +323,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         """
         self._get_producto_or_404(producto_id)
         self._check_ownership(request, producto_id)
-        try:
-            imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
-        except ProductoImagen.DoesNotExist:
-            raise NotFound("Imagen no encontrada.") from None
+        imagen = self._get_imagen_or_404(producto_id, pk)
 
         allowed_fields = {"url", "orden"}
         data = {k: v for k, v in request.data.items() if k in allowed_fields}
@@ -335,10 +365,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         """
         self._get_producto_or_404(producto_id)
         self._check_ownership(request, producto_id)
-        try:
-            imagen = ProductoImagen.objects.get(pk=pk, fk_producto_id=producto_id)
-        except ProductoImagen.DoesNotExist:
-            raise NotFound("Imagen no encontrada.") from None
+        imagen = self._get_imagen_or_404(producto_id, pk)
 
         with transaction.atomic():
             ProductoImagen.objects.filter(fk_producto_id=producto_id, es_principal=True).update(es_principal=False)

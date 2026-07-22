@@ -77,9 +77,11 @@ class ProductoImagenCrudTests(APITestCase):
 
     def test_list_imagenes_por_producto(self):
         response = self.client.get(reverse("producto-imagen-list", args=[self.producto.id_producto]))
-        data = self._assert_success_envelope(response)
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["url"], "https://example.com/manzana.jpg")
+        body = response.json()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("results", body)
+        self.assertEqual(len(body["results"]), 1)
+        self.assertEqual(body["results"][0]["url"], "https://example.com/manzana.jpg")
 
     def test_list_imagenes_producto_inexistente_returns_404(self):
         response = self.client.get(reverse("producto-imagen-list", args=[9999]))
@@ -508,3 +510,70 @@ class ProductoImagenCrudTests(APITestCase):
             )
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         mock_delete.assert_called_once_with("orphan456")
+
+    # ── WARNINGS DE REVIEW ROUND 3 ────────────────────────────────
+
+    def test_create_sin_archivo_ni_url_returns_400(self):
+        """W8: POST sin archivo ni url retorna 400."""
+        response = self.client.post(
+            reverse("producto-imagen-list", args=[self.producto.id_producto]),
+            {},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_respete_paginacion(self):
+        """W9: Listado respeta la paginación configurada (page_size=20)."""
+        for i in range(25):
+            ProductoImagen.objects.create(
+                fk_producto=self.producto,
+                url=f"https://example.com/img{i}.jpg",
+                es_principal=False,
+                orden=i,
+            )
+        response = self.client.get(reverse("producto-imagen-list", args=[self.producto.id_producto]))
+        body = response.json()
+        self.assertIn("results", body)
+        self.assertEqual(body["count"], 26)
+        self.assertEqual(len(body["results"]), 20)
+        self.assertIsNotNone(body["next"])
+
+    def test_set_principal_no_afecta_otro_producto(self):
+        """W10: set_principal no desmarca imágenes de otros productos."""
+        otro = Producto.objects.create(
+            nombre_producto="Pera",
+            fk_categoria=self.category,
+            estado=True,
+        )
+        img_otro = ProductoImagen.objects.create(
+            fk_producto=otro,
+            url="https://example.com/pera.jpg",
+            es_principal=True,
+            orden=1,
+        )
+        img2 = ProductoImagen.objects.create(
+            fk_producto=self.producto,
+            url="https://example.com/manzana2.jpg",
+            es_principal=False,
+            orden=2,
+        )
+        self.client.patch(reverse("producto-imagen-set-principal", args=[self.producto.id_producto, img2.id_imagen]))
+        img_otro.refresh_from_db()
+        self.assertTrue(img_otro.es_principal)
+
+    def test_get_credentials_missing_env_raises(self):
+        """W11: _get_credentials() falla cuando faltan variables de entorno."""
+        from rassa.services.google_drive import _get_credentials
+
+        with patch("rassa.services.google_drive.config", return_value=""):
+            with self.assertRaises(ValueError):
+                _get_credentials()
+
+    def test_delete_file_failure_no_crash(self):
+        """W12: Si delete_file falla, destroy no crashea y elimina el registro."""
+        with patch("rassa.blueprints.producto_imagen.views.delete_file", side_effect=Exception("Drive down")):
+            response = self.client.delete(
+                reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen])
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(ProductoImagen.objects.filter(pk=self.imagen.id_imagen).exists())

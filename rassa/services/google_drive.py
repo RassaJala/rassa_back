@@ -33,6 +33,12 @@ Si en el futuro se necesita privacidad selectiva, se puede:
   el producto pase a estado activo.
 - Usar URLs firmadas con expiración.
 - Configurar la visibilidad como un campo en el modelo Producto.
+
+Limitaciones conocidas:
+- Upload síncrono: bajo alta carga puede bloquear workers del servidor.
+  Para escalar, migrar a Celery o tarea async.
+- Sin circuit breaker: si Drive está caído, cada request espera
+  retry + backoff antes de fallar. Pendiente implementar.
 """
 
 import logging
@@ -49,6 +55,7 @@ from googleapiclient.http import MediaFileUpload
 from .drive_config import (
     ALLOWED_MIME_TYPES,
     API_TIMEOUT_SECONDS,
+    HEADER_READ_SIZE,
     MAGIC_BYTES,
     MAX_FILE_SIZE_MB,
     MAX_FILENAME_LENGTH,
@@ -114,7 +121,10 @@ def _get_drive_service():
         http = httplib2.Http(timeout=API_TIMEOUT_SECONDS)
         return build("drive", "v3", credentials=credentials, http=http)
     except Exception as exc:
-        logger.error("Error al autenticar con Google Drive: %s", exc)
+        # W1: No filtrar metadata de tokens OAuth2 en logs.
+        # Logueamos solo el tipo de error, no el contenido completo.
+        error_type = type(exc).__name__
+        logger.error("Error al autenticar con Google Drive: %s", error_type)
         raise
 
 
@@ -158,7 +168,7 @@ def _validate_magic_bytes(file, expected_type):
         bool: True si los magic bytes coinciden, False si no.
     """
     file.seek(0)
-    header = file.read(16)
+    header = file.read(HEADER_READ_SIZE)
     file.seek(0)
 
     magic = MAGIC_BYTES.get(expected_type)
@@ -235,6 +245,90 @@ def _execute_with_retry(func, *args, **kwargs):
     raise last_exc
 
 
+def _validate_file(file, filename):
+    """Valida un archivo antes de subirlo a Drive.
+
+    Verifica tipo MIME, magic bytes y tamaño máximo.
+
+    Args:
+        file: Archivo subido (request.FILES['archivo']).
+        filename (str): Nombre del archivo.
+
+    Returns:
+        str: content_type validado.
+
+    Raises:
+        ValueError: Si el archivo no es válido.
+    """
+    content_type = file.content_type
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise ValueError(
+            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
+        )
+
+    if not _validate_magic_bytes(file, content_type):
+        raise ValueError(
+            f"El contenido del archivo no coincide con el tipo {content_type}. "
+            "Asegurate de que el archivo no esté corrupto."
+        )
+
+    file.seek(0, os.SEEK_END)
+    file_size_mb = file.tell() / MB
+    file.seek(0)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise ValueError(f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB.")
+
+    return content_type
+
+
+def _upload_to_drive(service, tmp_path, content_type, safe_name, folder_id):
+    """Sube un archivo temporal a Google Drive con retry.
+
+    Args:
+        service: Servicio de Google Drive autenticado.
+        tmp_path (str): Ruta del archivo temporal.
+        content_type (str): Tipo MIME del archivo.
+        safe_name (str): Nombre sanitizado del archivo.
+        folder_id (str): ID de la carpeta destino en Drive.
+
+    Returns:
+        str: file_id del archivo subido.
+
+    Raises:
+        Exception: Si la subida falla después de los reintentos.
+    """
+    file_metadata = {
+        "name": safe_name,
+        "parents": [folder_id],
+    }
+    media = MediaFileUpload(tmp_path, mimetype=content_type, resumable=True)
+
+    uploaded = _execute_with_retry(
+        service.files().create,
+        body=file_metadata,
+        media_body=media,
+        fields="id, webViewLink",
+    )
+    return uploaded.get("id")
+
+
+def _set_public_permission(service, file_id):
+    """Asigna permisos públicos de lectura a un archivo en Drive.
+
+    Args:
+        service: Servicio de Google Drive autenticado.
+        file_id (str): ID del archivo en Drive.
+
+    Raises:
+        Exception: Si la asignación falla después de los reintentos.
+    """
+    _execute_with_retry(
+        service.permissions().create,
+        fileId=file_id,
+        body={"type": "anyone", "role": "reader"},
+    )
+
+
 def upload_image(file, filename, folder_id=None):
     """Sube una imagen a Google Drive y retorna la URL pública de descarga.
 
@@ -261,24 +355,7 @@ def upload_image(file, filename, folder_id=None):
         raise ValueError("GOOGLE_DRIVE_FOLDER_ID no está configurado.")
 
     safe_name = _sanitize_filename(filename)
-
-    content_type = file.content_type
-    if content_type not in ALLOWED_MIME_TYPES:
-        raise ValueError(
-            f"Tipo de archivo no permitido: {content_type}. Formatos válidos: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
-        )
-
-    if not _validate_magic_bytes(file, content_type):
-        raise ValueError(
-            f"El contenido del archivo no coincide con el tipo {content_type}. "
-            "Asegurate de que el archivo no esté corrupto."
-        )
-
-    file.seek(0, os.SEEK_END)
-    file_size_mb = file.tell() / MB
-    file.seek(0)
-    if file_size_mb > MAX_FILE_SIZE_MB:
-        raise ValueError(f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB.")
+    content_type = _validate_file(file, filename)
 
     service = _get_drive_service()
 
@@ -289,35 +366,18 @@ def upload_image(file, filename, folder_id=None):
     os.chmod(tmp_path, 0o600)
 
     try:
-        file_metadata = {
-            "name": safe_name,
-            "parents": [folder_id],
-        }
-        media = MediaFileUpload(tmp_path, mimetype=content_type, resumable=True)
-
-        uploaded = _execute_with_retry(
-            service.files().create,
-            body=file_metadata,
-            media_body=media,
-            fields="id, webViewLink",
-        )
+        file_id = _upload_to_drive(service, tmp_path, content_type, safe_name, folder_id)
     finally:
         try:
             os.remove(tmp_path)
         except OSError as exc:
             logger.warning("No se pudo eliminar archivo temporal %s: %s", tmp_path, exc)
 
-    file_id = uploaded.get("id")
-
     # Visibilidad pública (W3): las imágenes se hacen públicas automáticamente
     # para que los clientes puedan verlas desde el frontend.
     # Ver docstring del módulo para el análisis completo de esta decisión.
     try:
-        _execute_with_retry(
-            service.permissions().create,
-            fileId=file_id,
-            body={"type": "anyone", "role": "reader"},
-        )
+        _set_public_permission(service, file_id)
     except Exception:
         logger.error("Fallo al asignar permisos públicos, eliminando archivo huérfano %s", file_id)
         try:
@@ -326,9 +386,9 @@ def upload_image(file, filename, folder_id=None):
             logger.warning("No se pudo eliminar archivo huérfano %s", file_id)
         raise
 
-    url = f"https://drive.google.com/uc?id={file_id}&export=download"
-    logger.info("Archivo subido a Drive: %s (%s) → %s", safe_name, content_type, url)
-    return {"url": url, "file_id": file_id}
+    # W2: No loguear URL completa (es enumerable por cualquiera con acceso a logs).
+    logger.info("Archivo subido a Drive: %s (%s) file_id=%s", safe_name, content_type, file_id)
+    return {"url": f"https://drive.google.com/uc?id={file_id}&export=download", "file_id": file_id}
 
 
 def delete_file(file_id):
