@@ -49,18 +49,43 @@ class FamiliaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None, *args, **kwargs):
-        """Restaura una familia desactivada y a sus miembros."""
+        """Restaura una familia desactivada. Requiere asignar un nuevo jefe."""
         familia = self.get_object()
+
+        jefe_id = request.data.get("fk_jefe_familia")
+        if not jefe_id:
+            raise ValidationError(
+                {"fk_jefe_familia": "El ID del jefe de familia es requerido para restaurar."}
+            )
+
+        try:
+            jefe = Usuario.objects.get(pk=int(jefe_id), estado=True)
+        except (ValueError, TypeError, Usuario.DoesNotExist) as err:
+            raise ValidationError(
+                {"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}
+            ) from err
+
         with transaction.atomic():
             familia.estado = True
-            familia.save(update_fields=["estado"])
-            # Restaurar también a los miembros
-            FamiliaUsuario.objects.filter(fk_familia=familia).update(estado=True)
+            familia.fk_jefe_familia = jefe
+            familia.save(update_fields=["estado", "fk_jefe_familia"])
+
+            existing = FamiliaUsuario.objects.filter(
+                fk_usuario=jefe, fk_familia=familia
+            )
+            if existing.exists():
+                existing.update(estado=True)
+            else:
+                FamiliaUsuario.objects.create(
+                    fk_usuario=jefe, fk_familia=familia, estado=True
+                )
+
             _log(
                 request.user,
-                f"restaurar familia id={familia.id_familia} nombre={familia.nombre_familia}",
+                f"restaurar familia id={familia.id_familia} nombre={familia.nombre_familia} jefe={jefe.correo}",
                 request,
             )
+
         serializer = self.get_serializer(familia)
         return ok_response(
             data=serializer.data,

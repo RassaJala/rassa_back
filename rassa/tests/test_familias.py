@@ -367,18 +367,29 @@ class FamiliasTestCase(TestCase):
         self.assertIn("Familia Inactiva", nombres_trash)
 
     def test_restaurar_familia_exito(self):
-        """Valida la restauración de una familia inactiva y de sus miembros."""
+        """Valida la restauración de una familia inactiva: solo el jefe se agrega como miembro."""
         familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
         miembro = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=False)
 
-        response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/restore/", format="json")
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Verificar estado restaurado
+        # Verificar que la familia se restaura y el jefe queda como miembro activo
         familia.refresh_from_db()
         miembro.refresh_from_db()
         self.assertTrue(familia.estado)
         self.assertTrue(miembro.estado)
+
+        # Verificar que otros miembros NO se reactivan
+        self.assertFalse(
+            FamiliaUsuario.objects.filter(fk_familia=familia, estado=True)
+            .exclude(fk_usuario=self.usuario_cliente1)
+            .exists()
+        )
 
     def test_eliminacion_permanente_familia_exito(self):
         """Valida la eliminación física definitiva de una familia inactiva."""
