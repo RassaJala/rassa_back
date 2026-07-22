@@ -1,0 +1,22 @@
+meta {
+  name: Familias - Restaurar de Papelera
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/api/familias/grupos/1/restore/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fk_jefe_familia": 2
+  }
+}
