@@ -31,16 +31,18 @@ class FamiliaViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Realiza un borrado lógico (soft-delete) de la familia."""
+        if not instance.estado:
+            return
         with transaction.atomic():
             instance.estado = False
-            instance.save()
+            instance.save(update_fields=["estado"])
             # Desactivar también los miembros de la familia
             FamiliaUsuario.objects.filter(fk_familia=instance).update(estado=False)
-            _log(
-                self.request.user,
-                f"soft_delete familia id={instance.id_familia} nombre={instance.nombre_familia}",
-                self.request,
-            )
+        _log(
+            self.request.user,
+            f"soft_delete familia id={instance.id_familia} nombre={instance.nombre_familia}",
+            self.request,
+        )
 
     @action(detail=False, methods=["get"], url_path="trash")
     def trash(self, request, *args, **kwargs):
@@ -52,20 +54,30 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         """Restaura una familia desactivada. Requiere asignar un nuevo jefe."""
         familia = self.get_object()
 
+        if familia.estado:
+            raise ValidationError({"familia": "La familia ya está activa."})
+
         jefe_id = request.data.get("fk_jefe_familia")
         if not jefe_id:
             raise ValidationError({"fk_jefe_familia": "El ID del jefe de familia es requerido para restaurar."})
 
         try:
-            jefe = Usuario.objects.get(pk=int(jefe_id), estado=True)
-        except (ValueError, TypeError, Usuario.DoesNotExist) as err:
-            raise ValidationError({"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}) from err
-
-        # Bloquear si ya es miembro activo de OTRA familia
-        if FamiliaUsuario.objects.filter(fk_usuario=jefe, estado=True).exclude(fk_familia=familia).exists():
-            raise ValidationError({"fk_jefe_familia": "El usuario ya pertenece a otra familia activa."})
+            jefe_id_int = int(jefe_id)
+        except (ValueError, TypeError) as err:
+            raise ValidationError({"fk_jefe_familia": "El ID del jefe de familia debe ser un número entero."}) from err
 
         with transaction.atomic():
+            try:
+                jefe = Usuario.objects.select_for_update().get(pk=jefe_id_int, estado=True)
+            except Usuario.DoesNotExist as err:
+                raise ValidationError(
+                    {"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}
+                ) from err
+
+            # Bloquear si ya es miembro activo de OTRA familia
+            if FamiliaUsuario.objects.filter(fk_usuario=jefe, estado=True).exclude(fk_familia=familia).exists():
+                raise ValidationError({"fk_jefe_familia": "El usuario ya pertenece a otra familia activa."})
+
             familia.estado = True
             familia.fk_jefe_familia = jefe
             familia.save(update_fields=["estado", "fk_jefe_familia"])
@@ -77,11 +89,11 @@ class FamiliaViewSet(viewsets.ModelViewSet):
                 defaults={"estado": True},
             )
 
-            _log(
-                request.user,
-                f"restaurar familia id={familia.id_familia} nombre={familia.nombre_familia} jefe={jefe.correo}",
-                request,
-            )
+        _log(
+            request.user,
+            f"restaurar familia id={familia.id_familia} nombre={familia.nombre_familia} jefe={jefe.correo}",
+            request,
+        )
 
         serializer = self.get_serializer(familia)
         return ok_response(
@@ -93,19 +105,19 @@ class FamiliaViewSet(viewsets.ModelViewSet):
     def permanent(self, request, pk=None, *args, **kwargs):
         """Elimina permanentemente una familia y sus relaciones."""
         familia = self.get_object()
+        model_name = type(familia).__name__
+        nombre = familia.nombre_familia
+        pk_val = familia.pk
         with transaction.atomic():
             # Eliminar físicamente a los miembros asociados primero para evitar errores de llave foránea
             FamiliaUsuario.objects.filter(fk_familia=familia).delete()
             # Eliminar la familia físicamente
-            model_name = type(familia).__name__
-            nombre = familia.nombre_familia
-            pk_val = familia.pk
             familia.delete()
-            _log(
-                request.user,
-                f"{model_name} eliminado permanentemente: {nombre} (id={pk_val})",
-                request,
-            )
+        _log(
+            request.user,
+            f"{model_name} eliminado permanentemente: {nombre} (id={pk_val})",
+            request,
+        )
         return ok_response(message="Familia eliminada permanentemente.")
 
     @action(detail=True, methods=["post"], url_path="asignar-jefe")
@@ -173,6 +185,8 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Desactiva la membresía del miembro de la familia (soft-delete)."""
+        if not instance.estado:
+            return
         with transaction.atomic():
             familia = instance.fk_familia
             if familia.fk_jefe_familia == instance.fk_usuario:
@@ -183,8 +197,8 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
             nombre = familia.nombre_familia
             instance.estado = False
             instance.save(update_fields=["estado"])
-            _log(
-                self.request.user,
-                f"remover_miembro usuario={correo} familia={nombre}",
-                self.request,
-            )
+        _log(
+            self.request.user,
+            f"remover_miembro usuario={correo} familia={nombre}",
+            self.request,
+        )

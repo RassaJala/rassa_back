@@ -727,8 +727,23 @@ class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
     queryset = Localidad.objects.all()
 
 
+MIN_SEARCH_QUERY_LENGTH = 3
+USER_SEARCH_RESULT_LIMIT = 10
+
+
 class SearchUsersView(APIView):
-    """Endpoint para buscar usuarios activos por nombre o correo."""
+    """Endpoint para buscar usuarios activos por nombre o correo.
+
+    Parámetros de consulta (Query Params):
+    - q (str): Término de búsqueda (mínimo 3 caracteres). Requerido.
+    - include_assigned (bool/str): Si es 'true' o '1', incluye usuarios que ya
+      tienen una familia activa. Por defecto es 'false'.
+
+    Comportamiento y Límites:
+    - Retorna un máximo de 10 resultados (USER_SEARCH_RESULT_LIMIT).
+    - Excluye usuarios con rol 'Admin'.
+    - Lanza ValidationError si el parámetro 'q' está vacío o es menor a 3 caracteres.
+    """
 
     permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
 
@@ -738,8 +753,10 @@ class SearchUsersView(APIView):
             raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
 
         query = raw_q.strip()
-        if len(query) < 3:
-            raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
+        if len(query) < MIN_SEARCH_QUERY_LENGTH:
+            raise ValidationError(
+                {"q": f"El parámetro de búsqueda 'q' debe tener al menos {MIN_SEARCH_QUERY_LENGTH} caracteres."}
+            )
 
         include_assigned = request.query_params.get("include_assigned", "false").lower() in ["true", "1"]
 
@@ -760,6 +777,6 @@ class SearchUsersView(APIView):
             )
             base_query = base_query.exclude(id_usuario__in=usuarios_con_familia)
 
-        usuarios = base_query[:10]
+        usuarios = base_query[:USER_SEARCH_RESULT_LIMIT]
         serializer = UserSerializer(usuarios, many=True)
         return _ok(data=serializer.data)
