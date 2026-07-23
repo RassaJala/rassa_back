@@ -579,8 +579,7 @@ class ProductoImagenCrudTests(APITestCase):
         """Si delete_file falla en Drive, se activa eliminar_pendiente."""
         self.imagen.drive_file_id = "fake_drive_file_id"
         self.imagen.save(update_fields=["drive_file_id"])
-        with patch("rassa.blueprints.producto_imagen.views.delete_file",
-                   side_effect=Exception("Drive timeout")):
+        with patch("rassa.blueprints.producto_imagen.views.delete_file", side_effect=Exception("Drive timeout")):
             response = self.client.delete(
                 reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen])
             )

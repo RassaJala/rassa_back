@@ -17,7 +17,9 @@ def _make_resp(status, reason="Error"):
 class CleanupOrphanDriveFilesTest(TestCase):
     def setUp(self):
         self.category = CategoriaProducto.objects.create(
-            nombre="Frutas", descripcion="test", estado=True,
+            nombre="Frutas",
+            descripcion="test",
+            estado=True,
         )
         self.producto = Producto.objects.create(
             nombre_producto="Manzana",
