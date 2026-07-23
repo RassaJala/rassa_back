@@ -4,10 +4,11 @@ El signal ``registrar_cambio_estado`` escucha ``post_save`` de ``PedidoCabecera`
 y crea un registro en ``HistorialEstadoPedido`` cada vez que ``fk_estado`` cambia.
 
 Nota sobre ``update_fields``:
-    Cuando se guarda con ``save(update_fields=["fk_estado"])`` (como en
-    ``PedidoViewSet.cambiar_estado``), Django NO dispara signals. El historial
-    se crea inline en ese caso. Este signal actúa como safety net para cambios
-    de estado que ocurran por otras vías (Django admin, management commands, etc.).
+    Django SÍ dispara ``pre_save``/``post_save`` aunque se use ``update_fields``.
+    Por eso este signal se salta cuando detecta ``update_fields`` — el historial
+    se crea inline en ``PedidoViewSet.cambiar_estado`` para incluir ``fk_cambiado_por``.
+    Este signal actúa como safety net para cambios de estado por otras vías
+    (Django admin, management commands, etc.).
 """
 
 import logging
@@ -39,29 +40,20 @@ def _capturar_estado_anterior(sender, instance, **kwargs):
 def registrar_cambio_estado(sender, instance, created, **kwargs):
     """Registra automáticamente cada cambio de estado en HistorialEstadoPedido.
 
-    - Si el pedido es nuevo y tiene estado inicial → crea registro con
-      ``fk_estado_anterior=None``.
-    - Si el pedido existente cambió de estado → crea registro con
-      ambos estados.
+    - Si el pedido es nuevo (created) → no hace nada, el estado inicial se maneja
+      en la vista o en la migración de datos.
     - Si el estado no cambió → no hace nada.
-    - Si se usó ``update_fields`` → Django no dispara este signal,
-      el historial se crea inline en la vista.
+    - Si se usó ``update_fields`` → el historial se crea inline en la vista,
+      este signal se salta para evitar duplicados.
+    - Solo crea registros para cambios de estado por vías externas
+      (Django admin, management commands, etc.).
     """
+    update_fields = kwargs.get("update_fields")
+    if update_fields is not None or created:
+        return
+
     estado_anterior = _pre_estado_cache.pop(instance.pk, None)
     estado_nuevo = instance.fk_estado_id
-
-    if created and estado_nuevo is not None and estado_anterior is None:
-        HistorialEstadoPedido.objects.create(
-            fk_pedido=instance,
-            fk_estado_anterior=None,
-            fk_estado_nuevo_id=estado_nuevo,
-        )
-        logger.info(
-            "Pedido #%s creado con estado %s (signal)",
-            instance.pk,
-            estado_nuevo,
-        )
-        return
 
     if estado_anterior is not None and estado_nuevo is not None and estado_anterior != estado_nuevo:
         HistorialEstadoPedido.objects.create(
