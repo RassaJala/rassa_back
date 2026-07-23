@@ -754,7 +754,10 @@ class PublicacionCurrentTests(PublicacionBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_returns_only_published(self):
-        # Crear borrador con fecha dentro de la semana actual pero distinta semana
+        # Borrador con fecha dentro del rango Mon-Sun y semana distinta para
+        # evitar el unique constraint (fk_agricultor, semana). El endpoint
+        # filtra por fecha_publicacion y estado, NO por semana, por lo que
+        # la única variable que excluye al borrador es estado=borrador.
         PublicacionSemanal.objects.create(
             fk_agricultor=self.agricultor.usuario,
             fecha_publicacion=date(2026, 7, 22),
@@ -765,6 +768,7 @@ class PublicacionCurrentTests(PublicacionBaseTestCase):
         body = response.json()
         self.assertIn("data", body)
         self.assertEqual(len(body["data"]), 1)
+        self.assertEqual(body["data"][0]["id_publicacion"], self.pub.id_publicacion)
 
     def test_includes_agricultor_and_productos(self):
         response = self.client.get(reverse("publicacion-current"))
