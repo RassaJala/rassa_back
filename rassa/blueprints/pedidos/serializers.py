@@ -1,7 +1,5 @@
 """Serializadores del módulo Pedidos."""
 
-from decimal import Decimal
-
 from rest_framework import serializers
 
 from rassa.models import DetallePedido, PedidoCabecera, ProductoSemanal
@@ -18,10 +16,10 @@ class ItemPedidoSerializer(serializers.Serializer):
             producto = ProductoSemanal.objects.select_related(
                 "fk_producto", "fk_publicacion"
             ).get(pk=value)
-        except ProductoSemanal.DoesNotExist:
+        except ProductoSemanal.DoesNotExist as err:
             raise serializers.ValidationError(
                 "El producto semanal no existe."
-            )
+            ) from err
 
         if producto.estado != ProductoSemanal.ESTADO_ACTIVO:
             raise serializers.ValidationError(
