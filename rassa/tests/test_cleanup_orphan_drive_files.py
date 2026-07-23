@@ -121,7 +121,7 @@ class CleanupOrphanDriveFilesTest(TestCase):
 
     def test_varias_imagenes_conteo_correcto(self):
         """Verifica el conteo de deleted/failed con múltiples imágenes."""
-        img2 = ProductoImagen.objects.create(
+        ProductoImagen.objects.create(
             fk_producto=self.producto,
             url="https://example.com/test2.jpg",
             drive_file_id="drive_xyz789",
