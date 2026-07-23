@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import ProductoSemanalViewSet, PublicacionViewSet
+from .views import ProductoSemanalViewSet, PublicacionViewSet, publicaciones_current
 
 publicacion_list = PublicacionViewSet.as_view(
     {
@@ -44,6 +44,7 @@ producto_restore = ProductoSemanalViewSet.as_view(
 )
 
 urlpatterns = [
+    path("api/publicaciones/current/", publicaciones_current, name="publicacion-current"),
     path("api/publicaciones/", publicacion_list, name="publicacion-list"),
     path("api/publicaciones/<int:pk>/", publicacion_detail, name="publicacion-detail"),
     path("api/publicaciones/<int:pk>/publish/", publicacion_publish, name="publicacion-publish"),

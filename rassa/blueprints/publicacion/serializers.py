@@ -1,7 +1,7 @@
 from django.core.validators import URLValidator
 from rest_framework import serializers
 
-from rassa.models import ProductoSemanal, PublicacionSemanal
+from rassa.models import ProductoSemanal, PublicacionSemanal, Usuario
 
 
 class ProductoSemanalSerializer(serializers.ModelSerializer):
@@ -47,3 +47,43 @@ class PublicacionSerializer(serializers.ModelSerializer):
         model = PublicacionSemanal
         fields = ["id_publicacion", "fk_agricultor", "fecha_publicacion", "semana", "estado", "productos", "creado_en"]
         read_only_fields = ["id_publicacion", "fk_agricultor", "fecha_publicacion", "semana", "estado", "creado_en"]
+
+
+class AgricultorResumeSerializer(serializers.ModelSerializer):
+    nombre = serializers.CharField(source="fk_persona.nombre")
+    apellido = serializers.CharField(source="fk_persona.apellido_paterno")
+
+    class Meta:
+        model = Usuario
+        fields = ["id_usuario", "nombre", "apellido"]
+
+
+class ProductoSemanalPublicSerializer(serializers.ModelSerializer):
+    producto = serializers.CharField(source="fk_producto.nombre_producto")
+    unidad = serializers.CharField(source="fk_unidad.abreviatura")
+
+    class Meta:
+        model = ProductoSemanal
+        fields = [
+            "id_producto_semanal",
+            "producto",
+            "unidad",
+            "stock",
+            "precio",
+            "foto",
+        ]
+
+
+class PublicacionCurrentSerializer(serializers.ModelSerializer):
+    productos = ProductoSemanalPublicSerializer(many=True, source="productosemanal_set")
+    agricultor = AgricultorResumeSerializer(source="fk_agricultor")
+
+    class Meta:
+        model = PublicacionSemanal
+        fields = [
+            "id_publicacion",
+            "agricultor",
+            "fecha_publicacion",
+            "semana",
+            "productos",
+        ]
