@@ -1,6 +1,8 @@
 """Vistas para el módulo de Pedidos."""
 
-from django.db import transaction
+import logging
+
+from django.db import DatabaseError, transaction
 from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -18,6 +20,8 @@ from .serializers import (
     PedidoDetailSerializer,
     PedidoListSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 SECUENCIA = {
     "pendiente": "confirmado",
@@ -92,6 +96,11 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                     message="Pedido no encontrado.",
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
+            except DatabaseError:
+                return ok_response(
+                    message="El pedido está siendo procesado por otro usuario. Intente de nuevo.",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
 
             self.check_object_permissions(request, pedido)
             estado_actual = pedido.fk_estado.tipo_estado
@@ -119,9 +128,13 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             try:
                 nuevo_estado = EstadoPedido.objects.get(tipo_estado=nuevo_estado_str)
             except EstadoPedido.DoesNotExist:
+                logger.warning(
+                    "EstadoPedido '%s' no encontrado en BD (choices del serializer desactualizados)",
+                    nuevo_estado_str,
+                )
                 return ok_response(
                     message=f"El estado '{nuevo_estado_str}' no está configurado en el sistema.",
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
             estado_anterior = pedido.fk_estado
@@ -135,11 +148,25 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 fk_cambiado_por=request.user.usuario,
             )
 
-            _log(
-                request.user,
-                f"cambiar_estado pedido={pedido.id_pedido} {estado_actual}→{nuevo_estado_str}",
-                request,
+        _log(
+            request.user,
+            f"cambiar_estado pedido={pedido.id_pedido} {estado_actual}→{nuevo_estado_str}",
+            request,
+        )
+
+        pedido = (
+            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
+            .prefetch_related(
+                "detallepedido_set",
+                Prefetch(
+                    "historialestadopedido_set",
+                    queryset=HistorialEstadoPedido.objects.select_related(
+                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
+                    ),
+                ),
             )
+            .get(pk=pedido.pk)
+        )
 
         return ok_response(
             data=PedidoDetailSerializer(pedido).data,
