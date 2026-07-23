@@ -20,20 +20,18 @@ from rassa.models import HistorialEstadoPedido, PedidoCabecera
 
 logger = logging.getLogger(__name__)
 
-_pre_estado_cache = {}
-
 
 @receiver(pre_save, sender=PedidoCabecera)
 def _capturar_estado_anterior(sender, instance, **kwargs):
-    """Almacena el ``fk_estado`` anterior antes de que se guarde el registro."""
+    """Almacena el ``fk_estado`` anterior como atributo temporal en la instancia."""
     if instance.pk:
         try:
             anterior = PedidoCabecera.objects.get(pk=instance.pk)
-            _pre_estado_cache[instance.pk] = anterior.fk_estado_id
+            instance._estado_anterior_id = anterior.fk_estado_id
         except PedidoCabecera.DoesNotExist:
-            _pre_estado_cache[instance.pk] = None
+            instance._estado_anterior_id = None
     else:
-        _pre_estado_cache[instance.pk] = None
+        instance._estado_anterior_id = None
 
 
 @receiver(post_save, sender=PedidoCabecera)
@@ -52,7 +50,7 @@ def registrar_cambio_estado(sender, instance, created, **kwargs):
     if update_fields is not None or created:
         return
 
-    estado_anterior = _pre_estado_cache.pop(instance.pk, None)
+    estado_anterior = getattr(instance, "_estado_anterior_id", None)
     estado_nuevo = instance.fk_estado_id
 
     if estado_anterior is not None and estado_nuevo is not None and estado_anterior != estado_nuevo:
