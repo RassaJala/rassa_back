@@ -712,16 +712,23 @@ class ProfileAndAuthEndpointsTest(APITestCase):
     def test_search_users_missing_query_param(self):
         """GET /api/auth/search-users/ without 'q' parameter returns 400 Bad Request."""
         token = self._login(email=self.admin_email, password=self.admin_password)
+
+        # Test missing param entirely
         response = self.client.get(reverse("search-users"), {}, **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("q", response.data)
+        self.assertEqual(response.data["q"], "El parámetro de búsqueda 'q' es requerido.")
+
+        # Test empty string param
+        response_empty = self.client.get(reverse("search-users"), {"q": "   "}, **self._auth_header(token))
+        self.assertEqual(response_empty.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response_empty.data["q"], "El parámetro de búsqueda 'q' es requerido.")
 
     def test_search_users_query_too_short(self):
         """GET /api/auth/search-users/ with query < 3 chars returns 400 Bad Request."""
         token = self._login(email=self.admin_email, password=self.admin_password)
         response = self.client.get(reverse("search-users"), {"q": "Ju"}, **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("q", response.data)
+        self.assertEqual(response.data["q"], "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres.")
 
     def test_search_users_excludes_admins(self):
         """GET /api/auth/search-users/ does not return Admin users."""
@@ -737,10 +744,26 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         from rassa.models import Familia, FamiliaUsuario
 
         familia = Familia.objects.create(nombre_familia="Familia Test")
-        FamiliaUsuario.objects.create(fk_usuario=self.usuario, fk_familia=familia)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario, fk_familia=familia, estado=True)
 
         token = self._login(email=self.admin_email, password=self.admin_password)
         # Search for "Juan" (should now be excluded because they are in an active family)
         response = self.client.get(reverse("search-users"), {"q": "Juan"}, **self._auth_header(token))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["data"]), 0)
+
+    def test_search_users_include_assigned(self):
+        """GET /api/auth/search-users/ with include_assigned=true returns users in active families."""
+        from rassa.models import Familia, FamiliaUsuario
+
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario, fk_familia=familia, estado=True)
+
+        token = self._login(email=self.admin_email, password=self.admin_password)
+        # Search for "Juan" with include_assigned=true
+        response = self.client.get(
+            reverse("search-users"), {"q": "Juan", "include_assigned": "true"}, **self._auth_header(token)
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["data"]), 1)
+        self.assertEqual(response.data["data"][0]["email"], self.email)

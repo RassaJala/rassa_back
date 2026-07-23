@@ -727,27 +727,40 @@ class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
     queryset = Localidad.objects.all()
 
 
+MIN_SEARCH_QUERY_LENGTH = 3
+USER_SEARCH_RESULT_LIMIT = 10
+
+
 class SearchUsersView(APIView):
-    """Endpoint para buscar usuarios activos por nombre o correo."""
+    """Endpoint para buscar usuarios activos por nombre o correo.
+
+    Parámetros de consulta (Query Params):
+    - q (str): Término de búsqueda (mínimo 3 caracteres). Requerido.
+    - include_assigned (bool/str): Si es 'true' o '1', incluye usuarios que ya
+      tienen una familia activa. Por defecto es 'false'.
+
+    Comportamiento y Límites:
+    - Retorna un máximo de 10 resultados (USER_SEARCH_RESULT_LIMIT).
+    - Excluye usuarios con rol 'Admin'.
+    - Lanza ValidationError si el parámetro 'q' está vacío o es menor a 3 caracteres.
+    """
 
     permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
 
     def get(self, request):
-        if "q" not in request.query_params:
+        raw_q = request.query_params.get("q")
+        if raw_q is None or raw_q.strip() == "":
             raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
 
-        query = request.query_params.get("q", "").strip()
-        if not query:
-            raise ValidationError({"q": "El parámetro de búsqueda 'q' no puede estar vacío."})
+        query = raw_q.strip()
+        if len(query) < MIN_SEARCH_QUERY_LENGTH:
+            raise ValidationError(
+                {"q": f"El parámetro de búsqueda 'q' debe tener al menos {MIN_SEARCH_QUERY_LENGTH} caracteres."}
+            )
 
-        if len(query) < 3:
-            raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
+        include_assigned = request.query_params.get("include_assigned", "false").lower() in ["true", "1"]
 
-        usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
-            "fk_usuario_id", flat=True
-        )
-
-        usuarios = (
+        base_query = (
             Usuario.objects.filter(estado=True)
             .exclude(fk_rol__nombre_rol="Admin")
             .filter(
@@ -756,8 +769,14 @@ class SearchUsersView(APIView):
                 | Q(fk_persona__apellido_paterno__icontains=query)
                 | Q(fk_persona__apellido_materno__icontains=query)
             )
-            .exclude(id_usuario__in=usuarios_con_familia)[:10]
         )
 
+        if not include_assigned:
+            usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
+                "fk_usuario_id", flat=True
+            )
+            base_query = base_query.exclude(id_usuario__in=usuarios_con_familia)
+
+        usuarios = base_query[:USER_SEARCH_RESULT_LIMIT]
         serializer = UserSerializer(usuarios, many=True)
         return _ok(data=serializer.data)
