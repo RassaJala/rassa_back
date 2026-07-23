@@ -293,11 +293,12 @@ from .serializers import ProductoSerializer
 
 class ProductoViewSet(viewsets.ModelViewSet):
     """ViewSet para CRUD de Productos."""
+
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in ["list", "retrieve"]:
             return [IsAdminOrAgricultor()]
         return [IsAdmin()]
 ```
@@ -317,13 +318,11 @@ class ProductoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Producto
-        fields = '__all__'
+        fields = "__all__"
 
     def validate_nombre(self, value):
         if len(value.strip()) < 3:
-            raise serializers.ValidationError(
-                "El nombre debe tener al menos 3 caracteres."
-            )
+            raise serializers.ValidationError("El nombre debe tener al menos 3 caracteres.")
         return value.strip()
 ```
 
@@ -338,10 +337,10 @@ from rest_framework.routers import DefaultRouter
 from .views import ProductoViewSet
 
 router = DefaultRouter()
-router.register(r'productos', ProductoViewSet)
+router.register(r"productos", ProductoViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path("", include(router.urls)),
 ]
 ```
 

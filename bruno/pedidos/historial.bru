@@ -1,0 +1,22 @@
+meta {
+  name: Historial de estados
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/pedidos/{{pedidoId}}/historial/
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8000
+  pedidoId: 1
+  accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0ODQ1MzQxLCJpYXQiOjE3ODQ4MzgxNDEsImp0aSI6IjM0ZmY3ZmU0YjFmNzRlZjNhNWMyY2Q4MTkwY2RmNGFjIiwidXNlcl9pZCI6MTJ9.3KWPYzuP_GBNajqA1ZIo3vfLmq8NQZZFF1FgtZJRk_I  
+}

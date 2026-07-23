@@ -7,7 +7,6 @@ from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
 from rassa.permissions.role_permissions import HasRole
@@ -16,6 +15,7 @@ from rassa.views import _log, ok_response
 from .serializers import (
     ESTADOS_CANCELABLES,
     ESTADOS_TERMINALES,
+    HistorialEstadoSerializer,
     PedidoCambiarEstadoSerializer,
     PedidoDetailSerializer,
     PedidoListSerializer,
@@ -62,17 +62,6 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         if self.action == "retrieve":
             return PedidoDetailSerializer
         return PedidoListSerializer
-
-    def get_throttles(self):
-        if self.action == "cambiar_estado":
-            return [ScopedRateThrottle()]
-        return super().get_throttles()
-
-    @property
-    def throttle_scope(self):
-        if self.action == "cambiar_estado":
-            return "pedidos_cambiar_estado"
-        return None
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True)
@@ -172,3 +161,29 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             data=PedidoDetailSerializer(pedido).data,
             message=f"Estado cambiado a '{nuevo_estado_str}' correctamente.",
         )
+
+    @action(detail=True, methods=["get"], url_path="historial")
+    def historial(self, request, pk=None):
+        """Historial de cambios de estado de un pedido.
+
+        GET /api/pedidos/{id}/historial/
+        """
+        qs = PedidoCabecera.objects.all()
+        usuario = getattr(request.user, "usuario", None)
+        rol = getattr(usuario, "fk_rol", None) if usuario else None
+        if rol and rol.nombre_rol == "Vendedor":
+            qs = qs.filter(fk_vendedor=usuario)
+
+        if not qs.filter(pk=pk).exists():
+            return ok_response(
+                message="Pedido no encontrado.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        historial = (
+            HistorialEstadoPedido.objects.filter(fk_pedido_id=pk)
+            .select_related("fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona")
+            .order_by("creado_en")
+        )
+
+        return ok_response(data=HistorialEstadoSerializer(historial, many=True).data)
