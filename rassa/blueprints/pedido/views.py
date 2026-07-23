@@ -7,7 +7,6 @@ from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
 from rassa.permissions.role_permissions import HasRole
@@ -63,17 +62,6 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         if self.action == "retrieve":
             return PedidoDetailSerializer
         return PedidoListSerializer
-
-    def get_throttles(self):
-        if self.action == "cambiar_estado":
-            return [ScopedRateThrottle()]
-        return super().get_throttles()
-
-    @property
-    def throttle_scope(self):
-        if self.action == "cambiar_estado":
-            return "pedidos_cambiar_estado"
-        return None
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True)
