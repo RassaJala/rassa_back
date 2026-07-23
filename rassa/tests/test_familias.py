@@ -383,6 +383,7 @@ class FamiliasTestCase(TestCase):
         miembro.refresh_from_db()
         self.assertTrue(familia.estado)
         self.assertTrue(miembro.estado)
+        self.assertEqual(familia.fk_jefe_familia, self.usuario_cliente1)
 
         # Verificar que otros miembros NO se reactivan
         self.assertFalse(
@@ -390,6 +391,47 @@ class FamiliasTestCase(TestCase):
             .exclude(fk_usuario=self.usuario_cliente1)
             .exists()
         )
+
+    def test_restaurar_familia_jefe_ya_en_otra_familia(self):
+        """Valida que falle la restauración de una familia si el jefe propuesto ya está en otra familia activa."""
+        familia_activa = Familia.objects.create(nombre_familia="Familia Activa", estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia_activa, estado=True)
+
+        familia_inactiva = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+
+        response = self.client.post(
+            f"/api/familias/grupos/{familia_inactiva.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)
+        self.assertEqual(response.data["fk_jefe_familia"], "El usuario ya pertenece a otra familia activa.")
+
+    def test_remover_miembro_familia_soft_delete(self):
+        """Valida que al remover un integrante de la familia se haga un soft-delete (estado=False)."""
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+
+        response = self.client.delete(f"/api/familias/miembros/{rel.id_familia_usuario}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Verificar que el registro aún existe pero con estado=False
+        rel.refresh_from_db()
+        self.assertFalse(rel.estado)
+
+    def test_remover_miembro_jefe_resetea_jefe(self):
+        """Valida que al remover al jefe de familia, el campo fk_jefe_familia de la familia pase a ser None."""
+        familia = Familia.objects.create(nombre_familia="Familia Test", fk_jefe_familia=self.usuario_cliente1)
+        rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+
+        response = self.client.delete(f"/api/familias/miembros/{rel.id_familia_usuario}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        rel.refresh_from_db()
+        familia.refresh_from_db()
+        self.assertFalse(rel.estado)
+        self.assertIsNone(familia.fk_jefe_familia)
 
     def test_eliminacion_permanente_familia_exito(self):
         """Valida la eliminación física definitiva de una familia inactiva."""

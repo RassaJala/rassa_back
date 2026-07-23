@@ -735,11 +735,11 @@ class SearchUsersView(APIView):
     def get(self, request):
         raw_q = request.query_params.get("q")
         if raw_q is None or raw_q.strip() == "":
-            return Response({"q": ["Este campo es requerido."]}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
 
         query = raw_q.strip()
         if len(query) < 3:
-            return Response({"q": ["Este campo debe tener al menos 3 caracteres."]}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
 
         include_assigned = request.query_params.get("include_assigned", "false").lower() in ["true", "1"]
 

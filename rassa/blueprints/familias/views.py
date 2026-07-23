@@ -61,16 +61,19 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         except (ValueError, TypeError, Usuario.DoesNotExist) as err:
             raise ValidationError({"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}) from err
 
+        if FamiliaUsuario.objects.filter(fk_usuario=jefe, estado=True).exists():
+            raise ValidationError({"fk_jefe_familia": "El usuario ya pertenece a otra familia activa."})
+
         with transaction.atomic():
             familia.estado = True
             familia.fk_jefe_familia = jefe
             familia.save(update_fields=["estado", "fk_jefe_familia"])
 
-            existing = FamiliaUsuario.objects.filter(fk_usuario=jefe, fk_familia=familia)
-            if existing.exists():
-                existing.update(estado=True)
-            else:
-                FamiliaUsuario.objects.create(fk_usuario=jefe, fk_familia=familia, estado=True)
+            FamiliaUsuario.objects.update_or_create(
+                fk_usuario=jefe,
+                fk_familia=familia,
+                defaults={"estado": True},
+            )
 
             _log(
                 request.user,
@@ -167,16 +170,17 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_destroy(self, instance):
-        """Elimina físicamente la membresía del miembro de la familia."""
+        """Desactiva la membresía del miembro de la familia (soft-delete)."""
         with transaction.atomic():
             familia = instance.fk_familia
             if familia.fk_jefe_familia == instance.fk_usuario:
                 familia.fk_jefe_familia = None
-                familia.save()
+                familia.save(update_fields=["fk_jefe_familia"])
 
             correo = instance.fk_usuario.correo
             nombre = familia.nombre_familia
-            instance.delete()
+            instance.estado = False
+            instance.save(update_fields=["estado"])
             _log(
                 self.request.user,
                 f"remover_miembro usuario={correo} familia={nombre}",
