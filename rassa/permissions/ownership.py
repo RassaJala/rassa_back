@@ -39,6 +39,5 @@ def check_producto_ownership(request, producto_id):
 
     if not tiene_publicacion:
         raise PermissionDenied(
-            "No tenés publicaciones con este producto. "
-            "Solo podés gestionar imágenes de productos que hayas publicado."
+            "No tenés publicaciones con este producto. Solo podés gestionar imágenes de productos que hayas publicado."
         )
