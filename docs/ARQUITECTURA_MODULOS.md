@@ -695,7 +695,6 @@ class ModeloXSerializer(serializers.ModelSerializer):
         model = ModeloX
         fields = "__all__"
 
-
 # rassa/blueprints/{modulo}/views.py
 """Vistas del módulo {Nombre}."""
 
