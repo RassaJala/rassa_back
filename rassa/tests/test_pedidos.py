@@ -3,42 +3,39 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIClient
+from rest_framework.test import APITestCase
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera, Persona, Rol, Usuario
 
 
-class PedidosTestCase(TestCase):
+class PedidosTestCase(APITestCase):
     """Caso de prueba para la gestión de Pedidos."""
 
     def setUp(self):
-        self.client = APIClient()
-
         # Roles
-        self.rol_admin = Rol.objects.create(id_rol=1, nombre_rol="Admin", descripcion="Administrador")
-        self.rol_vendedor = Rol.objects.create(id_rol=3, nombre_rol="Vendedor", descripcion="Vendedor")
-        self.rol_cliente = Rol.objects.create(id_rol=4, nombre_rol="Cliente", descripcion="Cliente")
+        self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Administrador")
+        self.rol_vendedor = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
+        self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
 
-        # Estados de pedido (los 7 del sistema)
+        # Estados de pedido
         self.estado_pendiente = EstadoPedido.objects.create(
-            id_estado=1, tipo_estado="pendiente", descripcion="Pendiente"
+            tipo_estado="pendiente", descripcion="Pendiente"
         )
         self.estado_confirmado = EstadoPedido.objects.create(
-            id_estado=2, tipo_estado="confirmado", descripcion="Confirmado"
+            tipo_estado="confirmado", descripcion="Confirmado"
         )
         self.estado_en_preparacion = EstadoPedido.objects.create(
-            id_estado=3, tipo_estado="en_preparacion", descripcion="En preparación"
+            tipo_estado="en_preparacion", descripcion="En preparación"
         )
         self.estado_listo = EstadoPedido.objects.create(
-            id_estado=4, tipo_estado="listo_para_retirar", descripcion="Listo para retirar"
+            tipo_estado="listo_para_retirar", descripcion="Listo para retirar"
         )
         self.estado_entregado = EstadoPedido.objects.create(
-            id_estado=5, tipo_estado="entregado", descripcion="Entregado"
+            tipo_estado="entregado", descripcion="Entregado"
         )
         self.estado_cancelado = EstadoPedido.objects.create(
-            id_estado=6, tipo_estado="cancelado", descripcion="Cancelado"
+            tipo_estado="cancelado", descripcion="Cancelado"
         )
 
         # Usuarios

@@ -1,9 +1,11 @@
 """Vistas para el módulo de Pedidos."""
 
 from django.db import transaction
-from rest_framework import status, viewsets
+from django.db.models import Prefetch
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
 from rassa.permissions.role_permissions import HasRole
@@ -25,59 +27,80 @@ SECUENCIA = {
 }
 
 
-class PedidoViewSet(viewsets.ModelViewSet):
-    """ViewSet para la gestión de Pedidos."""
-
+class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
     permission_classes = [IsAuthenticated, HasRole("Vendedor", "Admin")]
 
     def get_queryset(self):
-        qs = PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
+        qs = (
+            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
+            .prefetch_related(
+                "detallepedido_set",
+                Prefetch(
+                    "historialestadopedido_set",
+                    queryset=HistorialEstadoPedido.objects.select_related(
+                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
+                    ),
+                ),
+            )
+            .order_by("-creado_en")
+        )
         if self.request.user.usuario.fk_rol.nombre_rol == "Vendedor":
             qs = qs.filter(fk_vendedor=self.request.user.usuario)
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
-        return qs.order_by("-creado_en")
+        return qs
 
     def get_serializer_class(self):
         if self.action == "retrieve":
             return PedidoDetailSerializer
         return PedidoListSerializer
 
+    def get_throttles(self):
+        if self.action == "cambiar_estado":
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
+    @property
+    def throttle_scope(self):
+        if self.action == "cambiar_estado":
+            return "pedidos_cambiar_estado"
+        return None
+
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
-        """Cambia el estado de un pedido siguiendo la secuencia válida."""
-        pedido = self.get_object()
         serializer = PedidoCambiarEstadoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         nuevo_estado_str = serializer.validated_data["nuevo_estado"]
 
-        estado_actual = pedido.fk_estado.tipo_estado
-
-        if estado_actual in ESTADOS_TERMINALES:
-            return ok_response(
-                message=f"El pedido ya está en estado terminal '{estado_actual}'.",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if nuevo_estado_str == "cancelado":
-            if estado_actual not in ESTADOS_CANCELABLES:
-                return ok_response(
-                    message=f"No se puede cancelar un pedido en estado '{estado_actual}'.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            esperado = SECUENCIA.get(estado_actual)
-            if nuevo_estado_str != esperado:
-                return ok_response(
-                    message=f"Desde '{estado_actual}' solo se puede avanzar a '{esperado}'.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
-        nuevo_estado = EstadoPedido.objects.get(tipo_estado=nuevo_estado_str)
-
         with transaction.atomic():
+            pedido = PedidoCabecera.objects.select_for_update().get(pk=pk)
+            self.check_object_permissions(request, pedido)
+
+            estado_actual = pedido.fk_estado.tipo_estado
+
+            if estado_actual in ESTADOS_TERMINALES:
+                return ok_response(
+                    message=f"El pedido ya está en estado terminal '{estado_actual}'.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if nuevo_estado_str == "cancelado":
+                if estado_actual not in ESTADOS_CANCELABLES:
+                    return ok_response(
+                        message=f"No se puede cancelar un pedido en estado '{estado_actual}'.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+            else:
+                esperado = SECUENCIA.get(estado_actual)
+                if nuevo_estado_str != esperado:
+                    return ok_response(
+                        message=f"Desde '{estado_actual}' solo se puede avanzar a '{esperado}'.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            nuevo_estado = EstadoPedido.objects.get(tipo_estado=nuevo_estado_str)
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
             pedido.save(update_fields=["fk_estado"])

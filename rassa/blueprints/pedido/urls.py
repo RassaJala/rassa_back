@@ -6,8 +6,8 @@ from rest_framework.routers import DefaultRouter
 from .views import PedidoViewSet
 
 router = DefaultRouter()
-router.register(r"api/pedidos", PedidoViewSet, basename="pedido")
+router.register(r"pedidos", PedidoViewSet, basename="pedido")
 
 urlpatterns = [
-    path("", include(router.urls)),
+    path("api/", include(router.urls)),
 ]
