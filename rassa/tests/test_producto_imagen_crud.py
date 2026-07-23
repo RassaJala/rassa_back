@@ -439,7 +439,7 @@ class ProductoImagenCrudTests(APITestCase):
         )
         with patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload:
             mock_upload.return_value = {
-                "url": "https://drive.google.com/uc?id=abc123&export=download",
+                "url": "https://drive.google.com/uc?id=abc123&export=view",
                 "file_id": "abc123",
             }
             response = self.client.post(
@@ -451,7 +451,7 @@ class ProductoImagenCrudTests(APITestCase):
             status_code=status.HTTP_201_CREATED,
             message="Imagen registrada correctamente.",
         )
-        self.assertEqual(data["url"], "https://drive.google.com/uc?id=abc123&export=download")
+        self.assertEqual(data["url"], "https://drive.google.com/uc?id=abc123&export=view")
         self.assertEqual(data["drive_file_id"], "abc123")
         imagen = ProductoImagen.objects.get(pk=data["id_imagen"])
         self.assertEqual(imagen.drive_file_id, "abc123")
@@ -501,7 +501,7 @@ class ProductoImagenCrudTests(APITestCase):
             patch.object(ProductoImagenSerializer, "save", side_effect=RuntimeError("DB error")),
         ):
             mock_upload.return_value = {
-                "url": "https://drive.google.com/uc?id=orphan456&export=download",
+                "url": "https://drive.google.com/uc?id=orphan456&export=view",
                 "file_id": "orphan456",
             }
             response = self.client.post(

@@ -46,6 +46,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 
 from decouple import config
@@ -71,6 +72,7 @@ from .drive_config import (
 logger = logging.getLogger(__name__)
 
 _service_cache = {"service": None}
+_service_lock = threading.Lock()
 
 
 def _get_credentials():
@@ -124,6 +126,7 @@ def _get_drive_service():
     """Construye y retorna un servicio de Google Drive autenticado (con cache).
 
     Aplica API_TIMEOUT_SECONDS para evitar bloqueos indefinidos.
+    Usa threading.Lock para ser seguro en WSGI multiproceso.
 
     Returns:
         Resource: Servicio de Google Drive autenticado.
@@ -134,21 +137,25 @@ def _get_drive_service():
     if _service_cache["service"] is not None:
         return _service_cache["service"]
 
-    try:
-        credentials = _get_credentials()
-        from google.auth.transport.requests import Request
+    with _service_lock:
+        if _service_cache["service"] is not None:
+            return _service_cache["service"]
 
-        credentials.refresh(Request())
-        import httplib2
+        try:
+            credentials = _get_credentials()
+            from google.auth.transport.requests import Request
 
-        http = httplib2.Http(timeout=API_TIMEOUT_SECONDS)
-        service = build("drive", "v3", credentials=credentials, http=http)
-        _service_cache["service"] = service
-        return service
-    except Exception as exc:
-        error_type = type(exc).__name__
-        logger.error("Error al autenticar con Google Drive: %s", error_type)
-        raise
+            credentials.refresh(Request())
+            import httplib2
+
+            http = httplib2.Http(timeout=API_TIMEOUT_SECONDS)
+            service = build("drive", "v3", credentials=credentials, http=http)
+            _service_cache["service"] = service
+            return service
+        except Exception as exc:
+            error_type = type(exc).__name__
+            logger.error("Error al autenticar con Google Drive: %s", error_type)
+            raise
 
 
 def _sanitize_filename(name):
@@ -411,11 +418,10 @@ def upload_image(file, filename, folder_id=None):
 
     service = _get_drive_service()
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(safe_name)[1]) as tmp:
+    fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(safe_name)[1])
+    with os.fdopen(fd, "wb") as tmp:
         for chunk in file.chunks():
             tmp.write(chunk)
-        tmp_path = tmp.name
-    os.chmod(tmp_path, 0o600)
 
     try:
         file_id = _upload_to_drive(service, tmp_path, content_type, safe_name, folder_id)
@@ -436,7 +442,7 @@ def upload_image(file, filename, folder_id=None):
         raise
 
     logger.info("Archivo subido a Drive: %s (%s) file_id=%s", safe_name, content_type, file_id)
-    return {"url": f"https://drive.google.com/uc?id={file_id}&export=download", "file_id": file_id}
+    return {"url": f"https://drive.google.com/uc?id={file_id}&export=view", "file_id": file_id}
 
 
 def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg"):

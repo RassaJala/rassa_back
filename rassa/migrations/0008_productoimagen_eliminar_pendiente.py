@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('rassa', '0007_squash_all_branches'),
+        ('rassa', '0007_reconcile_squash_state'),
     ]
 
     operations = [

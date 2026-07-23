@@ -17,8 +17,9 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.throttling import ScopedRateThrottle
 
-from rassa.models import Producto, ProductoImagen, PublicacionSemanal
-from rassa.permissions.role_permissions import ADMIN, HasRole
+from rassa.models import Producto, ProductoImagen
+from rassa.permissions.ownership import check_producto_ownership
+from rassa.permissions.role_permissions import HasRole
 from rassa.services.google_drive import delete_file, upload_image
 from rassa.views import _ok
 
@@ -109,40 +110,6 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         except Producto.DoesNotExist:
             raise NotFound("Producto no encontrado.") from None
 
-    def _check_ownership(self, request, producto_id):
-        """Verifica que un Agricultor tenga permiso sobre las imágenes de un producto.
-
-        Admin siempre tiene acceso. Agricultor solo puede modificar imágenes
-        de productos que haya publicado al menos una vez (via PublicacionSemanal).
-
-        Args:
-            request: Request HTTP con usuario autenticado.
-            producto_id (int): ID del producto.
-
-        Raises:
-            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
-        """
-        from rest_framework.exceptions import PermissionDenied
-
-        try:
-            rol = request.user.usuario.fk_rol.nombre_rol
-        except AttributeError:
-            raise PermissionDenied("No se pudo verificar el rol del usuario.") from None
-
-        if rol == ADMIN:
-            return
-
-        tiene_publicacion = PublicacionSemanal.objects.filter(
-            fk_agricultor=request.user.usuario,
-            productosemanal__fk_producto_id=producto_id,
-        ).exists()
-
-        if not tiene_publicacion:
-            raise PermissionDenied(
-                "No tenés publicaciones con este producto. "
-                "Solo podés gestionar imágenes de productos que hayas publicado."
-            )
-
     def list(self, request, producto_id=None):
         """Lista todas las imágenes de un producto específico.
 
@@ -188,7 +155,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 o error con status 400/502.
         """
         self._get_producto_or_404(producto_id)
-        self._check_ownership(request, producto_id)
+        check_producto_ownership(request, producto_id)
 
         archivo = request.FILES.get("archivo")
         if archivo:
@@ -235,6 +202,11 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 serializer.is_valid(raise_exception=True)
                 serializer.save(drive_file_id=drive_file_id)
         except ValidationError:
+            if uploaded_file_id:
+                try:
+                    delete_file(uploaded_file_id)
+                except Exception:
+                    logger.warning("No se pudo limpiar archivo huérfano %s", uploaded_file_id)
             raise
         except Exception as e:
             if uploaded_file_id:
@@ -296,7 +268,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
         """
         self._get_producto_or_404(producto_id)
-        self._check_ownership(request, producto_id)
+        check_producto_ownership(request, producto_id)
         imagen = self._get_imagen_or_404(producto_id, pk)
 
         drive_deleted = False
@@ -345,7 +317,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
         """
         self._get_producto_or_404(producto_id)
-        self._check_ownership(request, producto_id)
+        check_producto_ownership(request, producto_id)
         imagen = self._get_imagen_or_404(producto_id, pk)
 
         allowed_fields = {"url", "orden"}
@@ -387,12 +359,14 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
         """
         self._get_producto_or_404(producto_id)
-        self._check_ownership(request, producto_id)
+        check_producto_ownership(request, producto_id)
         imagen = self._get_imagen_or_404(producto_id, pk)
 
         with transaction.atomic():
             # Lock all images for this product to prevent race conditions
-            locked_imagenes = ProductoImagen.objects.select_for_update().filter(fk_producto_id=producto_id)
+            locked_imagenes = ProductoImagen.objects.select_for_update().filter(
+                fk_producto_id=producto_id, eliminar_pendiente=False
+            )
             locked_imagenes.update(es_principal=False)
             imagen.refresh_from_db()  # re-read after lock
             imagen.es_principal = True
