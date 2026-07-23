@@ -218,11 +218,11 @@ rassa/
 
    ```python
    router = DefaultRouter()
-   router.register(r'categorias', CategoriaViewSet)
-   router.register(r'productos', ProductoViewSet)
-   router.register(r'unidades', UnidadViewSet)
-   router.register(r'municipios', MunicipioViewSet, basename='municipio')
-   router.register(r'localidades', LocalidadViewSet, basename='localidad')
+   router.register(r"categorias", CategoriaViewSet)
+   router.register(r"productos", ProductoViewSet)
+   router.register(r"unidades", UnidadViewSet)
+   router.register(r"municipios", MunicipioViewSet, basename="municipio")
+   router.register(r"localidades", LocalidadViewSet, basename="localidad")
    ```
 
 4. **Permisos**
@@ -320,7 +320,7 @@ rassa/
 
    class UsuarioViewSet(viewsets.ModelViewSet):
        def get_permissions(self):
-           if self.action == 'list':
+            if self.action == "list":
                return [IsAdmin()]
            return [IsOwnerOrAdmin()]
    ```
@@ -473,9 +473,9 @@ rassa/
 4. **Estados del Corte**
    ```python
    ESTADO_CORTE = [
-       ('abierto', 'Abierto'),
-       ('cerrado', 'Cerrado'),
-       ('cuadrado', 'Cuadrado'),
+       ("abierto", "Abierto"),
+       ("cerrado", "Cerrado"),
+       ("cuadrado", "Cuadrado"),
    ]
    ```
 
@@ -556,7 +556,7 @@ rassa/
                    fk_usuario=request.user.usuario,
                    accion=request.method,
                    ip=self.get_client_ip(request),
-                   dispositivo=request.META.get('HTTP_USER_AGENT', ''),
+                   dispositivo=request.META.get("HTTP_USER_AGENT", ""),
                )
            return response
    ```
@@ -571,7 +571,7 @@ rassa/
 
    ```python
    MIDDLEWARE = [
-       'rassa.middleware.audit.AuditMiddleware',
+       "rassa.middleware.audit.AuditMiddleware",
        # ... otros middleware
    ]
    ```
@@ -691,7 +691,7 @@ class ModeloXSerializer(serializers.ModelSerializer):
     """Serializador para el modelo ModeloX."""
     class Meta:
         model = ModeloX
-        fields = '__all__'
+        fields = "__all__"
 
 # rassa/blueprints/{modulo}/views.py
 """Vistas del módulo {Nombre}."""
@@ -713,10 +713,10 @@ from rest_framework.routers import DefaultRouter
 from .views import ModeloXViewSet
 
 router = DefaultRouter()
-router.register(r'modelos-x', ModeloXViewSet)
+router.register(r"modelos-x", ModeloXViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path("", include(router.urls)),
 ]
 ```
 
