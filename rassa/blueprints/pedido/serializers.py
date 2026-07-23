@@ -121,9 +121,7 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
             historial = HistorialEstadoPedido.objects.filter(fk_pedido=obj).select_related(
                 "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
             )
-        return HistorialEstadoSerializer(
-            historial.all() if hasattr(historial, "all") else historial, many=True
-        ).data
+        return HistorialEstadoSerializer(historial.all() if hasattr(historial, "all") else historial, many=True).data
 
 
 class PedidoCambiarEstadoSerializer(serializers.Serializer):

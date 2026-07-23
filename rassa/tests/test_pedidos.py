@@ -19,24 +19,16 @@ class PedidosTestCase(APITestCase):
         self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
 
         # Estados de pedido
-        self.estado_pendiente = EstadoPedido.objects.create(
-            tipo_estado="pendiente", descripcion="Pendiente"
-        )
-        self.estado_confirmado = EstadoPedido.objects.create(
-            tipo_estado="confirmado", descripcion="Confirmado"
-        )
+        self.estado_pendiente = EstadoPedido.objects.create(tipo_estado="pendiente", descripcion="Pendiente")
+        self.estado_confirmado = EstadoPedido.objects.create(tipo_estado="confirmado", descripcion="Confirmado")
         self.estado_en_preparacion = EstadoPedido.objects.create(
             tipo_estado="en_preparacion", descripcion="En preparación"
         )
         self.estado_listo = EstadoPedido.objects.create(
             tipo_estado="listo_para_retirar", descripcion="Listo para retirar"
         )
-        self.estado_entregado = EstadoPedido.objects.create(
-            tipo_estado="entregado", descripcion="Entregado"
-        )
-        self.estado_cancelado = EstadoPedido.objects.create(
-            tipo_estado="cancelado", descripcion="Cancelado"
-        )
+        self.estado_entregado = EstadoPedido.objects.create(tipo_estado="entregado", descripcion="Entregado")
+        self.estado_cancelado = EstadoPedido.objects.create(tipo_estado="cancelado", descripcion="Cancelado")
 
         # Usuarios
         self.user_admin = User.objects.create_superuser(
