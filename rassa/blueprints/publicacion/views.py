@@ -1,10 +1,11 @@
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import permissions, status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -29,7 +30,7 @@ def calcular_proximo_lunes():
     Si hoy es lunes, retorna el lunes siguiente (no hoy), así los agricultores
     tienen toda la semana para preparar la publicación antes del lunes de entrega.
     """
-    hoy = date.today()
+    hoy = timezone.localdate()
     dias_hasta_lunes = (7 - hoy.weekday()) % 7
     if dias_hasta_lunes == 0:
         dias_hasta_lunes = 7
@@ -79,7 +80,7 @@ class PublicacionViewSet(viewsets.ViewSet):
         return ok_response(data=self.paginator.get_paginated_response(serializer.data).data)
 
     def create(self, request):
-        if date.today().weekday() != 0:
+        if timezone.localdate().weekday() != 0:
             return Response(
                 {"error": "Las publicaciones solo pueden crearse los lunes."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -287,21 +288,30 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
+@throttle_classes([ScopedRateThrottle])
 def publicaciones_current(request):
     """Retorna las publicaciones publicadas de la semana actual (público)."""
-    hoy = date.today()
-    semana_actual = hoy.isocalendar()[1]
+    hoy = timezone.localdate()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    domingo = lunes + timedelta(days=6)
 
-    queryset = PublicacionSemanal.objects.filter(
-        semana=semana_actual,
-        estado=PublicacionSemanal.ESTADO_PUBLICADO,
-    ).prefetch_related(
-        Prefetch(
-            "productosemanal_set",
-            queryset=ProductoSemanal.objects.filter(estado=ProductoSemanal.ESTADO_ACTIVO),
-        ),
-        "fk_agricultor__fk_persona",
+    queryset = (
+        PublicacionSemanal.objects.filter(
+            fecha_publicacion__gte=lunes,
+            fecha_publicacion__lte=domingo,
+            estado=PublicacionSemanal.ESTADO_PUBLICADO,
+        )
+        .select_related("fk_agricultor__fk_persona")
+        .prefetch_related(
+            Prefetch(
+                "productosemanal_set",
+                queryset=ProductoSemanal.objects.filter(estado=ProductoSemanal.ESTADO_ACTIVO),
+            ),
+        )[:100]
     )
 
     serializer = PublicacionCurrentSerializer(queryset, many=True)
     return ok_response(data=serializer.data)
+
+
+publicaciones_current.throttle_scope = "publicaciones_current"

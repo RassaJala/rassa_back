@@ -55,7 +55,7 @@ class AgricultorResumeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Usuario
-        fields = ["id_usuario", "nombre", "apellido", "telefono", "correo"]
+        fields = ["id_usuario", "nombre", "apellido"]
 
 
 class ProductoSemanalPublicSerializer(serializers.ModelSerializer):
@@ -85,6 +85,5 @@ class PublicacionCurrentSerializer(serializers.ModelSerializer):
             "agricultor",
             "fecha_publicacion",
             "semana",
-            "estado",
             "productos",
         ]
