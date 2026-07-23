@@ -46,17 +46,13 @@ class PedidoCreateView(APIView):
             producto_ids = [i["id_producto_semanal"] for i in items_data]
             productos_semanales = {
                 ps.id_producto_semanal: ps
-                for ps in ProductoSemanal.objects.select_for_update().filter(
-                    pk__in=producto_ids
-                )
+                for ps in ProductoSemanal.objects.select_for_update().filter(pk__in=producto_ids)
             }
 
             # Verificar que todos existan
             for pid in producto_ids:
                 if pid not in productos_semanales:
-                    raise ValidationError(
-                        f"Producto semanal {pid} no encontrado."
-                    )
+                    raise ValidationError(f"Producto semanal {pid} no encontrado.")
 
             # --- 2. Re-validar stock (protege contra cambios entre validación y transacción) ---
             for item in items_data:
@@ -161,23 +157,16 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
 
     # IDs de usuarios a considerar: el cliente + miembros de su familia activa
     usuario_ids = {usuario.id_usuario}
-    familias = FamiliaUsuario.objects.filter(
-        fk_usuario=usuario, estado=True
-    ).values_list("fk_familia_id", flat=True)
+    familias = FamiliaUsuario.objects.filter(fk_usuario=usuario, estado=True).values_list("fk_familia_id", flat=True)
 
     if familias:
-        miembros = FamiliaUsuario.objects.filter(
-            fk_familia_id__in=familias, estado=True
-        ).exclude(fk_usuario=usuario)
+        miembros = FamiliaUsuario.objects.filter(fk_familia_id__in=familias, estado=True).exclude(fk_usuario=usuario)
         usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
 
     # Suma del total de pedidos pendientes (estado=1) de todos los usuarios del grupo
-    gasto_actual = (
-        PedidoCabecera.objects.filter(
-            fk_cliente_id__in=usuario_ids, fk_estado_id=ESTADO_PENDIENTE_ID
-        ).aggregate(total_sum=models.Sum("total"))["total_sum"]
-        or Decimal("0.00")
-    )
+    gasto_actual = PedidoCabecera.objects.filter(
+        fk_cliente_id__in=usuario_ids, fk_estado_id=ESTADO_PENDIENTE_ID
+    ).aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:

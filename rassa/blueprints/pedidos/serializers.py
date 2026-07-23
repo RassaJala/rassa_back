@@ -13,28 +13,18 @@ class ItemPedidoSerializer(serializers.Serializer):
 
     def validate_id_producto_semanal(self, value):
         try:
-            producto = ProductoSemanal.objects.select_related(
-                "fk_producto", "fk_publicacion"
-            ).get(pk=value)
+            producto = ProductoSemanal.objects.select_related("fk_producto", "fk_publicacion").get(pk=value)
         except ProductoSemanal.DoesNotExist as err:
-            raise serializers.ValidationError(
-                "El producto semanal no existe."
-            ) from err
+            raise serializers.ValidationError("El producto semanal no existe.") from err
 
         if producto.estado != ProductoSemanal.ESTADO_ACTIVO:
-            raise serializers.ValidationError(
-                "El producto no está activo."
-            )
+            raise serializers.ValidationError("El producto no está activo.")
 
         if producto.fk_publicacion.estado != "publicado":
-            raise serializers.ValidationError(
-                "La publicación del producto no está disponible."
-            )
+            raise serializers.ValidationError("La publicación del producto no está disponible.")
 
         if not producto.fk_producto.estado:
-            raise serializers.ValidationError(
-                "El producto del catálogo no está activo."
-            )
+            raise serializers.ValidationError("El producto del catálogo no está activo.")
 
         return value
 
@@ -55,9 +45,7 @@ class PedidoCreateSerializer(serializers.Serializer):
 
     def validate_items(self, value):
         if len(value) == 0:
-            raise serializers.ValidationError(
-                "Debe incluir al menos un producto."
-            )
+            raise serializers.ValidationError("Debe incluir al menos un producto.")
         return value
 
 
