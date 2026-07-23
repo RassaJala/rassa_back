@@ -61,7 +61,8 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         except (ValueError, TypeError, Usuario.DoesNotExist) as err:
             raise ValidationError({"fk_jefe_familia": "El usuario especificado no existe o está inactivo."}) from err
 
-        if FamiliaUsuario.objects.filter(fk_usuario=jefe, estado=True).exists():
+        # Bloquear si ya es miembro activo de OTRA familia
+        if FamiliaUsuario.objects.filter(fk_usuario=jefe, estado=True).exclude(fk_familia=familia).exists():
             raise ValidationError({"fk_jefe_familia": "El usuario ya pertenece a otra familia activa."})
 
         with transaction.atomic():
@@ -69,6 +70,7 @@ class FamiliaViewSet(viewsets.ModelViewSet):
             familia.fk_jefe_familia = jefe
             familia.save(update_fields=["estado", "fk_jefe_familia"])
 
+            # Reactivar si ya existe, o crear si nunca fue miembro
             FamiliaUsuario.objects.update_or_create(
                 fk_usuario=jefe,
                 fk_familia=familia,
