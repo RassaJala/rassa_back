@@ -222,6 +222,43 @@ class ProductoImagenUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser, parsers.JSONParser]
     throttle_scope = "catalog_write"
 
+    def _check_ownership(self, request, producto_id):
+        """Verifica que un Agricultor tenga permiso sobre las imágenes de un producto.
+
+        Admin siempre tiene acceso. Agricultor solo puede modificar imágenes
+        de productos que haya publicado al menos una vez (via PublicacionSemanal).
+
+        Args:
+            request: Request HTTP con usuario autenticado.
+            producto_id (int): ID del producto.
+
+        Raises:
+            PermissionDenied: Si el Agricultor no tiene publicaciones con este producto.
+        """
+        from rest_framework.exceptions import PermissionDenied
+
+        from rassa.models import PublicacionSemanal
+        from rassa.permissions.role_permissions import ADMIN
+
+        try:
+            rol = request.user.usuario.fk_rol.nombre_rol
+        except AttributeError:
+            raise PermissionDenied("No se pudo verificar el rol del usuario.") from None
+
+        if rol == ADMIN:
+            return
+
+        tiene_publicacion = PublicacionSemanal.objects.filter(
+            fk_agricultor=request.user.usuario,
+            productosemanal__fk_producto_id=producto_id,
+        ).exists()
+
+        if not tiene_publicacion:
+            raise PermissionDenied(
+                "No tenés publicaciones con este producto. "
+                "Solo podés gestionar imágenes de productos que hayas publicado."
+            )
+
     def post(self, request, pk):
         try:
             producto = Producto.objects.get(pk=pk, estado=True)
@@ -230,6 +267,8 @@ class ProductoImagenUploadView(APIView):
                 message="Producto no encontrado.",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
+
+        self._check_ownership(request, pk)
 
         imagen_archivo = request.FILES.get("imagen")
         data = request.data if isinstance(request.data, dict) else {}
@@ -288,15 +327,41 @@ class ProductoImagenDeleteView(APIView):
     permission_classes = [IsAdminOrReadOnly]
     throttle_scope = "catalog_write"
 
+    def _check_ownership(self, request, producto_id):
+        """Verifica que un Agricultor tenga permiso sobre las imágenes de un producto."""
+        from rest_framework.exceptions import PermissionDenied
+
+        from rassa.models import PublicacionSemanal
+        from rassa.permissions.role_permissions import ADMIN
+
+        try:
+            rol = request.user.usuario.fk_rol.nombre_rol
+        except AttributeError:
+            raise PermissionDenied("No se pudo verificar el rol del usuario.") from None
+        if rol == ADMIN:
+            return
+        tiene_publicacion = PublicacionSemanal.objects.filter(
+            fk_agricultor=request.user.usuario,
+            productosemanal__fk_producto_id=producto_id,
+        ).exists()
+        if not tiene_publicacion:
+            raise PermissionDenied(
+                "No tenés publicaciones con este producto. "
+                "Solo podés gestionar imágenes de productos que hayas publicado."
+            )
+
     def delete(self, request, pk, id_imagen):
         try:
             producto = Producto.objects.get(pk=pk, estado=True)
+        except Producto.DoesNotExist:
+            return _ok(message="Producto no encontrado.", status_code=status.HTTP_404_NOT_FOUND)
+
+        self._check_ownership(request, pk)
+
+        try:
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
-        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
-            return _ok(
-                message="Imagen o producto no encontrado.",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+        except ProductoImagen.DoesNotExist:
+            return _ok(message="Imagen no encontrada.", status_code=status.HTTP_404_NOT_FOUND)
 
         was_principal = imagen.es_principal
         drive_file_id = imagen.drive_file_id
@@ -325,12 +390,15 @@ class ProductoImagenDeleteView(APIView):
     def patch(self, request, pk, id_imagen):
         try:
             producto = Producto.objects.get(pk=pk, estado=True)
+        except Producto.DoesNotExist:
+            return _ok(message="Producto no encontrado.", status_code=status.HTTP_404_NOT_FOUND)
+
+        self._check_ownership(request, pk)
+
+        try:
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
-        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
-            return _ok(
-                message="Imagen o producto no encontrado.",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+        except ProductoImagen.DoesNotExist:
+            return _ok(message="Imagen no encontrada.", status_code=status.HTTP_404_NOT_FOUND)
 
         es_principal_raw = request.data.get("es_principal")
         if es_principal_raw is None:

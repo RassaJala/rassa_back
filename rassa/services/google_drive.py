@@ -296,7 +296,22 @@ def _get_or_create_folder(service, name, parent_id):
     if not isinstance(parent_id, str) or not parent_id.strip():
         raise ValueError("parent_id must be a non-empty string")
 
-    safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
+    # Reject names with null bytes or control characters that can't be safely escaped
+    if "\x00" in name:
+        raise ValueError("Folder name contains null bytes")
+    # Only allow alphanumeric, spaces, hyphens, underscores, and dots
+    if not all(c.isalnum() or c in " -_." for c in name):
+        raise ValueError(f"Folder name contains disallowed characters: {name!r}")
+
+    # Escape Drive query special characters: \ ' ( ) and whitespace control
+    safe_name = (
+        name.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
     query = (
         f"mimeType='application/vnd.google-apps.folder'"
         f" and name='{safe_name}'"
@@ -432,6 +447,22 @@ def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg")
     """
     if not isinstance(product_id, int):
         raise ValueError("product_id must be an integer")
+
+    # Validate magic bytes
+    byte_io = io.BytesIO(file_bytes)
+    if not _validate_magic_bytes(byte_io, mime_type):
+        raise ValueError(
+            f"El contenido del archivo no coincide con el tipo {mime_type}. "
+            "Asegurate de que el archivo no esté corrupto."
+        )
+
+    # Validate file size
+    file_size_mb = len(file_bytes) / MB
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise ValueError(f"El archivo excede el tamaño máximo de {MAX_FILE_SIZE_MB}MB.")
+
+    # Sanitize filename
+    filename = _sanitize_filename(filename)
 
     service = _get_drive_service()
     folder_id = config("GOOGLE_DRIVE_FOLDER_ID", default=None) or getattr(settings, "GOOGLE_DRIVE_FOLDER_ID", None)

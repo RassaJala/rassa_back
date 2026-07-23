@@ -189,7 +189,10 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         self._check_ownership(request, producto_id)
 
         archivo = request.FILES.get("archivo")
-        url = request.data.get("url", "").strip() if not archivo else None
+        if archivo:
+            url = None
+        else:
+            url = request.data.get("url", "").strip()
 
         if not archivo and not url:
             return _ok(
@@ -211,7 +214,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
             except Exception as e:
-                logger.error("Error al subir imagen a Google Drive: %s", e)
+                logger.error("Error al subir imagen a Google Drive: %s", e, exc_info=True)
                 return _ok(
                     message="Error al subir la imagen a Google Drive. Intentá de nuevo.",
                     status_code=status.HTTP_502_BAD_GATEWAY,
@@ -298,7 +301,16 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             try:
                 delete_file(imagen.drive_file_id)
             except Exception as exc:
-                logger.warning("No se pudo eliminar archivo de Drive %s: %s", imagen.drive_file_id, exc)
+                # Known limitation: if Drive is down or returns 429, the file
+                # becomes orphaned. We log the file_id so ops can clean it up
+                # manually. Keeping the DB record for a deleted Drive file is
+                # worse UX (broken images), so we proceed with DB deletion.
+                logger.warning(
+                    "No se pudo eliminar archivo de Drive %s: %s — archivo puede quedar huérfano. file_id=%s",
+                    imagen.drive_file_id,
+                    exc,
+                    imagen.drive_file_id,
+                )
 
         imagen.delete()
         return _ok(message="Imagen eliminada correctamente.")
@@ -368,7 +380,10 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         imagen = self._get_imagen_or_404(producto_id, pk)
 
         with transaction.atomic():
-            ProductoImagen.objects.filter(fk_producto_id=producto_id, es_principal=True).update(es_principal=False)
+            # Lock all images for this product to prevent race conditions
+            locked_imagenes = ProductoImagen.objects.select_for_update().filter(fk_producto_id=producto_id)
+            locked_imagenes.update(es_principal=False)
+            imagen.refresh_from_db()  # re-read after lock
             imagen.es_principal = True
             imagen.save(update_fields=["es_principal"])
 
