@@ -45,8 +45,10 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             )
             .order_by("-creado_en")
         )
-        if self.request.user.usuario.fk_rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=self.request.user.usuario)
+        usuario = getattr(self.request.user, "usuario", None)
+        rol = getattr(usuario, "fk_rol", None) if usuario else None
+        if rol and rol.nombre_rol == "Vendedor":
+            qs = qs.filter(fk_vendedor=usuario)
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
@@ -68,6 +70,14 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             return "pedidos_cambiar_estado"
         return None
 
+    def _get_pedido_con_permiso(self, pk):
+        qs = PedidoCabecera.objects.select_for_update()
+        usuario = getattr(self.request.user, "usuario", None)
+        rol = getattr(usuario, "fk_rol", None) if usuario else None
+        if rol and rol.nombre_rol == "Vendedor":
+            qs = qs.filter(fk_vendedor=usuario)
+        return qs.get(pk=pk)
+
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
         serializer = PedidoCambiarEstadoSerializer(data=request.data)
@@ -75,9 +85,15 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         nuevo_estado_str = serializer.validated_data["nuevo_estado"]
 
         with transaction.atomic():
-            pedido = PedidoCabecera.objects.select_for_update().get(pk=pk)
-            self.check_object_permissions(request, pedido)
+            try:
+                pedido = self._get_pedido_con_permiso(pk)
+            except PedidoCabecera.DoesNotExist:
+                return ok_response(
+                    message="Pedido no encontrado.",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
 
+            self.check_object_permissions(request, pedido)
             estado_actual = pedido.fk_estado.tipo_estado
 
             if estado_actual in ESTADOS_TERMINALES:
@@ -100,7 +116,14 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                         status_code=status.HTTP_400_BAD_REQUEST,
                     )
 
-            nuevo_estado = EstadoPedido.objects.get(tipo_estado=nuevo_estado_str)
+            try:
+                nuevo_estado = EstadoPedido.objects.get(tipo_estado=nuevo_estado_str)
+            except EstadoPedido.DoesNotExist:
+                return ok_response(
+                    message=f"El estado '{nuevo_estado_str}' no está configurado en el sistema.",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
             pedido.save(update_fields=["fk_estado"])
