@@ -71,7 +71,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         return None
 
     def _get_pedido_con_permiso(self, pk):
-        qs = PedidoCabecera.objects.select_for_update()
+        qs = PedidoCabecera.objects.select_for_update(nowait=True)
         usuario = getattr(self.request.user, "usuario", None)
         rol = getattr(usuario, "fk_rol", None) if usuario else None
         if rol and rol.nombre_rol == "Vendedor":
