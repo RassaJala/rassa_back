@@ -157,7 +157,9 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             Response: Lista paginada de imágenes del producto.
         """
         self._get_producto_or_404(producto_id)
-        imágenes = ProductoImagen.objects.filter(fk_producto_id=producto_id).order_by("orden", "id_imagen")
+        imágenes = ProductoImagen.objects.filter(fk_producto_id=producto_id, eliminar_pendiente=False).order_by(
+            "orden", "id_imagen"
+        )
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(imágenes, request)
         if page is not None:
@@ -297,23 +299,32 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         self._check_ownership(request, producto_id)
         imagen = self._get_imagen_or_404(producto_id, pk)
 
+        drive_deleted = False
         if imagen.drive_file_id:
             try:
                 delete_file(imagen.drive_file_id)
+                drive_deleted = True
             except Exception as exc:
-                # Known limitation: if Drive is down or returns 429, the file
-                # becomes orphaned. We log the file_id so ops can clean it up
-                # manually. Keeping the DB record for a deleted Drive file is
-                # worse UX (broken images), so we proceed with DB deletion.
+                # Drive is down or exhausted retries. Mark for async cleanup
+                # instead of losing the file_id reference.
                 logger.warning(
-                    "No se pudo eliminar archivo de Drive %s: %s — archivo puede quedar huérfano. file_id=%s",
+                    "Drive delete failed for %s: %s — marked for retry cleanup",
                     imagen.drive_file_id,
                     exc,
-                    imagen.drive_file_id,
                 )
+                imagen.eliminar_pendiente = True
+                imagen.es_principal = False
+                imagen.save(update_fields=["eliminar_pendiente", "es_principal"])
 
-        imagen.delete()
-        return _ok(message="Imagen eliminada correctamente.")
+        if drive_deleted or not imagen.drive_file_id:
+            # Drive file cleaned up (or never existed) — safe to delete DB record
+            imagen.delete()
+            return _ok(message="Imagen eliminada correctamente.")
+        else:
+            # Drive file still exists — record kept for retry cleanup
+            return _ok(
+                message="Imagen ocultada. El archivo en Drive se eliminará automáticamente.",
+            )
 
     def partial_update(self, request, producto_id=None, pk=None):
         """Actualiza parcialmente los campos editables de una imagen (URL, orden).

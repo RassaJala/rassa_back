@@ -708,6 +708,8 @@ class ProductoImagen(models.Model):
     es_principal = models.BooleanField(default=False)
     orden = models.PositiveIntegerField(default=0)
     creado_en = models.DateTimeField(auto_now_add=True)
+    # When True, the Drive file failed to delete and needs retry cleanup.
+    eliminar_pendiente = models.BooleanField(default=False)
 
     class Meta:
         db_table = "producto_imagen"
