@@ -29,6 +29,7 @@ class ActivityLogMiddleware:
             request.method in RELEVANT_METHODS
             and getattr(request.user, "is_authenticated", False)
             and not any(request.path.startswith(p) for p in excluded_paths)
+            and not getattr(request, "_audit_logged", False)
         ):
             try:
                 usuario = Usuario.objects.filter(fk_user=request.user).first()

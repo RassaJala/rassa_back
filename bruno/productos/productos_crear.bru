@@ -1,0 +1,28 @@
+meta {
+  name: Crear producto
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/productos/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "nombre_producto": "Manzana Roja",
+    "descripcion": "Manzana roja fresca del huerto",
+    "precio": "15.50",
+    "stock": 100,
+    "fk_categoria": 1,
+    "fk_unidad": 1,
+    "es_perecedero": true
+  }
+}
