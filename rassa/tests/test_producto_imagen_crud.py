@@ -438,10 +438,10 @@ class ProductoImagenCrudTests(APITestCase):
             content_type="image/jpeg",
         )
         with patch("rassa.blueprints.producto_imagen.views.upload_image") as mock_upload:
-            mock_upload.return_value = {
-                "url": "https://drive.google.com/uc?id=abc123&export=view",
-                "file_id": "abc123",
-            }
+            mock_upload.return_value = (
+                "https://drive.google.com/uc?id=abc123&export=view",
+                "abc123",
+            )
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
@@ -500,10 +500,10 @@ class ProductoImagenCrudTests(APITestCase):
             patch("rassa.blueprints.producto_imagen.views.delete_file") as mock_delete,
             patch.object(ProductoImagenSerializer, "save", side_effect=RuntimeError("DB error")),
         ):
-            mock_upload.return_value = {
-                "url": "https://drive.google.com/uc?id=orphan456&export=view",
-                "file_id": "orphan456",
-            }
+            mock_upload.return_value = (
+                "https://drive.google.com/uc?id=orphan456&export=view",
+                "orphan456",
+            )
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
@@ -565,15 +565,39 @@ class ProductoImagenCrudTests(APITestCase):
         """W11: _get_credentials() falla cuando faltan variables de entorno."""
         from rassa.services.google_drive import _get_credentials
 
-        with patch("rassa.services.google_drive.config", return_value=""):
+        with (
+            patch("rassa.services.google_drive.config", return_value=""),
+            patch("rassa.services.google_drive.settings.GOOGLE_DRIVE_CLIENT_ID", None),
+            patch("rassa.services.google_drive.settings.GOOGLE_DRIVE_CLIENT_SECRET", None),
+            patch("rassa.services.google_drive.settings.GOOGLE_DRIVE_REFRESH_TOKEN", None),
+            patch("rassa.services.google_drive.settings.GOOGLE_DRIVE_CREDENTIALS_PATH", None),
+        ):
             with self.assertRaises(ValueError):
                 _get_credentials()
 
-    def test_delete_file_failure_no_crash(self):
-        """W12: Si delete_file falla, destroy no crashea y elimina el registro."""
-        with patch("rassa.blueprints.producto_imagen.views.delete_file", side_effect=Exception("Drive down")):
+    def test_delete_file_failure_marca_eliminar_pendiente(self):
+        """Si delete_file falla en Drive, se activa eliminar_pendiente."""
+        self.imagen.drive_file_id = "fake_drive_file_id"
+        self.imagen.save(update_fields=["drive_file_id"])
+        with patch("rassa.blueprints.producto_imagen.views.delete_file",
+                   side_effect=Exception("Drive timeout")):
             response = self.client.delete(
                 reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen])
             )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.imagen.refresh_from_db()
+        self.assertTrue(self.imagen.eliminar_pendiente)
+        # La imagen no se eliminó de la DB — se keep para retry
+        self.assertTrue(ProductoImagen.objects.filter(pk=self.imagen.id_imagen).exists())
+
+    def test_delete_file_success_elimina_imagen(self):
+        """Si delete_file tiene éxito, la imagen se elimina de la DB."""
+        self.imagen.drive_file_id = "fake_drive_file_id"
+        self.imagen.save(update_fields=["drive_file_id"])
+        with patch("rassa.blueprints.producto_imagen.views.delete_file") as mock_delete:
+            response = self.client.delete(
+                reverse("producto-imagen-detail", args=[self.producto.id_producto, self.imagen.id_imagen])
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_delete.assert_called_once_with("fake_drive_file_id")
         self.assertFalse(ProductoImagen.objects.filter(pk=self.imagen.id_imagen).exists())

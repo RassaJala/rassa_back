@@ -21,7 +21,7 @@ from rassa.productos_serializers import (
     ProductoImagenSerializer,
     ProductoListSerializer,
 )
-from rassa.services.google_drive import delete_image, make_public, upload_image
+from rassa.services.google_drive import delete_file, make_public, upload_image_bytes
 from rassa.views import _ok
 
 EXTENSIONES_PERMITIDAS = {"jpg", "jpeg", "png", "gif", "webp"}
@@ -144,7 +144,7 @@ def _guardar_imagen_bytes(data, ext, product_id):
     uid = uuid.uuid4().hex
     filename = f"{uid}.{ext}"
     mime_type = MIME_TYPES.get(ext, "image/jpeg")
-    url, file_id = upload_image(data, filename, product_id, mime_type)
+    url, file_id = upload_image_bytes(data, filename, product_id, mime_type)
     return url, file_id
 
 
@@ -267,7 +267,10 @@ class ProductoImagenUploadView(APIView):
         try:
             imagen = _save_imagen_to_db(producto, url_guardada, drive_file_id, es_principal)
         except Exception as exc:
-            delete_image(drive_file_id)
+            try:
+                delete_file(drive_file_id)
+            except Exception:
+                logging.getLogger(__name__).warning("Drive cleanup failed for %s", drive_file_id, exc_info=True)
             logging.getLogger(__name__).error("Error guardando imagen en DB: %s", exc, exc_info=True)
             return _ok(
                 message="Error al guardar la imagen en la base de datos.",
@@ -310,7 +313,7 @@ class ProductoImagenDeleteView(APIView):
 
         if drive_file_id:
             try:
-                delete_image(drive_file_id)
+                delete_file(drive_file_id)
             except Exception:
                 logging.getLogger(__name__).warning("Drive delete failed for %s", drive_file_id, exc_info=True)
 

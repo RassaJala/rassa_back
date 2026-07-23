@@ -106,15 +106,14 @@ class UploadImageTests(SimpleTestCase):
         mock_service.permissions().create().execute.return_value = {}
 
         with patch("rassa.services.google_drive.config", return_value="fake_folder_id"):
-            result = upload_image(self._make_image(), "test.jpg")
+            url, file_id = upload_image(self._make_image(), "test.jpg")
 
-        self.assertIn("url", result)
-        self.assertIn("file_id", result)
-        self.assertEqual(result["file_id"], "abc123")
-        self.assertIn("abc123", result["url"])
+        self.assertEqual(file_id, "abc123")
+        self.assertIn("abc123", url)
 
     @patch("rassa.services.google_drive.config", return_value="")
-    def test_raises_when_folder_id_missing(self, _):
+    @patch("rassa.services.google_drive.settings.GOOGLE_DRIVE_FOLDER_ID", None)
+    def test_raises_when_folder_id_missing(self, *_):
         with self.assertRaises(ValueError) as ctx:
             upload_image(self._make_image(), "test.jpg")
         self.assertIn("GOOGLE_DRIVE_FOLDER_ID", str(ctx.exception))

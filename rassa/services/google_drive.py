@@ -262,14 +262,13 @@ def _execute_with_retry(func, *args, **kwargs):
     raise last_exc
 
 
-def _validate_file(file, filename):
+def _validate_file(file, filename=None):
     """Valida un archivo antes de subirlo a Drive.
 
     Verifica tipo MIME, magic bytes y tamaño máximo.
 
     Args:
         file: Archivo subido (request.FILES['archivo']).
-        filename (str): Nombre del archivo.
 
     Returns:
         str: content_type validado.
@@ -442,7 +441,7 @@ def upload_image(file, filename, folder_id=None):
         raise
 
     logger.info("Archivo subido a Drive: %s (%s) file_id=%s", safe_name, content_type, file_id)
-    return {"url": f"https://drive.google.com/uc?id={file_id}&export=view", "file_id": file_id}
+    return f"https://drive.google.com/uc?id={file_id}&export=view", file_id
 
 
 def upload_image_bytes(file_bytes, filename, product_id, mime_type="image/jpeg"):
@@ -531,20 +530,3 @@ def delete_file(file_id):
     except Exception as exc:
         logger.error("Error al eliminar archivo %s de Drive: %s", file_id, exc)
         raise
-
-
-def delete_image(file_id):
-    """Delete a file from Google Drive by its ID.
-
-    Returns True on success or if file_id is empty, False on failure.
-    """
-    if not file_id:
-        return True
-    try:
-        service = _get_drive_service()
-        _execute_with_retry(service.files().delete, fileId=file_id)
-        logger.info("Image deleted from Drive: %s", file_id)
-        return True
-    except Exception:
-        logger.warning("Failed to delete image from Drive: %s", file_id, exc_info=True)
-        return False

@@ -8,11 +8,15 @@ Usage:
 import logging
 
 from django.core.management.base import BaseCommand
+from googleapiclient.errors import HttpError
 
 from rassa.models import ProductoImagen
 from rassa.services.google_drive import delete_file
 
 logger = logging.getLogger(__name__)
+
+# HTTP 404: file already deleted on Drive — treat as success for cleanup.
+_NOT_FOUND = 404
 
 
 class Command(BaseCommand):
@@ -53,6 +57,17 @@ class Command(BaseCommand):
                 imagen.delete()
                 deleted += 1
                 self.stdout.write(self.style.SUCCESS("    Deleted ✓"))
+            except HttpError as exc:
+                status_code = getattr(exc.resp, "status", None)
+                if status_code == _NOT_FOUND:
+                    # File already gone from Drive — clean up the DB record anyway.
+                    imagen.delete()
+                    deleted += 1
+                    self.stdout.write(self.style.SUCCESS("    Deleted ✓ (file already gone from Drive)"))
+                else:
+                    failed += 1
+                    logger.warning("Cleanup failed for image %s (file_id=%s): %s", imagen.id_imagen, file_id, exc)
+                    self.stdout.write(self.style.WARNING(f"    Failed: {exc}"))
             except Exception as exc:
                 failed += 1
                 logger.warning("Cleanup failed for image %s (file_id=%s): %s", imagen.id_imagen, file_id, exc)

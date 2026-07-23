@@ -27,8 +27,6 @@ from .serializers import ProductoImagenSerializer
 
 logger = logging.getLogger(__name__)
 
-WRITE_METHODS = frozenset({"POST", "PATCH", "DELETE"})
-
 # Permisos por método HTTP. Admin y Agricultor pueden escribir;
 # cualquier usuario autenticado puede leer (GET).
 PERMISSION_MAP = {
@@ -173,9 +171,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
         uploaded_file_id = None
         if archivo:
             try:
-                result = upload_image(archivo, archivo.name)
-                url = result["url"]
-                drive_file_id = result.get("file_id", "")
+                url, drive_file_id = upload_image(archivo, archivo.name)
                 uploaded_file_id = drive_file_id
             except ValueError as e:
                 return _ok(
@@ -201,20 +197,11 @@ class ProductoImagenViewSet(viewsets.ViewSet):
                 serializer = ProductoImagenSerializer(data=data)
                 serializer.is_valid(raise_exception=True)
                 serializer.save(drive_file_id=drive_file_id)
-        except ValidationError:
-            if uploaded_file_id:
-                try:
-                    delete_file(uploaded_file_id)
-                except Exception:
-                    logger.warning("No se pudo limpiar archivo huérfano %s", uploaded_file_id)
-            raise
-        except Exception as e:
-            if uploaded_file_id:
-                try:
-                    delete_file(uploaded_file_id)
-                except Exception:
-                    logger.warning("No se pudo limpiar archivo huérfano %s", uploaded_file_id)
-            logger.error("Error al guardar imagen en base de datos: %s", e)
+        except (ValidationError, Exception) as exc:
+            self._cleanup_orphan_file(uploaded_file_id)
+            if isinstance(exc, ValidationError):
+                raise
+            logger.error("Error al guardar imagen en base de datos: %s", exc)
             return _ok(
                 message="Error al guardar la imagen. Intentá de nuevo.",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -225,6 +212,15 @@ class ProductoImagenViewSet(viewsets.ViewSet):
             message="Imagen registrada correctamente.",
             status_code=status.HTTP_201_CREATED,
         )
+
+    def _cleanup_orphan_file(self, file_id):
+        """Attempt to delete an orphaned file from Drive. Logs warning on failure."""
+        if not file_id:
+            return
+        try:
+            delete_file(file_id)
+        except Exception:
+            logger.warning("No se pudo limpiar archivo huérfano %s", file_id)
 
     def _get_imagen_or_404(self, producto_id, pk):
         """Busca una imagen por ID dentro de un producto o lanza NotFound.
@@ -364,7 +360,7 @@ class ProductoImagenViewSet(viewsets.ViewSet):
 
         with transaction.atomic():
             # Lock all images for this product to prevent race conditions
-            locked_imagenes = ProductoImagen.objects.select_for_update().filter(
+            locked_imagenes = ProductoImagen.objects.select_for_update(nowait=True).filter(
                 fk_producto_id=producto_id, eliminar_pendiente=False
             )
             locked_imagenes.update(es_principal=False)
