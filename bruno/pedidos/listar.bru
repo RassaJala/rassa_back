@@ -6,10 +6,16 @@ meta {
 
 get {
   url: {{baseUrl}}/api/pedidos/
-  auth: bearer
+  body: none
+  auth: none
 }
 
 headers {
   Accept: application/json
   Authorization: Bearer {{accessToken}}
+}
+
+vars:pre-request {
+  accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0ODQ0NTQ3LCJpYXQiOjE3ODQ4MzczNDcsImp0aSI6ImEwOTNhODc3N2UwZjQ3ZjRhOWIyZmQ1YzVmOTMxODQ1IiwidXNlcl9pZCI6MTF9.oazVDlqHEqsyVVENrfrJPxUGLKAd8u6vgafvaPnyiSM
+  baseUrl:  http://localhost:8000
 }
