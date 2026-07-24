@@ -186,7 +186,11 @@ class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
         from rassa.blueprints.pedidos.serializers import PedidoOutputSerializer
 
         output = PedidoOutputSerializer(pedido)
-        return ok_response(data=output.data, message="Pedido creado correctamente.", status_code=status.HTTP_201_CREATED)
+        return ok_response(
+            data=output.data,
+            message="Pedido creado correctamente.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
