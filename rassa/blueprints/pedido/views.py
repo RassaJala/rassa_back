@@ -7,7 +7,6 @@ from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
 from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
@@ -30,10 +29,22 @@ SECUENCIA = {
     "listo_para_retirar": "entregado",
 }
 
+ROLE_FILTER_MAP = {
+    VENDEDOR: "fk_vendedor",
+    CLIENTE: "fk_cliente",
+}
+
 
 class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
     permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
+
+    def _get_usuario_rol(self):
+        usuario = getattr(self.request.user, "usuario", None)
+        if usuario is None:
+            return None, None
+        rol = getattr(usuario, "fk_rol", None)
+        return usuario, rol.nombre_rol if rol else None
 
     def get_queryset(self):
         qs = (
@@ -49,12 +60,10 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             )
             .order_by("-creado_en")
         )
-        usuario = getattr(self.request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == VENDEDOR:
-            qs = qs.filter(fk_vendedor=usuario)
-        elif rol and rol.nombre_rol == CLIENTE:
-            qs = qs.filter(fk_cliente=usuario)
+        usuario, nombre_rol = self._get_usuario_rol()
+        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
+        if filter_field:
+            qs = qs.filter(**{filter_field: usuario})
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
@@ -65,32 +74,18 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             return PedidoDetailSerializer
         return PedidoListSerializer
 
-    def get_throttles(self):
-        if self.action == "cambiar_estado":
-            return [ScopedRateThrottle()]
-        return super().get_throttles()
-
-    @property
-    def throttle_scope(self):
-        if self.action == "cambiar_estado":
-            return "pedidos_cambiar_estado"
-        return None
-
     def _get_pedido_con_permiso(self, pk):
-        qs = PedidoCabecera.objects.select_for_update(nowait=True)
-        usuario = getattr(self.request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == VENDEDOR:
-            qs = qs.filter(fk_vendedor=usuario)
-        elif rol and rol.nombre_rol == CLIENTE:
-            qs = qs.filter(fk_cliente=usuario)
+        qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
+        usuario, nombre_rol = self._get_usuario_rol()
+        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
+        if filter_field:
+            qs = qs.filter(**{filter_field: usuario})
         return qs.get(pk=pk)
 
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
-        usuario = getattr(request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == CLIENTE:
+        _, nombre_rol = self._get_usuario_rol()
+        if nombre_rol == CLIENTE:
             return ok_response(
                 message="Los clientes no pueden cambiar el estado del pedido.",
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -6,6 +6,7 @@ from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera
 
 ESTADOS_TERMINALES = {"entregado", "cancelado"}
 ESTADOS_CANCELABLES = {"pendiente", "confirmado", "en_preparacion", "listo_para_retirar"}
+PRODUCTOS_PREVIEW_LIMIT = 3
 ESTADOS_DESTINO = [
     "confirmado",
     "en_preparacion",
@@ -28,6 +29,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
     vendedor_nombre = serializers.SerializerMethodField()
     estado_actual = serializers.CharField(source="fk_estado.tipo_estado", read_only=True)
     productos = serializers.SerializerMethodField()
+    has_more_productos = serializers.SerializerMethodField()
 
     class Meta:
         model = PedidoCabecera
@@ -36,6 +38,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
             "cliente_nombre",
             "vendedor_nombre",
             "productos",
+            "has_more_productos",
             "total",
             "estado_actual",
             "creado_en",
@@ -51,7 +54,13 @@ class PedidoListSerializer(serializers.ModelSerializer):
         detalles = getattr(obj, "detallepedido_set", None)
         if detalles is None:
             return []
-        return [d.nombre_producto for d in detalles.all()[:3]]
+        return [d.nombre_producto for d in detalles.all()[:PRODUCTOS_PREVIEW_LIMIT]]
+
+    def get_has_more_productos(self, obj):
+        detalles = getattr(obj, "detallepedido_set", None)
+        if detalles is None:
+            return False
+        return detalles.count() > PRODUCTOS_PREVIEW_LIMIT
 
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
