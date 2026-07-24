@@ -378,7 +378,7 @@ class FamiliasTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-# Verificar que la familia se restaura y el jefe queda como miembro activo
+        # Verificar que la familia se restaura y el jefe queda como miembro activo
         familia.refresh_from_db()
         miembro.refresh_from_db()
         self.assertTrue(familia.estado)

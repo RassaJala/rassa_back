@@ -7,7 +7,7 @@ from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -30,8 +30,6 @@ def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupa
     Lanza NotFound si no existe, PermissionDenied si no es miembro,
     y ValidationError si require_grupal=True y la conversación no es grupal.
     """
-    from rest_framework.exceptions import ValidationError
-
     try:
         conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
     except Conversacion.DoesNotExist as err:
@@ -158,13 +156,7 @@ class MensajeInactivarView(APIView):
 
         antiguedad = timezone.now() - mensaje.creado_en
         if antiguedad > timedelta(minutes=15):
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "Solo se pueden eliminar mensajes de los últimos 15 minutos.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ValidationError("Solo se pueden eliminar mensajes de los últimos 15 minutos.")
 
         mensaje.estado = False
         mensaje.save(update_fields=["estado"])
@@ -308,10 +300,10 @@ class ConversacionGrupalCreateView(APIView):
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
-            Integrante.objects.create(fk_usuario=usuario_creador, fk_conversacion=conv)
+            Integrante.objects.get_or_create(fk_usuario=usuario_creador, fk_conversacion=conv)
 
             for usuario in usuarios:
-                Integrante.objects.create(fk_usuario=usuario, fk_conversacion=conv)
+                Integrante.objects.get_or_create(fk_usuario=usuario, fk_conversacion=conv)
 
         return Response(
             {
@@ -442,6 +434,8 @@ class ConversacionListView(APIView):
         usuario = request.user.usuario
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
+        # ponytail: relies on conversacion.nombre == familia.nombre_familia naming convention;
+        # a direct FK from Conversacion to Familia would be cleaner but is out of scope for this PR.
         es_familia_subq = Familia.objects.filter(nombre_familia=OuterRef("nombre"), estado=True)
 
         conversaciones = (

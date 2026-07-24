@@ -69,7 +69,10 @@ class Command(BaseCommand):
                 pk_column = row[0]
                 sequence_name = f"{table}_{pk_column}_seq"
 
-                # Check if the sequence exists
+                # Check if the sequence exists.
+                # ponytail: relkind='S' assumes legacy serial/sequence naming; Django 5.x
+                # may use IDENTITY columns (pg_identity) which won't match here and would
+                # need updating to query pg_identity instead.
                 cursor.execute(
                     "SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = %s",
                     [sequence_name],
@@ -77,9 +80,10 @@ class Command(BaseCommand):
                 if not cursor.fetchone():
                     continue
 
-                reset_statements.append(
-                    f"SELECT setval('{sequence_name}', COALESCE((SELECT MAX({pk_column}) FROM {table}), 1));"
-                )
+                q_table = connection.ops.quote_name(table)
+                q_pk = connection.ops.quote_name(pk_column)
+                q_seq = connection.ops.quote_name(sequence_name)
+                reset_statements.append(f"SELECT setval({q_seq}, COALESCE((SELECT MAX({q_pk}) FROM {q_table}), 1));")
 
             if dry_run:
                 self.stdout.write(self.style.NOTICE("Dry-run. Sentencias que se ejecutarían:"))

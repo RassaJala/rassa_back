@@ -9,10 +9,13 @@ Cubre los endpoints cuyos contratos fueron ajustados para el frontend:
 - Paginación de mensajes
 """
 
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -214,3 +217,51 @@ class ChatTests(APITestCase):
         body = response.json()
         self.assertIn("id_mensaje", body["data"])
         self.assertTrue(Documento.objects.filter(fk_usuario=self.usuario1).exists())
+
+    def test_inactivar_mensaje_exitoso(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="A borrar")
+
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["ok"])
+        mensaje.refresh_from_db()
+        self.assertFalse(mensaje.estado)
+
+    def test_inactivar_mensaje_ventana_editable_expirada(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Antiguo")
+        Mensaje.objects.filter(pk=mensaje.id_mensaje).update(creado_en=timezone.now() - timedelta(minutes=20))
+
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("15 minutos", str(response.json()))
+        mensaje.refresh_from_db()
+        self.assertTrue(mensaje.estado)
+
+    def test_inactivar_mensaje_ajeno_denegado(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De user2")
+
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        mensaje.refresh_from_db()
+        self.assertTrue(mensaje.estado)
+
+    def test_leer_mensaje_exitoso(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="Hola", leido=False)
+
+        url = reverse("chat-mensajes-leer", args=[mensaje.id_mensaje])
+        response = self.client.patch(url, data={})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["ok"])
+        mensaje.refresh_from_db()
+        self.assertTrue(mensaje.leido)
