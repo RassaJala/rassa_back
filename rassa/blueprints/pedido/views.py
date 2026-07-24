@@ -1,14 +1,24 @@
 """Vistas para el módulo de Pedidos."""
 
 import logging
+from decimal import Decimal
 
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, models, transaction
 from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
-from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
+from rassa.models import (
+    DetallePedido,
+    EstadoPedido,
+    FamiliaUsuario,
+    HistorialEstadoPedido,
+    LimiteCliente,
+    PedidoCabecera,
+    ProductoSemanal,
+)
 from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log, ok_response
 
@@ -23,6 +33,8 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
+ESTADO_PENDIENTE_ID = 1
+
 SECUENCIA = {
     "pendiente": "confirmado",
     "confirmado": "en_preparacion",
@@ -36,7 +48,7 @@ ROLE_FILTER_MAP = {
 }
 
 
-class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
     permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
 
@@ -73,9 +85,108 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         return qs
 
     def get_serializer_class(self):
+        if self.action == "create":
+            from rassa.blueprints.pedidos.serializers import PedidoCreateSerializer
+
+            return PedidoCreateSerializer
         if self.action == "retrieve":
             return PedidoDetailSerializer
         return PedidoListSerializer
+
+    def create(self, request, *args, **kwargs):
+        _, nombre_rol = self._get_usuario_rol()
+        if nombre_rol != CLIENTE:
+            return ok_response(
+                message="Solo los clientes pueden crear pedidos.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        items_data = serializer.validated_data["items"]
+        usuario = request.user.usuario
+
+        with transaction.atomic():
+            producto_ids = [i["id_producto_semanal"] for i in items_data]
+            productos_semanales = {
+                ps.id_producto_semanal: ps
+                for ps in ProductoSemanal.objects.select_for_update().filter(pk__in=producto_ids)
+            }
+
+            for pid in producto_ids:
+                if pid not in productos_semanales:
+                    raise ValidationError(f"Producto semanal {pid} no encontrado.")
+
+            for item in items_data:
+                ps = productos_semanales[item["id_producto_semanal"]]
+                if item["cantidad"] > ps.stock:
+                    raise ValidationError(
+                        f"Stock insuficiente para '{ps.fk_producto.nombre_producto}'. "
+                        f"Disponible: {ps.stock}, solicitado: {item['cantidad']}."
+                    )
+
+            subtotal = Decimal("0.00")
+            detalle_items = []
+            for item in items_data:
+                ps = productos_semanales[item["id_producto_semanal"]]
+                importe = ps.precio * item["cantidad"]
+                subtotal += importe
+                detalle_items.append(
+                    {
+                        "producto_semanal": ps,
+                        "nombre_producto": ps.fk_producto.nombre_producto,
+                        "precio_unitario": ps.precio,
+                        "cantidad": item["cantidad"],
+                        "importe": importe,
+                    }
+                )
+
+            iva = (subtotal * Decimal("0.16")).quantize(Decimal("0.01"))
+            total = subtotal + iva
+
+            _validar_limite_credito(usuario, total)
+
+            for item in items_data:
+                ps = productos_semanales[item["id_producto_semanal"]]
+                ps.stock -= item["cantidad"]
+                ps.save(update_fields=["stock"])
+
+            pedido = PedidoCabecera.objects.create(
+                fk_cliente=usuario,
+                fk_estado_id=ESTADO_PENDIENTE_ID,
+                subtotal=subtotal,
+                iva=iva,
+                total=total,
+            )
+
+            detalles = [
+                DetallePedido(
+                    fk_pedido=pedido,
+                    fk_producto_semanal=det["producto_semanal"],
+                    nombre_producto=det["nombre_producto"],
+                    precio_unitario=det["precio_unitario"],
+                    cantidad=det["cantidad"],
+                    importe=det["importe"],
+                )
+                for det in detalle_items
+            ]
+            DetallePedido.objects.bulk_create(detalles)
+
+            HistorialEstadoPedido.objects.create(
+                fk_pedido=pedido,
+                fk_estado_anterior=None,
+                fk_estado_nuevo_id=ESTADO_PENDIENTE_ID,
+                fk_cambiado_por=usuario,
+            )
+
+        _log(request.user, f"crear_pedido id={pedido.id_pedido} total={total}", request)
+        logger.info("Pedido %s creado por cliente %s con %d items", pedido.id_pedido, usuario.id_usuario, len(detalles))
+
+        from rassa.blueprints.pedidos.serializers import PedidoOutputSerializer
+
+        output = PedidoOutputSerializer(pedido)
+        return ok_response(data=output.data, message="Pedido creado correctamente.", status_code=status.HTTP_201_CREATED)
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
@@ -209,3 +320,31 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         )
 
         return ok_response(data=HistorialEstadoSerializer(historial, many=True).data)
+
+
+def _validar_limite_credito(usuario, total_pedido: Decimal):
+    """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia."""
+    try:
+        limite = LimiteCliente.objects.get(fk_usuario=usuario)
+    except LimiteCliente.DoesNotExist:
+        return
+
+    usuario_ids = {usuario.id_usuario}
+    familias = FamiliaUsuario.objects.filter(fk_usuario=usuario, estado=True).values_list("fk_familia_id", flat=True)
+
+    if familias:
+        miembros = FamiliaUsuario.objects.filter(fk_familia_id__in=familias, estado=True).exclude(fk_usuario=usuario)
+        usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
+
+    gasto_actual = PedidoCabecera.objects.filter(
+        fk_cliente_id__in=usuario_ids, fk_estado_id=ESTADO_PENDIENTE_ID
+    ).aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
+
+    nuevo_saldo = gasto_actual + total_pedido
+    if nuevo_saldo > limite.monto:
+        raise ValidationError(
+            f"El pedido excede el límite de crédito. "
+            f"Límite: ${limite.monto:.2f}, "
+            f"Saldo actual en pedidos pendientes: ${gasto_actual:.2f}, "
+            f"Total con este pedido: ${nuevo_saldo:.2f}."
+        )
