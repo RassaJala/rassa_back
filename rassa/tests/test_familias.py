@@ -367,18 +367,71 @@ class FamiliasTestCase(TestCase):
         self.assertIn("Familia Inactiva", nombres_trash)
 
     def test_restaurar_familia_exito(self):
-        """Valida la restauración de una familia inactiva y de sus miembros."""
+        """Valida la restauración de una familia inactiva: solo el jefe se agrega como miembro."""
         familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
         miembro = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=False)
 
-        response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/restore/", format="json")
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Verificar estado restaurado
+        # Verificar que la familia se restaura y el jefe queda como miembro activo
         familia.refresh_from_db()
         miembro.refresh_from_db()
         self.assertTrue(familia.estado)
         self.assertTrue(miembro.estado)
+        self.assertEqual(familia.fk_jefe_familia, self.usuario_cliente1)
+
+        # Verificar que otros miembros NO se reactivan
+        self.assertFalse(
+            FamiliaUsuario.objects.filter(fk_familia=familia, estado=True)
+            .exclude(fk_usuario=self.usuario_cliente1)
+            .exists()
+        )
+
+    def test_restaurar_familia_jefe_ya_en_otra_familia(self):
+        """Valida que falle la restauración de una familia si el jefe propuesto ya está en otra familia activa."""
+        familia_activa = Familia.objects.create(nombre_familia="Familia Activa", estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia_activa, estado=True)
+
+        familia_inactiva = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+
+        response = self.client.post(
+            f"/api/familias/grupos/{familia_inactiva.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)
+        self.assertEqual(response.data["fk_jefe_familia"], "El usuario ya pertenece a otra familia activa.")
+
+    def test_remover_miembro_familia_soft_delete(self):
+        """Valida que al remover un integrante de la familia se haga un soft-delete (estado=False)."""
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+
+        response = self.client.delete(f"/api/familias/miembros/{rel.id_familia_usuario}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Verificar que el registro aún existe pero con estado=False
+        rel.refresh_from_db()
+        self.assertFalse(rel.estado)
+
+    def test_remover_miembro_jefe_resetea_jefe(self):
+        """Valida que al remover al jefe de familia, el campo fk_jefe_familia de la familia pase a ser None."""
+        familia = Familia.objects.create(nombre_familia="Familia Test", fk_jefe_familia=self.usuario_cliente1)
+        rel = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+
+        response = self.client.delete(f"/api/familias/miembros/{rel.id_familia_usuario}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        rel.refresh_from_db()
+        familia.refresh_from_db()
+        self.assertFalse(rel.estado)
+        self.assertIsNone(familia.fk_jefe_familia)
 
     def test_eliminacion_permanente_familia_exito(self):
         """Valida la eliminación física definitiva de una familia inactiva."""
@@ -391,3 +444,77 @@ class FamiliasTestCase(TestCase):
         # Verificar eliminación de la DB
         self.assertFalse(Familia.objects.filter(id_familia=familia.id_familia).exists())
         self.assertFalse(FamiliaUsuario.objects.filter(id_familia_usuario=miembro.id_familia_usuario).exists())
+
+    def test_restaurar_familia_sin_fk_jefe(self):
+        """Valida que falle la restauración de una familia si no se envía fk_jefe_familia."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        response = self.client.post(f"/api/familias/grupos/{familia.id_familia}/restore/", format="json", data={})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)
+
+    def test_restaurar_familia_jefe_inexistente(self):
+        """Valida que falle la restauración si el jefe especificado no existe."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/", format="json", data={"fk_jefe_familia": 99999}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)
+
+    def test_restaurar_familia_jefe_no_numerico(self):
+        """Valida que falle la restauración si el jefe especificado no es numérico."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": "no-numerico"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_jefe_familia", response.data)
+
+    def test_restaurar_familia_ya_activa(self):
+        """Valida que falle la restauración si la familia ya se encuentra activa (retorna 404)."""
+        familia = Familia.objects.create(nombre_familia="Familia Activa", estado=True)
+        response = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_restaurar_familia_idempotency(self):
+        """Valida que ejecutar restore múltiples veces con el mismo jefe sea idempotente (devuelve 404)."""
+        familia = Familia.objects.create(nombre_familia="Familia Inactiva", estado=False)
+
+        # Primera restauración
+        res1 = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+
+        # Intentar restaurar de nuevo (ya está activa, por lo que no aparece en el queryset de restore -> 404)
+        res2 = self.client.post(
+            f"/api/familias/grupos/{familia.id_familia}/restore/",
+            format="json",
+            data={"fk_jefe_familia": self.usuario_cliente1.id_usuario},
+        )
+        self.assertEqual(res2.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Verificar que el número de registros en la tabla intermedia de miembros sigue siendo 1
+        self.assertEqual(FamiliaUsuario.objects.filter(fk_usuario=self.usuario_cliente1, fk_familia=familia).count(), 1)
+
+    def test_remover_miembro_no_jefe_no_limpia_jefe(self):
+        """Valida que al remover un miembro común que no es el jefe, el fk_jefe_familia permanezca intacto."""
+        familia = Familia.objects.create(nombre_familia="Familia Test", fk_jefe_familia=self.usuario_cliente1)
+        # Miembro 1 (Jefe)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente1, fk_familia=familia, estado=True)
+        # Miembro 2 (No-Jefe)
+        rel_comun = FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente2, fk_familia=familia, estado=True)
+
+        response = self.client.delete(f"/api/familias/miembros/{rel_comun.id_familia_usuario}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        familia.refresh_from_db()
+        self.assertEqual(familia.fk_jefe_familia, self.usuario_cliente1)

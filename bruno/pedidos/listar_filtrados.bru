@@ -1,0 +1,15 @@
+meta {
+  name: Listar Pedidos Filtrados
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/pedidos/?estado=pendiente
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
