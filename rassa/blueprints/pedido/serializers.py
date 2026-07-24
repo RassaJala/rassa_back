@@ -27,6 +27,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField()
     vendedor_nombre = serializers.SerializerMethodField()
     estado_actual = serializers.CharField(source="fk_estado.tipo_estado", read_only=True)
+    productos = serializers.SerializerMethodField()
 
     class Meta:
         model = PedidoCabecera
@@ -34,6 +35,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
             "id_pedido",
             "cliente_nombre",
             "vendedor_nombre",
+            "productos",
             "total",
             "estado_actual",
             "creado_en",
@@ -44,6 +46,12 @@ class PedidoListSerializer(serializers.ModelSerializer):
 
     def get_vendedor_nombre(self, obj):
         return _nombre_completo(obj.fk_vendedor)
+
+    def get_productos(self, obj):
+        detalles = getattr(obj, "detallepedido_set", None)
+        if detalles is None:
+            return []
+        return [d.nombre_producto for d in detalles.all()[:3]]
 
 
 class DetallePedidoSerializer(serializers.ModelSerializer):

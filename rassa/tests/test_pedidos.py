@@ -422,10 +422,87 @@ class PedidosTestCase(APITestCase):
 
     # ── Permisos ────────────────────────────────────────────
 
-    def test_cliente_no_puede_acceder(self):
+    def test_cliente_lista_sus_pedidos(self):
         self.client.force_authenticate(user=self.user_cliente)
         response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id_pedido"], self.pedido.id_pedido)
+        self.assertIn("productos", response.data["results"][0])
+
+    def test_cliente_solo_ve_sus_pedidos(self):
+        otro_cliente_user = User.objects.create_user(
+            username="cliente2", email="cliente2@rassa.com", password="password123"
+        )
+        otro_persona = Persona.objects.create(
+            nombre="Pedro", apellido_paterno="Lopez", fecha_nacimiento="1992-02-02", sexo="M", domicilio="Calle 5"
+        )
+        otro_cliente = Usuario.objects.create(
+            fk_user=otro_cliente_user,
+            fk_persona=otro_persona,
+            telefono="6677889900",
+            correo="cliente2@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("50.00"),
+            iva=Decimal("10.50"),
+            total=Decimal("60.50"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+
+    def test_cliente_ve_detalle_de_su_pedido(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get(f"/api/pedidos/{self.pedido.id_pedido}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id_pedido"], self.pedido.id_pedido)
+        self.assertIn("detalles", response.data)
+        self.assertIn("historial", response.data)
+
+    def test_cliente_no_ve_detalle_de_otro_cliente(self):
+        otro_cliente_user = User.objects.create_user(
+            username="cliente3", email="cliente3@rassa.com", password="password123"
+        )
+        otro_persona = Persona.objects.create(
+            nombre="Ana", apellido_paterno="Martinez", fecha_nacimiento="1993-03-03", sexo="F", domicilio="Calle 6"
+        )
+        otro_cliente = Usuario.objects.create(
+            fk_user=otro_cliente_user,
+            fk_persona=otro_persona,
+            telefono="9988776655",
+            correo="cliente3@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        pedido_otro = PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("50.00"),
+            iva=Decimal("10.50"),
+            total=Decimal("60.50"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get(f"/api/pedidos/{pedido_otro.id_pedido}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_cliente_no_puede_cambiar_estado(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "confirmado"},
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.fk_estado.tipo_estado, "pendiente")
 
     def test_usuario_no_autenticado(self):
         response = self.client.get("/api/pedidos/", format="json")
@@ -440,6 +517,7 @@ class PedidosTestCase(APITestCase):
         self.assertIn("id_pedido", item)
         self.assertIn("cliente_nombre", item)
         self.assertIn("vendedor_nombre", item)
+        self.assertIn("productos", item)
         self.assertIn("total", item)
         self.assertIn("estado_actual", item)
         self.assertIn("creado_en", item)

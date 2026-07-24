@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
-from rassa.permissions.role_permissions import HasRole
+from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log, ok_response
 
 from .serializers import (
@@ -33,7 +33,7 @@ SECUENCIA = {
 
 class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
-    permission_classes = [IsAuthenticated, HasRole("Vendedor", "Admin")]
+    permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
 
     def get_queryset(self):
         qs = (
@@ -51,8 +51,10 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         )
         usuario = getattr(self.request.user, "usuario", None)
         rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
+        if rol and rol.nombre_rol == VENDEDOR:
             qs = qs.filter(fk_vendedor=usuario)
+        elif rol and rol.nombre_rol == CLIENTE:
+            qs = qs.filter(fk_cliente=usuario)
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
@@ -78,12 +80,21 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         qs = PedidoCabecera.objects.select_for_update(nowait=True)
         usuario = getattr(self.request.user, "usuario", None)
         rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
+        if rol and rol.nombre_rol == VENDEDOR:
             qs = qs.filter(fk_vendedor=usuario)
+        elif rol and rol.nombre_rol == CLIENTE:
+            qs = qs.filter(fk_cliente=usuario)
         return qs.get(pk=pk)
 
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
+        usuario = getattr(request.user, "usuario", None)
+        rol = getattr(usuario, "fk_rol", None) if usuario else None
+        if rol and rol.nombre_rol == CLIENTE:
+            return ok_response(
+                message="Los clientes no pueden cambiar el estado del pedido.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
         serializer = PedidoCambiarEstadoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         nuevo_estado_str = serializer.validated_data["nuevo_estado"]
