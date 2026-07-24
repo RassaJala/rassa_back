@@ -703,14 +703,17 @@ class ProductoImagen(models.Model):
 
     id_imagen = models.AutoField(primary_key=True)
     fk_producto = models.ForeignKey(Producto, on_delete=models.CASCADE, db_column="fk_producto")
-    url = models.TextField()
+    url = models.URLField(max_length=500)
     drive_file_id = models.CharField(max_length=255, blank=True, null=True)
     es_principal = models.BooleanField(default=False)
+    orden = models.PositiveIntegerField(default=0)
     creado_en = models.DateTimeField(auto_now_add=True)
+    # When True, the Drive file failed to delete and needs retry cleanup.
+    eliminar_pendiente = models.BooleanField(default=False)
 
     class Meta:
         db_table = "producto_imagen"
-        ordering = ["id_imagen"]
+        ordering = ["orden", "id_imagen"]
         constraints = [
             models.UniqueConstraint(
                 fields=["fk_producto"],

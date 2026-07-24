@@ -318,9 +318,10 @@ rassa/
    ```python
    from rassa.permissions.role_permissions import IsAdmin, IsOwnerOrAdmin
 
+
    class UsuarioViewSet(viewsets.ModelViewSet):
        def get_permissions(self):
-            if self.action == "list":
+             if self.action == "list":
                return [IsAdmin()]
            return [IsOwnerOrAdmin()]
    ```

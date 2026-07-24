@@ -1,0 +1,14 @@
+meta {
+  name: Eliminar imagen de producto
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/api/productos/{{productoId}}/imagenes/{{imagenId}}/
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

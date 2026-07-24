@@ -102,6 +102,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# === FILE UPLOADS ===
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024  # 5MB — archivos más grandes van al disco temporal
+
 # === REST FRAMEWORK ===
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
@@ -150,6 +153,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones": "30/hour",
     "publicaciones_write": "10/hour",
     "admin_write": "30/hour",
+    "producto_imagen": "60/hour",
+    "imagen_upload": "20/hour",
     "chat_read": "60/minute",
     "chat_write": "30/minute",
     "admin_users": "30/minute",
