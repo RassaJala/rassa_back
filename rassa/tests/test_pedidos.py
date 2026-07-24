@@ -505,9 +505,7 @@ class PedidosTestCase(APITestCase):
         self.assertEqual(self.pedido.fk_estado.tipo_estado, "pendiente")
 
     def test_cliente_lista_vacia(self):
-        user_vacio = User.objects.create_user(
-            username="cliente_vacio", email="vacio@rassa.com", password="password123"
-        )
+        user_vacio = User.objects.create_user(username="cliente_vacio", email="vacio@rassa.com", password="password123")
         persona_vacia = Persona.objects.create(
             nombre="Sin", apellido_paterno="Pedidos", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle 0"
         )
