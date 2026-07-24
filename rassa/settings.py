@@ -27,7 +27,7 @@ SECRET_KEY = config("SECRET_KEY", default="changeme-in-production")
 if SECRET_KEY == "changeme-in-production" and not config("DEBUG", default=False, cast=bool):
     raise ImproperlyConfigured("SECRET_KEY must be overridden in production.")
 DEBUG = config("DEBUG", default=False, cast=bool)
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*", cast=Csv())
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 # === APPS ===
 DJANGO_APPS = [
@@ -153,7 +153,6 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_read": "60/minute",
     "chat_write": "30/minute",
     "admin_users": "30/minute",
-    "pedidos_cambiar_estado": "30/hour",
     "publicaciones_current": "60/minute",
 }
 
@@ -162,7 +161,6 @@ if "test" in sys.argv or "pytest" in sys.modules:
     REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
 
 # === CORS ===
-CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=True, cast=bool)
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
     default="http://localhost:8081,http://localhost:19006",
