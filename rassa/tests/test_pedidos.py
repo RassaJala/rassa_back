@@ -8,7 +8,7 @@ from django.db import DatabaseError
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera, Persona, Rol, Usuario
+from rassa.models import DetallePedido, EstadoPedido, HistorialEstadoPedido, PedidoCabecera, Persona, Rol, Usuario
 
 
 class PedidosTestCase(APITestCase):
@@ -422,10 +422,171 @@ class PedidosTestCase(APITestCase):
 
     # ── Permisos ────────────────────────────────────────────
 
-    def test_cliente_no_puede_acceder(self):
+    def test_cliente_lista_sus_pedidos(self):
         self.client.force_authenticate(user=self.user_cliente)
         response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id_pedido"], self.pedido.id_pedido)
+        self.assertIn("productos", response.data["results"][0])
+
+    def test_cliente_solo_ve_sus_pedidos(self):
+        otro_cliente_user = User.objects.create_user(
+            username="cliente2", email="cliente2@rassa.com", password="password123"
+        )
+        otro_persona = Persona.objects.create(
+            nombre="Pedro", apellido_paterno="Lopez", fecha_nacimiento="1992-02-02", sexo="M", domicilio="Calle 5"
+        )
+        otro_cliente = Usuario.objects.create(
+            fk_user=otro_cliente_user,
+            fk_persona=otro_persona,
+            telefono="6677889900",
+            correo="cliente2@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("50.00"),
+            iva=Decimal("10.50"),
+            total=Decimal("60.50"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+
+    def test_cliente_ve_detalle_de_su_pedido(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get(f"/api/pedidos/{self.pedido.id_pedido}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id_pedido"], self.pedido.id_pedido)
+        self.assertIn("detalles", response.data)
+        self.assertIn("historial", response.data)
+
+    def test_cliente_no_ve_detalle_de_otro_cliente(self):
+        otro_cliente_user = User.objects.create_user(
+            username="cliente3", email="cliente3@rassa.com", password="password123"
+        )
+        otro_persona = Persona.objects.create(
+            nombre="Ana", apellido_paterno="Martinez", fecha_nacimiento="1993-03-03", sexo="F", domicilio="Calle 6"
+        )
+        otro_cliente = Usuario.objects.create(
+            fk_user=otro_cliente_user,
+            fk_persona=otro_persona,
+            telefono="9988776655",
+            correo="cliente3@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        pedido_otro = PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("50.00"),
+            iva=Decimal("10.50"),
+            total=Decimal("60.50"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get(f"/api/pedidos/{pedido_otro.id_pedido}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_cliente_no_puede_cambiar_estado(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "confirmado"},
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.fk_estado.tipo_estado, "pendiente")
+
+    def test_cliente_lista_vacia(self):
+        user_vacio = User.objects.create_user(username="cliente_vacio", email="vacio@rassa.com", password="password123")
+        persona_vacia = Persona.objects.create(
+            nombre="Sin", apellido_paterno="Pedidos", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle 0"
+        )
+        Usuario.objects.create(
+            fk_user=user_vacio,
+            fk_persona=persona_vacia,
+            telefono="0000000000",
+            correo="vacio@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        self.client.force_authenticate(user=user_vacio)
+        response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_cliente_productos_truncados(self):
+        from datetime import date
+
+        from rassa.models import CategoriaProducto, Producto, ProductoSemanal, PublicacionSemanal, Unidad
+
+        categoria = CategoriaProducto.objects.create(nombre="Test")
+        producto = Producto.objects.create(nombre_producto="Test", fk_categoria=categoria, es_perecedero=False)
+        unidad = Unidad.objects.create(nombre="Pieza", abreviatura="pz", tipo="Unidad")
+        publicacion = PublicacionSemanal.objects.create(fecha_publicacion=date(2026, 1, 1), semana=1)
+        prod_semanal = ProductoSemanal.objects.create(
+            fk_publicacion=publicacion,
+            fk_producto=producto,
+            fk_unidad=unidad,
+            stock=10,
+            precio=Decimal("10.00"),
+        )
+
+        pedido_con_muchos = PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("200.00"),
+            iva=Decimal("42.00"),
+            total=Decimal("242.00"),
+        )
+        for i in range(4):
+            DetallePedido.objects.create(
+                fk_pedido=pedido_con_muchos,
+                fk_producto_semanal=prod_semanal,
+                nombre_producto=f"Producto {i + 1}",
+                precio_unitario=Decimal("50.00"),
+                cantidad=1,
+                importe=Decimal("50.00"),
+            )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get("/api/pedidos/", format="json")
+        results = [r for r in response.data["results"] if r["id_pedido"] == pedido_con_muchos.id_pedido]
+        self.assertEqual(len(results), 1)
+        item = results[0]
+        self.assertEqual(len(item["productos"]), 3)
+        self.assertEqual(item["productos"], ["Producto 1", "Producto 2", "Producto 3"])
+        self.assertTrue(item["has_more_productos"])
+
+    def test_cliente_productos_vacios(self):
+        pedido_sin_detalles = PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("0.00"),
+            iva=Decimal("0.00"),
+            total=Decimal("0.00"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get("/api/pedidos/", format="json")
+        results = [r for r in response.data["results"] if r["id_pedido"] == pedido_sin_detalles.id_pedido]
+        self.assertEqual(len(results), 1)
+        item = results[0]
+        self.assertEqual(item["productos"], [])
+        self.assertFalse(item["has_more_productos"])
+
+    def test_cliente_pedido_inexistente(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        response = self.client.get("/api/pedidos/99999/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_usuario_no_autenticado(self):
         response = self.client.get("/api/pedidos/", format="json")
@@ -440,6 +601,8 @@ class PedidosTestCase(APITestCase):
         self.assertIn("id_pedido", item)
         self.assertIn("cliente_nombre", item)
         self.assertIn("vendedor_nombre", item)
+        self.assertIn("productos", item)
+        self.assertIn("has_more_productos", item)
         self.assertIn("total", item)
         self.assertIn("estado_actual", item)
         self.assertIn("creado_en", item)
