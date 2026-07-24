@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 
 from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
-from rassa.permissions.role_permissions import HasRole
+from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log, ok_response
 
 from .serializers import (
@@ -30,10 +30,22 @@ SECUENCIA = {
     "listo_para_retirar": "entregado",
 }
 
+ROLE_FILTER_MAP = {
+    VENDEDOR: "fk_vendedor",
+    CLIENTE: "fk_cliente",
+}
+
 
 class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
-    permission_classes = [IsAuthenticated, HasRole("Vendedor", "Admin")]
+    permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
+
+    def _get_usuario_rol(self):
+        usuario = getattr(self.request.user, "usuario", None)
+        if usuario is None:
+            return None, None
+        rol = getattr(usuario, "fk_rol", None)
+        return usuario, rol.nombre_rol if rol else None
 
     def get_queryset(self):
         qs = (
@@ -49,10 +61,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             )
             .order_by("-creado_en")
         )
-        usuario = getattr(self.request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=usuario)
+        usuario, nombre_rol = self._get_usuario_rol()
+        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
+        if filter_field:
+            qs = qs.filter(**{filter_field: usuario})
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
@@ -64,15 +78,23 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         return PedidoListSerializer
 
     def _get_pedido_con_permiso(self, pk):
-        qs = PedidoCabecera.objects.select_for_update(nowait=True)
-        usuario = getattr(self.request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=usuario)
+        qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
+        usuario, nombre_rol = self._get_usuario_rol()
+        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
+        if filter_field:
+            qs = qs.filter(**{filter_field: usuario})
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
         return qs.get(pk=pk)
 
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
+        _, nombre_rol = self._get_usuario_rol()
+        if nombre_rol == CLIENTE:
+            return ok_response(
+                message="Los clientes no pueden cambiar el estado del pedido.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
         serializer = PedidoCambiarEstadoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         nuevo_estado_str = serializer.validated_data["nuevo_estado"]
