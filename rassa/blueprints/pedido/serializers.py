@@ -60,7 +60,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
         detalles = getattr(obj, "detallepedido_set", None)
         if detalles is None:
             return False
-        return detalles.count() > PRODUCTOS_PREVIEW_LIMIT
+        return len(detalles.all()) > PRODUCTOS_PREVIEW_LIMIT
 
 
 class DetallePedidoSerializer(serializers.ModelSerializer):

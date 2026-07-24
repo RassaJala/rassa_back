@@ -64,6 +64,8 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         filter_field = ROLE_FILTER_MAP.get(nombre_rol)
         if filter_field:
             qs = qs.filter(**{filter_field: usuario})
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
@@ -80,6 +82,8 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         filter_field = ROLE_FILTER_MAP.get(nombre_rol)
         if filter_field:
             qs = qs.filter(**{filter_field: usuario})
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
         return qs.get(pk=pk)
 
     @action(detail=True, methods=["patch"], url_path="status")
