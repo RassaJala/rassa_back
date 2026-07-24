@@ -97,7 +97,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: Django system check
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          DEBUG: "True"
         run: python manage.py check
 
       - name: Check for missing migrations
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          DEBUG: "True"
         run: python manage.py makemigrations --check --dry-run

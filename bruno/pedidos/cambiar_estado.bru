@@ -1,0 +1,23 @@
+meta {
+  name: Cambiar Estado Pedido
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/api/pedidos/{{pedidoId}}/status/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "nuevo_estado": "confirmado"
+  }
+}

@@ -46,6 +46,14 @@ class PublicacionBaseTestCase(APITestCase):
     """Setup compartido para tests de publicaciones."""
 
     def setUp(self):
+        super().setUp()
+
+        # Congelar fecha a un lunes para que el check de solo-lunes no falle
+        patcher = patch("django.utils.timezone.localdate")
+        self.mock_date = patcher.start()
+        self.mock_date.return_value = date(2026, 7, 20)  # Monday
+        self.addCleanup(patcher.stop)
+
         self.agricultor = _create_user_with_role("Agricultor", "agricultor_test")
         self.cliente = _create_user_with_role("Cliente", "cliente_test")
         self.client.force_authenticate(self.agricultor)
@@ -670,9 +678,9 @@ class PublicacionSeguridadTests(PublicacionBaseTestCase):
 class PublicacionDeterminismoTests(PublicacionBaseTestCase):
     """Tests con time freeze para evitar dependencia de date.today()."""
 
-    @patch("rassa.blueprints.publicacion.views.date")
+    @patch("django.utils.timezone.localdate")
     def test_create_publicacion_frozen_week(self, mock_date):
-        mock_date.today.return_value = date(2026, 7, 15)  # Wednesday → next Monday is 2026-07-20, week 30
+        mock_date.return_value = date(2026, 7, 20)  # Monday
         data = self._assert_success_envelope(
             self.client.post(reverse("publicacion-list")),
             status_code=status.HTTP_201_CREATED,
@@ -680,3 +688,94 @@ class PublicacionDeterminismoTests(PublicacionBaseTestCase):
         self.assertIsInstance(data["semana"], int)
         self.assertGreaterEqual(data["semana"], 1)
         self.assertLessEqual(data["semana"], 52)
+
+
+# ======================================================================
+# REGLA DE NEGOCIO — Solo crear publicaciones los lunes
+# ======================================================================
+
+
+class PublicacionMondayRuleTests(PublicacionBaseTestCase):
+    """Solo se pueden crear publicaciones los lunes."""
+
+    @patch("django.utils.timezone.localdate")
+    def test_create_on_monday_returns_201(self, mock_date):
+        mock_date.return_value = date(2026, 7, 20)  # Monday
+        self._assert_success_envelope(
+            self.client.post(reverse("publicacion-list")),
+            status_code=status.HTTP_201_CREATED,
+            message="Publicación creada correctamente.",
+        )
+
+    @patch("django.utils.timezone.localdate")
+    def test_create_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        response = self.client.post(reverse("publicacion-list"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    @patch("django.utils.timezone.localdate")
+    def test_create_on_sunday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 26)  # Sunday
+        response = self.client.post(reverse("publicacion-list"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+# ======================================================================
+# PUBLICACION CURRENT — Endpoint público de semana activa
+# ======================================================================
+
+
+class PublicacionCurrentTests(PublicacionBaseTestCase):
+    """GET /api/publicaciones/current/ — listado público sin autenticación."""
+
+    def setUp(self):
+        super().setUp()
+        # Crear publicación directamente en la semana actual (semana 30, July 20-26)
+        self.pub = PublicacionSemanal.objects.create(
+            fk_agricultor=self.agricultor.usuario,
+            fecha_publicacion=date(2026, 7, 20),
+            semana=30,
+            estado=PublicacionSemanal.ESTADO_PUBLICADO,
+        )
+        ProductoSemanal.objects.create(
+            fk_publicacion=self.pub,
+            fk_producto=self.producto,
+            fk_unidad=self.unidad,
+            stock=10,
+            precio="25.00",
+            foto="http://example.com/foto.jpg",
+            estado=ProductoSemanal.ESTADO_ACTIVO,
+        )
+
+    def test_no_auth_required(self):
+        self.client.force_authenticate(None)
+        response = self.client.get(reverse("publicacion-current"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_returns_only_published(self):
+        # Borrador con fecha dentro del rango Mon-Sun y semana distinta para
+        # evitar el unique constraint (fk_agricultor, semana). El endpoint
+        # filtra por fecha_publicacion y estado, NO por semana, por lo que
+        # la única variable que excluye al borrador es estado=borrador.
+        PublicacionSemanal.objects.create(
+            fk_agricultor=self.agricultor.usuario,
+            fecha_publicacion=date(2026, 7, 22),
+            semana=31,
+            estado=PublicacionSemanal.ESTADO_BORRADOR,
+        )
+        response = self.client.get(reverse("publicacion-current"))
+        body = response.json()
+        self.assertIn("data", body)
+        self.assertEqual(len(body["data"]), 1)
+        self.assertEqual(body["data"][0]["id_publicacion"], self.pub.id_publicacion)
+
+    def test_includes_agricultor_and_productos(self):
+        response = self.client.get(reverse("publicacion-current"))
+        body = response.json()
+        self.assertGreater(len(body["data"]), 0)
+        for pub in body["data"]:
+            self.assertIn("agricultor", pub)
+            self.assertIn("productos", pub)
+            self.assertIn("nombre", pub["agricultor"])
+            self.assertIn("precio", pub["productos"][0])

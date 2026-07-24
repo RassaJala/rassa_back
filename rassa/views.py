@@ -28,6 +28,7 @@ from rassa.permissions.role_permissions import HasRole, IsAdminOrReadOnly
 
 def _log(user, descripcion, request):
     """Create an audit log entry — failures never break the caller."""
+    request._audit_logged = True
     try:
         Log.objects.create(
             fk_usuario=user.usuario if hasattr(user, "usuario") and user.usuario else None,
@@ -282,8 +283,16 @@ class CatalogViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="permanent")
     def permanent(self, request, pk=None, *args, **kwargs):
         """Eliminación permanente de un registro desactivado."""
+        from django.db.models import ProtectedError
+
         instance = self.get_object()
-        instance.delete()
+        try:
+            instance.delete()
+        except ProtectedError:
+            return _ok(
+                message="No se puede eliminar: tiene registros dependientes protegidos.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         return _ok(message="Registro eliminado permanentemente.")
 
 
@@ -385,14 +394,16 @@ class CatalogDetailView(CatalogPermissionMixin, generics.RetrieveUpdateDestroyAP
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         model_name = type(instance).__name__
-        _log(request.user, f"{model_name} actualizado: {instance.nombre} (id={instance.pk})", request)
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
+        _log(request.user, f"{model_name} actualizado: {nombre} (id={instance.pk})", request)
         return _ok(data=serializer.data, message=self.update_message)
 
     def perform_destroy(self, instance):
         instance.estado = False
         instance.save(update_fields=["estado"])
         model_name = type(instance).__name__
-        _log(self.request.user, f"{model_name} eliminado (soft): {instance.nombre} (id={instance.pk})", self.request)
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
+        _log(self.request.user, f"{model_name} eliminado (soft): {nombre} (id={instance.pk})", self.request)
 
     def initial(self, request, *args, **kwargs):
         """Apply ScopedRateThrottle only on write operations."""
@@ -528,9 +539,10 @@ class CatalogRestoreView(generics.GenericAPIView):
         instance.save(update_fields=[self.soft_delete_field])
         serializer = self.get_serializer(instance)
         model_name = type(instance).__name__
+        nombre = getattr(instance, "nombre", None) or str(instance.pk)
         _log(
             request.user,
-            f"{model_name} restaurado: {instance.nombre} (id={instance.pk})",
+            f"{model_name} restaurado: {nombre} (id={instance.pk})",
             request,
         )
         return _ok(data=serializer.data, message="Registro restaurado correctamente.")
@@ -715,27 +727,40 @@ class LocalidadPermanentDeleteView(CatalogPermanentDeleteView):
     queryset = Localidad.objects.all()
 
 
+MIN_SEARCH_QUERY_LENGTH = 3
+USER_SEARCH_RESULT_LIMIT = 10
+
+
 class SearchUsersView(APIView):
-    """Endpoint para buscar usuarios activos por nombre o correo."""
+    """Endpoint para buscar usuarios activos por nombre o correo.
+
+    Parámetros de consulta (Query Params):
+    - q (str): Término de búsqueda (mínimo 3 caracteres). Requerido.
+    - include_assigned (bool/str): Si es 'true' o '1', incluye usuarios que ya
+      tienen una familia activa. Por defecto es 'false'.
+
+    Comportamiento y Límites:
+    - Retorna un máximo de 10 resultados (USER_SEARCH_RESULT_LIMIT).
+    - Excluye usuarios con rol 'Admin'.
+    - Lanza ValidationError si el parámetro 'q' está vacío o es menor a 3 caracteres.
+    """
 
     permission_classes = [permissions.IsAuthenticated, HasRole("Admin")]
 
     def get(self, request):
-        if "q" not in request.query_params:
+        raw_q = request.query_params.get("q")
+        if raw_q is None or raw_q.strip() == "":
             raise ValidationError({"q": "El parámetro de búsqueda 'q' es requerido."})
 
-        query = request.query_params.get("q", "").strip()
-        if not query:
-            raise ValidationError({"q": "El parámetro de búsqueda 'q' no puede estar vacío."})
+        query = raw_q.strip()
+        if len(query) < MIN_SEARCH_QUERY_LENGTH:
+            raise ValidationError(
+                {"q": f"El parámetro de búsqueda 'q' debe tener al menos {MIN_SEARCH_QUERY_LENGTH} caracteres."}
+            )
 
-        if len(query) < 3:
-            raise ValidationError({"q": "El parámetro de búsqueda 'q' debe tener al menos 3 caracteres."})
+        include_assigned = request.query_params.get("include_assigned", "false").lower() in ["true", "1"]
 
-        usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
-            "fk_usuario_id", flat=True
-        )
-
-        usuarios = (
+        base_query = (
             Usuario.objects.filter(estado=True)
             .exclude(fk_rol__nombre_rol="Admin")
             .filter(
@@ -744,8 +769,14 @@ class SearchUsersView(APIView):
                 | Q(fk_persona__apellido_paterno__icontains=query)
                 | Q(fk_persona__apellido_materno__icontains=query)
             )
-            .exclude(id_usuario__in=usuarios_con_familia)[:10]
         )
 
+        if not include_assigned:
+            usuarios_con_familia = FamiliaUsuario.objects.filter(estado=True, fk_familia__estado=True).values_list(
+                "fk_usuario_id", flat=True
+            )
+            base_query = base_query.exclude(id_usuario__in=usuarios_con_familia)
+
+        usuarios = base_query[:USER_SEARCH_RESULT_LIMIT]
         serializer = UserSerializer(usuarios, many=True)
         return _ok(data=serializer.data)

@@ -1,0 +1,15 @@
+meta {
+  name: Listar productos con filtros
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/productos/?categoria=1&nombre=manzana&es_perecedero=true&precio_min=5&precio_max=50&unidad=1
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

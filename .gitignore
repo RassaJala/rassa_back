@@ -53,3 +53,6 @@ docs/PROTECCIONES_REPOSITORIO.md
 
 # OpenCode local config
 opencode.json
+
+# Bruno environments (contains secrets)
+bruno/environments/local.bru

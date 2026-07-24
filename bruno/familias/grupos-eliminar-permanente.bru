@@ -1,0 +1,16 @@
+meta {
+  name: Familias - Eliminar Permanentemente
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/api/familias/grupos/1/permanent/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}

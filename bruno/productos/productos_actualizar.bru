@@ -1,0 +1,23 @@
+meta {
+  name: Actualizar producto (PATCH)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/productos/1/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "precio": "18.00",
+    "stock": 75
+  }
+}
