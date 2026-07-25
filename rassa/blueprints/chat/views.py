@@ -138,7 +138,7 @@ class MensajeLeerView(APIView):
         mensaje.leido = True
         mensaje.save(update_fields=["leido"])
 
-        return Response({"ok": True, "mensaje": "Mensaje marcado como leído."})
+        return _ok(message="Mensaje marcado como leído.")
 
 
 class MensajeInactivarView(APIView):
@@ -161,7 +161,7 @@ class MensajeInactivarView(APIView):
         mensaje.estado = False
         mensaje.save(update_fields=["estado"])
 
-        return Response({"ok": True, "mensaje": "Mensaje eliminado correctamente."})
+        return _ok(message="Mensaje eliminado correctamente.")
 
 
 class ConversacionPrivadaCreateView(APIView):
@@ -211,6 +211,9 @@ class ConversacionPrivadaCreateView(APIView):
 
             for integrante in all_integrantes:
                 if integrante.fk_usuario_id == usuario2.id_usuario and integrante.fk_conversacion_id in conv_ids_user1:
+                    # 200 (not 409) is intentional: the frontend createPrivateConversation
+                    # treats this as an idempotent get-or-create. A 409 would make axios
+                    # throw and break the flow.
                     return Response(
                         {
                             "ok": True,
@@ -359,6 +362,14 @@ class ConversacionAgregarIntegranteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        try:
+            usuario_id = int(usuario_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"ok": False, "mensaje": "usuario_id debe ser un número entero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         conv = _get_active_conversation_for_user(
             conversacion_id,
             request.user.usuario,
@@ -423,7 +434,7 @@ class ConversacionIntegrantesListView(APIView):
                 }
             )
 
-        return Response({"ok": True, "data": result})
+        return _ok(data=result)
 
 
 class ConversacionListView(APIView):
@@ -504,13 +515,15 @@ class MensajeDocumentoCreateView(APIView):
     throttle_scope = "chat_write"
 
     def post(self, request):
-        data = {key: request.data[key] for key in request.data.keys()}
+        data = request.data.dict()
 
         if "conversacion" in data and "fk_conversacion" not in data:
             data["fk_conversacion"] = data.pop("conversacion")
         if "documento" in data and "archivo" not in data:
             data["archivo"] = data.pop("documento")
 
+        # Membership is validated by MensajeDocumentoCreateSerializer.validate_fk_conversacion
+        # via context={"usuario": request.user.usuario}.
         serializer = MensajeDocumentoCreateSerializer(
             data=data,
             context={"usuario": request.user.usuario},
@@ -524,6 +537,8 @@ class MensajeDocumentoCreateView(APIView):
         docs_dir = Path(settings.MEDIA_ROOT) / "documentos"
         docs_dir.mkdir(parents=True, exist_ok=True)
 
+        # Path().name strips directory components (prevents path traversal);
+        # tipo_documento is validated by the serializer against ["imagen","audio","video"].
         nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
         with open(ruta, "wb") as f:

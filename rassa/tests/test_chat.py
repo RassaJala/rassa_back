@@ -226,7 +226,7 @@ class ChatTests(APITestCase):
         response = self.client.patch(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.json()["ok"])
+        self.assertIn("message", response.json())
         mensaje.refresh_from_db()
         self.assertFalse(mensaje.estado)
 
@@ -262,6 +262,52 @@ class ChatTests(APITestCase):
         response = self.client.patch(url, data={})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.json()["ok"])
+        self.assertIn("message", response.json())
         mensaje.refresh_from_db()
         self.assertTrue(mensaje.leido)
+
+    def test_crear_conversacion_privada_con_uno_mismo(self):
+        url = reverse("chat-conversaciones-crear-privada")
+        response = self.client.post(url, {"fk_usuario": self.usuario1.id_usuario})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("contigo mismo", response.json()["mensaje"])
+
+    def test_agregar_integrante_ya_activo(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
+        # usuario2 ya es miembro desde _crear_conversacion_grupal
+        response = self.client.post(url, {"usuario_id": self.usuario2.id_usuario})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["ok"])
+        self.assertEqual(
+            response.json()["mensaje"],
+            "El usuario ya es miembro de esta conversación.",
+        )
+
+    def test_renombrar_conversacion(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+        response = self.client.patch(url, {"nombre": "Nuevo nombre grupo"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["data"]["nombre"], "Nuevo nombre grupo")
+        conv.refresh_from_db()
+        self.assertEqual(conv.nombre, "Nuevo nombre grupo")
+
+    def test_listar_integrantes(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-integrantes", args=[conv.id_conversacion])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertIn("data", body)
+        self.assertEqual(len(body["data"]), 2)
+        nombres = {miembro["nombre_completo"] for miembro in body["data"]}
+        self.assertIn("User1 Test", nombres)
+        self.assertIn("User2 Test", nombres)
