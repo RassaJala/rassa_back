@@ -168,9 +168,10 @@ class MensajeInactivarView(APIView):
 
         # Membership check (parity with MensajeLeerView): a user removed from the
         # conversation must not be able to inactivate their old messages.
-        if not mensaje.fk_conversacion.integrante_set.filter(
+        es_miembro = mensaje.fk_conversacion.integrante_set.filter(
             fk_usuario=request.user.usuario, estado=True
-        ).exists():
+        ).exists()
+        if not es_miembro:
             raise PermissionDenied("No eres miembro de esta conversación.")
 
         if mensaje.fk_emisor_id != request.user.usuario.id_usuario:
