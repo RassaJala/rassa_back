@@ -8,13 +8,11 @@ post {
   url: {{baseUrl}}/api/pedidos/
   body: json
   auth: bearer
-  headers: {
-    Content-Type: application/json
-    Accept: application/json
-  }
 }
 
 headers {
+  Content-Type: application/json
+  Accept: application/json
   Authorization: Bearer {{accessToken}}
 }
 
@@ -31,8 +29,4 @@ body:json {
       }
     ]
   }
-}
-
-auth:bearer {
-  token: {{accessToken}}
 }

@@ -27,8 +27,10 @@ from .serializers import (
     ESTADOS_TERMINALES,
     HistorialEstadoSerializer,
     PedidoCambiarEstadoSerializer,
+    PedidoCreateSerializer,
     PedidoDetailSerializer,
     PedidoListSerializer,
+    PedidoOutputSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,7 @@ ROLE_FILTER_MAP = {
 }
 
 
-class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = PedidoListSerializer
     permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
 
@@ -86,8 +88,6 @@ class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
 
     def get_serializer_class(self):
         if self.action == "create":
-            from rassa.blueprints.pedidos.serializers import PedidoCreateSerializer
-
             return PedidoCreateSerializer
         if self.action == "retrieve":
             return PedidoDetailSerializer
@@ -142,7 +142,7 @@ class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
                     }
                 )
 
-            iva = (subtotal * Decimal("0.16")).quantize(Decimal("0.01"))
+            iva = (subtotal * Decimal("0.21")).quantize(Decimal("0.01"))
             total = subtotal + iva
 
             _validar_limite_credito(usuario, total)
@@ -182,8 +182,6 @@ class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
 
         _log(request.user, f"crear_pedido id={pedido.id_pedido} total={total}", request)
         logger.info("Pedido %s creado por cliente %s con %d items", pedido.id_pedido, usuario.id_usuario, len(detalles))
-
-        from rassa.blueprints.pedidos.serializers import PedidoOutputSerializer
 
         output = PedidoOutputSerializer(pedido)
         return ok_response(
@@ -327,9 +325,13 @@ class PedidoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
 
 
 def _validar_limite_credito(usuario, total_pedido: Decimal):
-    """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia."""
+    """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia.
+
+    Debe ejecutarse DENTRO de transaction.atomic() con select_for_update
+    para evitar race conditions entre requests concurrentes.
+    """
     try:
-        limite = LimiteCliente.objects.get(fk_usuario=usuario)
+        limite = LimiteCliente.objects.select_for_update().get(fk_usuario=usuario)
     except LimiteCliente.DoesNotExist:
         return
 
@@ -340,7 +342,7 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         miembros = FamiliaUsuario.objects.filter(fk_familia_id__in=familias, estado=True).exclude(fk_usuario=usuario)
         usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
 
-    gasto_actual = PedidoCabecera.objects.filter(
+    gasto_actual = PedidoCabecera.objects.select_for_update().filter(
         fk_cliente_id__in=usuario_ids, fk_estado_id=ESTADO_PENDIENTE_ID
     ).aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 

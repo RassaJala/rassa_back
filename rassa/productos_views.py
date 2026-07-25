@@ -8,18 +8,20 @@ import uuid
 from django.db import transaction
 from rest_framework import generics, parsers, status
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from rassa.filters import ProductoFilter
 from rassa.models import Producto, ProductoImagen
+from rassa.permissions.ownership import check_producto_ownership
 from rassa.permissions.role_permissions import IsAdminOrReadOnly
 from rassa.productos_serializers import (
     ProductoDetailSerializer,
     ProductoImagenSerializer,
     ProductoListSerializer,
 )
-from rassa.services.google_drive import delete_image, make_public, upload_image
+from rassa.services.google_drive import delete_file, make_public, upload_image_bytes
 from rassa.views import _ok
 
 EXTENSIONES_PERMITIDAS = {"jpg", "jpeg", "png", "gif", "webp"}
@@ -142,7 +144,7 @@ def _guardar_imagen_bytes(data, ext, product_id):
     uid = uuid.uuid4().hex
     filename = f"{uid}.{ext}"
     mime_type = MIME_TYPES.get(ext, "image/jpeg")
-    url, file_id = upload_image(data, filename, product_id, mime_type)
+    url, file_id = upload_image_bytes(data, filename, product_id, mime_type)
     return url, file_id
 
 
@@ -231,6 +233,8 @@ class ProductoImagenUploadView(APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        check_producto_ownership(request, pk)
+
         imagen_archivo = request.FILES.get("imagen")
         data = request.data if isinstance(request.data, dict) else {}
         imagen_base64 = data.get("imagen_base64")
@@ -263,7 +267,10 @@ class ProductoImagenUploadView(APIView):
         try:
             imagen = _save_imagen_to_db(producto, url_guardada, drive_file_id, es_principal)
         except Exception as exc:
-            delete_image(drive_file_id)
+            try:
+                delete_file(drive_file_id)
+            except Exception:
+                logging.getLogger(__name__).warning("Drive cleanup failed for %s", drive_file_id, exc_info=True)
             logging.getLogger(__name__).error("Error guardando imagen en DB: %s", exc, exc_info=True)
             return _ok(
                 message="Error al guardar la imagen en la base de datos.",
@@ -285,25 +292,28 @@ class ProductoImagenUploadView(APIView):
 class ProductoImagenDeleteView(APIView):
     """DELETE /api/productos/<id>/imagen/<id_imagen>/ — delete a product image."""
 
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsAuthenticated]
     throttle_scope = "catalog_write"
 
     def delete(self, request, pk, id_imagen):
         try:
             producto = Producto.objects.get(pk=pk, estado=True)
+        except Producto.DoesNotExist:
+            return _ok(message="Producto no encontrado.", status_code=status.HTTP_404_NOT_FOUND)
+
+        check_producto_ownership(request, pk)
+
+        try:
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
-        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
-            return _ok(
-                message="Imagen o producto no encontrado.",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+        except ProductoImagen.DoesNotExist:
+            return _ok(message="Imagen no encontrada.", status_code=status.HTTP_404_NOT_FOUND)
 
         was_principal = imagen.es_principal
         drive_file_id = imagen.drive_file_id
 
         if drive_file_id:
             try:
-                delete_image(drive_file_id)
+                delete_file(drive_file_id)
             except Exception:
                 logging.getLogger(__name__).warning("Drive delete failed for %s", drive_file_id, exc_info=True)
 
@@ -325,12 +335,15 @@ class ProductoImagenDeleteView(APIView):
     def patch(self, request, pk, id_imagen):
         try:
             producto = Producto.objects.get(pk=pk, estado=True)
+        except Producto.DoesNotExist:
+            return _ok(message="Producto no encontrado.", status_code=status.HTTP_404_NOT_FOUND)
+
+        check_producto_ownership(request, pk)
+
+        try:
             imagen = ProductoImagen.objects.get(pk=id_imagen, fk_producto=producto)
-        except (Producto.DoesNotExist, ProductoImagen.DoesNotExist):
-            return _ok(
-                message="Imagen o producto no encontrado.",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+        except ProductoImagen.DoesNotExist:
+            return _ok(message="Imagen no encontrada.", status_code=status.HTTP_404_NOT_FOUND)
 
         es_principal_raw = request.data.get("es_principal")
         if es_principal_raw is None:

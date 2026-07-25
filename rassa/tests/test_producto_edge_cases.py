@@ -179,8 +179,8 @@ class EdgeCaseSerializerTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class EdgeCaseImageUploadTests(TestCase):
     def setUp(self):
-        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
-        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher = patch("rassa.productos_views.upload_image_bytes", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_file", side_effect=_mock_delete)
         self._make_public_patcher = patch("rassa.productos_views.make_public", side_effect=lambda x: True)
         self._upload_patcher.start()
         self._delete_patcher.start()
@@ -291,8 +291,8 @@ class EdgeCaseImageUploadTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class EdgeCaseImageDeleteTests(TestCase):
     def setUp(self):
-        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
-        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher = patch("rassa.productos_views.upload_image_bytes", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_file", side_effect=_mock_delete)
         self._make_public_patcher = patch("rassa.productos_views.make_public", side_effect=lambda x: True)
         self._upload_patcher.start()
         self._delete_patcher.start()
@@ -702,8 +702,8 @@ class InactiveProductFilterTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA)
 class ImageDeletePermissionTests(TestCase):
     def setUp(self):
-        self._upload_patcher = patch("rassa.productos_views.upload_image", side_effect=_mock_upload)
-        self._delete_patcher = patch("rassa.productos_views.delete_image", side_effect=_mock_delete)
+        self._upload_patcher = patch("rassa.productos_views.upload_image_bytes", side_effect=_mock_upload)
+        self._delete_patcher = patch("rassa.productos_views.delete_file", side_effect=_mock_delete)
         self._make_public_patcher = patch("rassa.productos_views.make_public", side_effect=lambda x: True)
         self._upload_patcher.start()
         self._delete_patcher.start()
