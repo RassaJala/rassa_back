@@ -112,6 +112,14 @@ class ChatTests(APITestCase):
         body = response.json()
         self.assertIn("id_conversacion", body["data"])
 
+    def test_crear_conversacion_privada_rechaza_id_no_numerico(self):
+        url = reverse("chat-conversaciones-crear-privada")
+        response = self.client.post(url, {"fk_usuario": "abc"})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("número", response.json()["mensaje"])
+
     def test_crear_conversacion_privada_usuario_inexistente(self):
         url = reverse("chat-conversaciones-crear-privada")
         response = self.client.post(url, {"fk_usuario": 99999})

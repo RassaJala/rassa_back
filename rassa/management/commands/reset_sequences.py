@@ -59,6 +59,11 @@ class Command(BaseCommand):
                         [table],
                     )
                 except Exception as err:
+                    # ponytail: broad catch is intentional — this is a dev/ops tool that
+                    # must keep iterating tables even if one fails ( PermissionDenied on a
+                    # view, schema mismatch, missing sequence ). Each failure is logged;
+                    # narrowing to specific DB errors would silently skip other recoverable
+                    # cases and defeat the "reset everything we can" contract.
                     self.stdout.write(self.style.WARNING(f"Skipping {table}: {err}"))
                     continue
 

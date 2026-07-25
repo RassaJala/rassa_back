@@ -179,6 +179,14 @@ class ConversacionPrivadaCreateView(APIView):
             )
 
         try:
+            usuario2_id = int(usuario2_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"ok": False, "mensaje": "usuario2 debe ser un número entero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
             usuario2 = Usuario.objects.get(pk=usuario2_id, estado=True)
         except Usuario.DoesNotExist:
             return Response(
@@ -564,15 +572,12 @@ class MensajeDocumentoCreateView(APIView):
                 fk_documento=documento,
             )
 
-        return Response(
-            {
-                "ok": True,
-                "mensaje": "Mensaje con documento enviado correctamente.",
-                "data": {
-                    "id_mensaje": mensaje.id_mensaje,
-                    "id_documento": documento.id_documento,
-                    "url_documento": f"documentos/{nombre_archivo}",
-                },
+        return _ok(
+            data={
+                "id_mensaje": mensaje.id_mensaje,
+                "id_documento": documento.id_documento,
+                "url_documento": f"documentos/{nombre_archivo}",
             },
-            status=status.HTTP_201_CREATED,
+            message="Mensaje con documento enviado correctamente.",
+            status_code=status.HTTP_201_CREATED,
         )
