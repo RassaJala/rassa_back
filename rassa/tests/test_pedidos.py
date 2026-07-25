@@ -639,8 +639,10 @@ class PedidoCreateTestCase(APITestCase):
         self.rol_vendedor = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
         self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
 
-        # Estado de pedido
-        self.estado_pendiente = EstadoPedido.objects.create(tipo_estado="pendiente", descripcion="Pendiente")
+        # Estado de pedido — pk=1 porque el view hardcodea ESTADO_PENDIENTE_ID = 1
+        self.estado_pendiente, _ = EstadoPedido.objects.get_or_create(
+            pk=1, defaults={"tipo_estado": "pendiente", "descripcion": "Pendiente"}
+        )
 
         # Categoría y unidad
         self.categoria = CategoriaProducto.objects.create(nombre="Frutas")
@@ -903,7 +905,8 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("límite de crédito", response.data.get("message", "").lower())
+        # DRF ValidationError devuelve el mensaje como string o lista
+        self.assertIn("límite de crédito", str(response.data).lower())
 
     def test_credito_en_limite(self):
         # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
@@ -961,7 +964,7 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("límite de crédito", response.data.get("message", "").lower())
+        self.assertIn("límite de crédito", str(response.data).lower())
 
     # ── Campos de salida del serializer ───────────────────────
 
