@@ -46,6 +46,9 @@ class Command(BaseCommand):
             for table in tables:
                 try:
                     # Check if the table has a serial / identity primary key column
+                    # Accept both integer (32-bit) and bigint (64-bit) PKs.
+                    # Django's BigAutoField (the default since 3.2, used by this project)
+                    # maps to bigint — filtering only integer would silently skip every table.
                     cursor.execute(
                         """
                         SELECT a.attname
@@ -53,7 +56,7 @@ class Command(BaseCommand):
                         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
                         WHERE i.indrelid = %s::regclass
                           AND i.indisprimary
-                          AND a.atttypid = 'integer'::regtype
+                          AND a.atttypid IN ('integer'::regtype, 'bigint'::regtype)
                         LIMIT 1;
                         """,
                         [table],
@@ -102,5 +105,5 @@ class Command(BaseCommand):
                     cursor.execute(sql)
                     self.stdout.write(self.style.SUCCESS(sql))
 
-        action = "a resincronizar" if dry_run else "resincronizadas"
-        self.stdout.write(self.style.SUCCESS(f"\n{len(reset_statements)} secuencias {action} correctamente."))
+        action = "requerirían reset" if dry_run else "resincronizadas"
+        self.stdout.write(self.style.SUCCESS(f"\n{len(reset_statements)} secuencias {action}"))

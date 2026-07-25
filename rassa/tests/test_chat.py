@@ -53,11 +53,11 @@ def _crear_usuario(username, rol_nombre="Cliente"):
     REST_FRAMEWORK={
         "DEFAULT_THROTTLE_CLASSES": [],
         "DEFAULT_THROTTLE_RATES": {},
-        "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
-        "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+        "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
+        "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
         "PAGE_SIZE": 20,
-        "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
+        "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     }
 )
 class ChatTests(APITestCase):
@@ -319,3 +319,97 @@ class ChatTests(APITestCase):
         nombres = {miembro["nombre_completo"] for miembro in body["data"]}
         self.assertIn("User1 Test", nombres)
         self.assertIn("User2 Test", nombres)
+
+    # --- Edge cases: permisos y validación (coverage gaps de round 3) ---
+
+    def test_renombrar_conversacion_privada_rechazado(self):
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+        response = self.client.patch(url, {"nombre": "Otro"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_renombrar_conversacion_nombre_vacio(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+        response = self.client.patch(url, {"nombre": "   "})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_renombrar_conversacion_usuario_no_miembro(self):
+        conv = self._crear_conversacion_grupal()  # miembros: user1, user2
+        self.client.force_authenticate(self.user3)  # user3 no es miembro
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+        response = self.client.patch(url, {"nombre": "Hack"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_listar_integrantes_usuario_no_miembro(self):
+        conv = self._crear_conversacion_grupal()
+        self.client.force_authenticate(self.user3)
+        url = reverse("chat-conversaciones-integrantes", args=[conv.id_conversacion])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_agregar_integrante_usuario_no_miembro(self):
+        conv = self._crear_conversacion_grupal()
+        self.client.force_authenticate(self.user3)  # user3 no es miembro
+        url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
+        response = self.client.post(url, {"usuario_id": self.usuario2.id_usuario})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_leer_mensaje_usuario_no_miembro(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="x")
+        self.client.force_authenticate(self.user3)
+        url = reverse("chat-mensajes-leer", args=[mensaje.id_mensaje])
+        response = self.client.patch(url, data={})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_inactivar_mensaje_usuario_no_miembro(self):
+        conv = self._crear_conversacion_privada()  # user1 emisor, user2 receptor
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="mío")
+        # user1 es emisor Y miembro -> permitido. Usamos user1 desde otra conv para forzar no-miembro.
+        # Creamos un user4 no miembro de esta conv pero no emisor -> PermissionDenied por emisor primero.
+        self.user4, self.usuario4 = _crear_usuario("user4")
+        # user1 sale de la conv (integrante inactivo) y trata de inactivar su mensaje
+        Integrante.objects.filter(fk_usuario=self.usuario1, fk_conversacion=conv).update(estado=False)
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_enviar_documento_usuario_no_miembro(self):
+        conv = self._crear_conversacion_privada()  # user1 y user2
+        self.client.force_authenticate(self.user3)  # user3 no es miembro
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile("a.txt", b"x", content_type="text/plain")
+        response = self.client.post(
+            url,
+            {"conversacion": conv.id_conversacion, "documento": archivo, "tipo_documento": "imagen"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_enviar_documento_archivo_grande(self):
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        grande = SimpleUploadedFile("big.bin", b"x" * (21 * 1024 * 1024), content_type="application/octet-stream")
+        response = self.client.post(
+            url,
+            {
+                "conversacion": conv.id_conversacion,
+                "documento": grande,
+                "tipo_documento": "imagen",
+                "contenido": "",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_enviar_documento_tipo_invalido(self):
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile("a.txt", b"x", content_type="text/plain")
+        response = self.client.post(
+            url,
+            {"conversacion": conv.id_conversacion, "documento": archivo, "tipo_documento": "documento"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

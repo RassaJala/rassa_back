@@ -44,6 +44,21 @@ def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupa
     return conv
 
 
+def _get_or_reactivate_integrante(usuario, conversacion):
+    """Crea o reactiva un Integrante. Devuelve (integrante, created_or_reactivated).
+
+    A diferencia de get_or_create sin defaults, este helper reactiva un integrante
+    inactivo existente en vez de devolverlo sin cambios.
+    """
+    integrante = Integrante.objects.filter(fk_usuario=usuario, fk_conversacion=conversacion).first()
+    if integrante:
+        if not integrante.estado:
+            integrante.estado = True
+            integrante.save(update_fields=["estado"])
+        return integrante
+    return Integrante.objects.create(fk_usuario=usuario, fk_conversacion=conversacion)
+
+
 class MensajeListView(generics.ListAPIView):
     serializer_class = MensajeSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -151,6 +166,13 @@ class MensajeInactivarView(APIView):
         except Mensaje.DoesNotExist as err:
             raise NotFound("Mensaje no encontrado.") from err
 
+        # Membership check (parity with MensajeLeerView): a user removed from the
+        # conversation must not be able to inactivate their old messages.
+        if not mensaje.fk_conversacion.integrante_set.filter(
+            fk_usuario=request.user.usuario, estado=True
+        ).exists():
+            raise PermissionDenied("No eres miembro de esta conversación.")
+
         if mensaje.fk_emisor_id != request.user.usuario.id_usuario:
             raise PermissionDenied("No puedes eliminar un mensaje que no te pertenece.")
 
@@ -222,25 +244,19 @@ class ConversacionPrivadaCreateView(APIView):
                     # 200 (not 409) is intentional: the frontend createPrivateConversation
                     # treats this as an idempotent get-or-create. A 409 would make axios
                     # throw and break the flow.
-                    return Response(
-                        {
-                            "ok": True,
-                            "mensaje": "La conversación ya existe.",
-                            "data": {"id_conversacion": integrante.fk_conversacion_id},
-                        }
+                    return _ok(
+                        data={"id_conversacion": integrante.fk_conversacion_id},
+                        message="La conversación ya existe.",
                     )
 
             conv = Conversacion.objects.create(tipo=False)
             Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
             Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
 
-            return Response(
-                {
-                    "ok": True,
-                    "mensaje": "Conversación creada correctamente.",
-                    "data": {"id_conversacion": conv.id_conversacion},
-                },
-                status=status.HTTP_201_CREATED,
+            return _ok(
+                data={"id_conversacion": conv.id_conversacion},
+                message="Conversación creada correctamente.",
+                status_code=status.HTTP_201_CREATED,
             )
 
 
@@ -311,18 +327,15 @@ class ConversacionGrupalCreateView(APIView):
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
-            Integrante.objects.get_or_create(fk_usuario=usuario_creador, fk_conversacion=conv)
+            _get_or_reactivate_integrante(usuario_creador, conv)
 
             for usuario in usuarios:
-                Integrante.objects.get_or_create(fk_usuario=usuario, fk_conversacion=conv)
+                _get_or_reactivate_integrante(usuario, conv)
 
-        return Response(
-            {
-                "ok": True,
-                "mensaje": "Conversación grupal creada correctamente.",
-                "data": {"id_conversacion": conv.id_conversacion},
-            },
-            status=status.HTTP_201_CREATED,
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion},
+            message="Conversación grupal creada correctamente.",
+            status_code=status.HTTP_201_CREATED,
         )
 
 
@@ -348,12 +361,9 @@ class ConversacionRenombrarView(APIView):
         conv.nombre = nombre.strip()
         conv.save(update_fields=["nombre"])
 
-        return Response(
-            {
-                "ok": True,
-                "mensaje": "Nombre de la conversación actualizado correctamente.",
-                "data": {"id_conversacion": conv.id_conversacion, "nombre": conv.nombre},
-            }
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion, "nombre": conv.nombre},
+            message="Nombre de la conversación actualizado correctamente.",
         )
 
 
@@ -393,27 +403,24 @@ class ConversacionAgregarIntegranteView(APIView):
             )
 
         integrante = Integrante.objects.filter(fk_usuario=usuario_nuevo, fk_conversacion=conv).first()
+        if integrante and integrante.estado:
+            return Response(
+                {
+                    "ok": False,
+                    "mensaje": "El usuario ya es miembro de esta conversación.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if integrante:
-            if integrante.estado:
-                return Response(
-                    {
-                        "ok": False,
-                        "mensaje": "El usuario ya es miembro de esta conversación.",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
             integrante.estado = True
             integrante.save(update_fields=["estado"])
         else:
             Integrante.objects.create(fk_usuario=usuario_nuevo, fk_conversacion=conv)
 
-        return Response(
-            {
-                "ok": True,
-                "mensaje": "Integrante agregado correctamente.",
-                "data": {"id_conversacion": conv.id_conversacion},
-            },
-            status=status.HTTP_201_CREATED,
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion},
+            message="Integrante agregado correctamente.",
+            status_code=status.HTTP_201_CREATED,
         )
 
 
