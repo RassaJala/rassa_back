@@ -694,8 +694,7 @@ class PedidoCreateTestCase(APITestCase):
             username="cliente_create", email="cliente_create@rassa.com", password="password123"
         )
         self.persona_cliente = Persona.objects.create(
-            nombre="Laura", apellido_paterno="Create", fecha_nacimiento="1995-05-05",
-            sexo="F", domicilio="Calle Test"
+            nombre="Laura", apellido_paterno="Create", fecha_nacimiento="1995-05-05", sexo="F", domicilio="Calle Test"
         )
         self.usuario_cliente = Usuario.objects.create(
             fk_user=self.user_cliente,
@@ -711,8 +710,11 @@ class PedidoCreateTestCase(APITestCase):
             username="vendedor_create", email="vendedor_create@rassa.com", password="password123"
         )
         self.persona_vendedor = Persona.objects.create(
-            nombre="Carlos", apellido_paterno="Vende", fecha_nacimiento="1985-03-10",
-            sexo="M", domicilio="Calle Vendedor"
+            nombre="Carlos",
+            apellido_paterno="Vende",
+            fecha_nacimiento="1985-03-10",
+            sexo="M",
+            domicilio="Calle Vendedor",
         )
         self.usuario_vendedor = Usuario.objects.create(
             fk_user=self.user_vendedor,
@@ -727,8 +729,7 @@ class PedidoCreateTestCase(APITestCase):
             username="admin_create", email="admin_create@rassa.com", password="password123"
         )
         self.persona_admin = Persona.objects.create(
-            nombre="Admin", apellido_paterno="Create", fecha_nacimiento="1990-01-01",
-            sexo="M", domicilio="Calle Admin"
+            nombre="Admin", apellido_paterno="Create", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle Admin"
         )
         self.usuario_admin = Usuario.objects.create(
             fk_user=self.user_admin,
@@ -745,9 +746,11 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_crear_pedido_exitoso(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("data", response.data)
@@ -762,10 +765,12 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_crear_pedido_multiples_items(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
-            {"id_producto_semanal": self.producto_semanal2.id_producto_semanal, "cantidad": 3},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+                {"id_producto_semanal": self.producto_semanal2.id_producto_semanal, "cantidad": 3},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.data["data"]
@@ -779,9 +784,11 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_crear_pedido_descuenta_stock(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 5},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 5},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.producto_semanal.refresh_from_db()
@@ -789,9 +796,11 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_crear_pedido_crea_historial(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
@@ -804,41 +813,51 @@ class PedidoCreateTestCase(APITestCase):
     # ── Validaciones ──────────────────────────────────────────
 
     def test_crear_pedido_sin_auth(self):
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_crear_pedido_como_vendedor(self):
         self.client.force_authenticate(user=self.user_vendedor)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_crear_pedido_como_admin(self):
         self.client.force_authenticate(user=self.user_admin)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_stock_insuficiente(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 999},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 999},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_producto_inexistente(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": 99999, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": 99999, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -846,9 +865,11 @@ class PedidoCreateTestCase(APITestCase):
         self.producto_semanal.estado = "inactivo"
         self.producto_semanal.save(update_fields=["estado"])
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -856,9 +877,11 @@ class PedidoCreateTestCase(APITestCase):
         self.publicacion.estado = "borrador"
         self.publicacion.save(update_fields=["estado"])
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -873,9 +896,11 @@ class PedidoCreateTestCase(APITestCase):
     def test_credito_excede_limite(self):
         self.client.force_authenticate(user=self.user_cliente)
         # producto vale 20 c/u, 60 unidades = 1200 de subtotal + IVA
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 60},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 60},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("límite de crédito", response.data.get("message", "").lower())
@@ -884,9 +909,11 @@ class PedidoCreateTestCase(APITestCase):
         # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
         # Con 41 unidades de 20 = 820 + 21% IVA = 992.20 → dentro del límite
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 41},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 41},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
@@ -896,8 +923,7 @@ class PedidoCreateTestCase(APITestCase):
             username="sin_limite", email="sin_limite@rassa.com", password="password123"
         )
         persona = Persona.objects.create(
-            nombre="Sin", apellido_paterno="Limite", fecha_nacimiento="1990-01-01",
-            sexo="M", domicilio="Calle Sin"
+            nombre="Sin", apellido_paterno="Limite", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle Sin"
         )
         Usuario.objects.create(
             fk_user=user_sin_limite,
@@ -907,9 +933,11 @@ class PedidoCreateTestCase(APITestCase):
             fk_rol=self.rol_cliente,
         )
         self.client.force_authenticate(user=user_sin_limite)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
@@ -926,9 +954,11 @@ class PedidoCreateTestCase(APITestCase):
         )
         # Ahora intentar otro pedido de $600 → suma 1100 > 1000
         # 30 unidades de 20 = 600 + IVA 126 = 726 pero el límite es 1000 y ya gastó 500
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 30},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 30},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("límite de crédito", response.data.get("message", "").lower())
@@ -937,9 +967,11 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_output_serializer_usa_nombres_no_ids(self):
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload([
-            {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
-        ])
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.data["data"]
