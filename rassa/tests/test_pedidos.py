@@ -897,10 +897,10 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_credito_excede_limite(self):
         self.client.force_authenticate(user=self.user_cliente)
-        # producto vale 20 c/u, 60 unidades = 1200 de subtotal + IVA
+        # producto vale 20 c/u, 50 unidades = 1000 + IVA 21% = 1210 > 1000 límite
         payload = self._crear_payload(
             [
-                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 60},
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 50},
             ]
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
