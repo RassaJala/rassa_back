@@ -484,6 +484,7 @@ class Pago(models.Model):
     fk_tipo = models.ForeignKey(TipoPago, on_delete=models.PROTECT, db_column="fk_tipo")
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     referencia = models.CharField(max_length=100, blank=True, null=True)
+    folio = models.CharField(max_length=50, unique=True, blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -492,6 +493,17 @@ class Pago(models.Model):
 
     def __str__(self):
         return f"Pago #{self.id_pago} — ${self.monto}"
+
+    def save(self, *args, **kwargs):
+        if not self.folio:
+            from django.utils import timezone
+
+            today_str = timezone.localdate().strftime("%Y%m%d")
+            prefix = f"REC-{today_str}-"
+            last = Pago.objects.filter(folio__startswith=prefix).order_by("id_pago").last()
+            next_num = int(last.folio.split("-")[-1]) + 1 if last else 1
+            self.folio = f"{prefix}{next_num:03d}"
+        super().save(*args, **kwargs)
 
 
 # ============================================================
