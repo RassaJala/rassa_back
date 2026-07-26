@@ -366,10 +366,9 @@ class ChatTests(APITestCase):
     def test_inactivar_mensaje_usuario_no_miembro(self):
         conv = self._crear_conversacion_privada()  # user1 emisor, user2 receptor
         mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="mío")
-        # user1 es emisor Y miembro -> permitido. Usamos user1 desde otra conv para forzar no-miembro.
-        # Creamos un user4 no miembro de esta conv pero no emisor -> PermissionDenied por emisor primero.
-        self.user4, self.usuario4 = _crear_usuario("user4")
-        # user1 sale de la conv (integrante inactivo) y trata de inactivar su mensaje
+        # user1 sale de la conv (integrante inactivo) y trata de inactivar su mensaje.
+        # Membership check runs before the emisor check, so a removed member gets 403
+        # even if they authored the message.
         Integrante.objects.filter(fk_usuario=self.usuario1, fk_conversacion=conv).update(estado=False)
         url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
         response = self.client.patch(url)

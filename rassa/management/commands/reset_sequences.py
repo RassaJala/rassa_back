@@ -106,4 +106,5 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.SUCCESS(sql))
 
         action = "requerirían reset" if dry_run else "resincronizadas"
-        self.stdout.write(self.style.SUCCESS(f"\n{len(reset_statements)} secuencias {action}"))
+        summary_style = self.style.NOTICE if dry_run else self.style.SUCCESS
+        self.stdout.write(summary_style(f"\n{len(reset_statements)} secuencias {action}"))
