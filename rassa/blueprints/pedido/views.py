@@ -177,7 +177,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             )
 
         _log(request.user, f"crear_pedido id={pedido.id_pedido} total={total}", request)
-        logger.info("Pedido %s creado por cliente %s con %d items", pedido.id_pedido, usuario.id_usuario, len(detalle_items))
+        logger.info(
+            "Pedido %s creado por cliente %s con %d items",
+            pedido.id_pedido,
+            usuario.id_usuario,
+            len(detalle_items),
+        )
 
         output = PedidoOutputSerializer(pedido)
         return ok_response(
