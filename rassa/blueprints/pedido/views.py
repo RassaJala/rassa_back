@@ -45,6 +45,7 @@ def _get_estado_pendiente_id():
     # ponytail: sin caché entre tests para evitar stale FK en transacciones nuevas
     return EstadoPedido.objects.get(tipo_estado="pendiente").pk
 
+
 SECUENCIA = {
     "pendiente": "confirmado",
     "confirmado": "en_preparacion",
@@ -361,7 +362,9 @@ def _validar_items_bajo_lock(items_data):
         if item["cantidad"] > ps.stock:
             logger.warning(
                 "Stock insuficiente para producto %s: disponible %d, solicitado %d",
-                ps.fk_producto.nombre_producto, ps.stock, item["cantidad"],
+                ps.fk_producto.nombre_producto,
+                ps.stock,
+                item["cantidad"],
             )
             raise ValidationError(
                 f"Stock insuficiente para '{ps.fk_producto.nombre_producto}'. "
@@ -376,19 +379,13 @@ def _validar_items_bajo_lock(items_data):
             logger.warning("Producto semanal %s ya no está activo durante creación de pedido", ps.id_producto_semanal)
             raise ValidationError(f"El producto '{ps.fk_producto.nombre_producto}' ya no está activo.")
         if ps.fk_publicacion.estado != "publicado":
-            logger.warning(
-                "Publicación %s ya no está disponible durante creación de pedido", ps.fk_publicacion_id
-            )
+            logger.warning("Publicación %s ya no está disponible durante creación de pedido", ps.fk_publicacion_id)
             raise ValidationError(
                 f"La publicación del producto '{ps.fk_producto.nombre_producto}' ya no está disponible."
             )
         if not ps.fk_producto.estado:
-            logger.warning(
-                "Producto del catálogo %s inactivo durante creación de pedido", ps.fk_producto_id
-            )
-            raise ValidationError(
-                f"El producto del catálogo '{ps.fk_producto.nombre_producto}' ya no está activo."
-            )
+            logger.warning("Producto del catálogo %s inactivo durante creación de pedido", ps.fk_producto_id)
+            raise ValidationError(f"El producto del catálogo '{ps.fk_producto.nombre_producto}' ya no está activo.")
 
     return productos_semanales
 
@@ -466,19 +463,18 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
 
     estado_pendiente_id = _get_estado_pendiente_id()
-    gasto_actual = (
-        PedidoCabecera.objects.select_for_update()
-        .filter(fk_cliente_id__in=usuario_ids, fk_estado_id=estado_pendiente_id)
-        .order_by("pk")
-        .aggregate(total_sum=models.Sum("total"))["total_sum"]
-        or Decimal("0.00")
-    )
+    gasto_actual = PedidoCabecera.objects.select_for_update().filter(
+        fk_cliente_id__in=usuario_ids, fk_estado_id=estado_pendiente_id
+    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:
         logger.warning(
             "Crédito excedido para usuario %s: límite=%s gasto_actual=%s nuevo_pedido=%s",
-            usuario.id_usuario, limite.monto, gasto_actual, total_pedido,
+            usuario.id_usuario,
+            limite.monto,
+            gasto_actual,
+            total_pedido,
         )
         raise ValidationError(
             f"El pedido excede el límite de crédito. "
