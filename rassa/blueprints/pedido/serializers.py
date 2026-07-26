@@ -179,16 +179,9 @@ class PedidoCreateSerializer(serializers.Serializer):
 
     items = ItemPedidoSerializer(many=True, allow_empty=False)
 
-    def validate_items(self, value):
-        if len(value) == 0:
-            raise serializers.ValidationError("Debe incluir al menos un producto.")
-        return value
-
 
 class DetallePedidoOutputSerializer(serializers.ModelSerializer):
     """Serializer de salida para detalle del pedido."""
-
-    nombre_producto = serializers.CharField()
 
     class Meta:
         model = DetallePedido

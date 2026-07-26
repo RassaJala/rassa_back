@@ -639,9 +639,10 @@ class PedidoCreateTestCase(APITestCase):
         self.rol_vendedor = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
         self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
 
-        # Estado de pedido — pk=1 porque el view hardcodea ESTADO_PENDIENTE_ID = 1
+        # Estado de pedido — se crea con tipo_estado="pendiente" para que
+        # _get_estado_pendiente_id() lo encuentre por lookup dinámico
         self.estado_pendiente, _ = EstadoPedido.objects.get_or_create(
-            pk=1, defaults={"tipo_estado": "pendiente", "descripcion": "Pendiente"}
+            tipo_estado="pendiente", defaults={"descripcion": "Pendiente"}
         )
 
         # Categoría y unidad
@@ -890,6 +891,45 @@ class PedidoCreateTestCase(APITestCase):
     def test_items_vacios(self):
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload([])
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_items_duplicados(self):
+        """Mismo id_producto_semanal dos veces no debe crear el pedido."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 3},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Verificar que no se descontó stock
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, 50)
+
+    def test_cantidad_cero(self):
+        """Cantidad = 0 es inválida (min_value=1 en serializer)."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 0},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_producto_catalogo_desactivado(self):
+        """Producto del catálogo inactivo rechaza la creación."""
+        self.producto.estado = False
+        self.producto.save(update_fields=["estado"])
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
