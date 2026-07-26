@@ -1,0 +1,16 @@
+meta {
+  name: Listar Pagos
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/pagos/
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}

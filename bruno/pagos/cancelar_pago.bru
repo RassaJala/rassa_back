@@ -1,0 +1,24 @@
+meta {
+  name: Cancelar Pago
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/pagos/cancelar/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "id_pago": 1,
+    "motivo": "Cancelado por el usuario"
+  }
+}
