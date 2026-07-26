@@ -1,14 +1,25 @@
 """Vistas para el módulo de Pedidos."""
 
 import logging
+from decimal import Decimal
 
-from django.db import DatabaseError, transaction
+from django.conf import settings
+from django.db import DatabaseError, models, transaction
 from django.db.models import Prefetch
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
-from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
+from rassa.models import (
+    DetallePedido,
+    EstadoPedido,
+    FamiliaUsuario,
+    HistorialEstadoPedido,
+    LimiteCliente,
+    PedidoCabecera,
+    ProductoSemanal,
+)
 from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log, ok_response
 
@@ -17,11 +28,23 @@ from .serializers import (
     ESTADOS_TERMINALES,
     HistorialEstadoSerializer,
     PedidoCambiarEstadoSerializer,
+    PedidoCreateSerializer,
     PedidoDetailSerializer,
     PedidoListSerializer,
+    PedidoOutputSerializer,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_estado_pendiente_id():
+    """Lookup dinámico del ID del estado 'pendiente'.
+
+    Sin caché entre requests: Django ya cachea queries dentro de una conexión.
+    """
+    # ponytail: sin caché entre tests para evitar stale FK en transacciones nuevas
+    return EstadoPedido.objects.get(tipo_estado="pendiente").pk
+
 
 SECUENCIA = {
     "pendiente": "confirmado",
@@ -46,6 +69,11 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             return None, None
         rol = getattr(usuario, "fk_rol", None)
         return usuario, rol.nombre_rol if rol else None
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated(), HasRole(CLIENTE)]
+        return [IsAuthenticated(), HasRole(VENDEDOR, ADMIN, CLIENTE)]
 
     def get_queryset(self):
         qs = (
@@ -73,9 +101,96 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         return qs
 
     def get_serializer_class(self):
+        if self.action == "create":
+            return PedidoCreateSerializer
         if self.action == "retrieve":
             return PedidoDetailSerializer
         return PedidoListSerializer
+
+    # ponytail: create() delega la validación de items a _validar_items_bajo_lock
+    # para mantener el bloque atómico legible.
+
+    def create(self, request, *args, **kwargs):
+        _, nombre_rol = self._get_usuario_rol()
+        if nombre_rol != CLIENTE:
+            return ok_response(
+                message="Solo los clientes pueden crear pedidos.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        items_data = serializer.validated_data["items"]
+        usuario = request.user.usuario
+
+        try:
+            with transaction.atomic():
+                productos_semanales = _validar_items_bajo_lock(items_data)
+
+                subtotal, detalle_items = _calcular_detalle(items_data, productos_semanales)
+
+                iva = (subtotal * settings.IVA_RATE).quantize(Decimal("0.01"))
+                total = subtotal + iva
+
+                _validar_limite_credito(usuario, total)
+
+                for item in items_data:
+                    ps = productos_semanales[item["id_producto_semanal"]]
+                    ps.stock -= item["cantidad"]
+                    ps.save(update_fields=["stock"])
+
+                estado_pendiente_id = _get_estado_pendiente_id()
+                pedido = PedidoCabecera.objects.create(
+                    fk_cliente=usuario,
+                    fk_estado_id=estado_pendiente_id,
+                    subtotal=subtotal,
+                    iva=iva,
+                    total=total,
+                )
+
+                _crear_detalles_bulk(pedido, detalle_items)
+
+                HistorialEstadoPedido.objects.create(
+                    fk_pedido=pedido,
+                    fk_estado_anterior=None,
+                    fk_estado_nuevo_id=estado_pendiente_id,
+                    fk_cambiado_por=usuario,
+                )
+
+                # Recargar dentro de la transacción para evitar N+1 en el serializer
+                pedido = (
+                    PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona")
+                    .prefetch_related(
+                        Prefetch(
+                            "detallepedido_set",
+                            queryset=DetallePedido.objects.select_related("fk_producto_semanal"),
+                        ),
+                    )
+                    .get(pk=pedido.pk)
+                )
+
+        except DatabaseError as exc:
+            logger.error("Error de base de datos al crear pedido: %s", exc)
+            return ok_response(
+                message="Error al procesar el pedido. Intente de nuevo.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        _log(request.user, f"crear_pedido id={pedido.id_pedido} total={total}", request)
+        logger.info(
+            "Pedido %s creado por cliente %s con %d items",
+            pedido.id_pedido,
+            usuario.id_usuario,
+            len(detalle_items),
+        )
+
+        output = PedidoOutputSerializer(pedido)
+        return ok_response(
+            data=output.data,
+            message="Pedido creado correctamente.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
@@ -209,3 +324,161 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         )
 
         return ok_response(data=HistorialEstadoSerializer(historial, many=True).data)
+
+
+def _validar_items_bajo_lock(items_data):
+    """Valida items bajo select_for_update con orden consistente.
+
+    Previene TOCTOU: revalida existencia, stock y estados del producto
+    DESPUÉS de adquirir el lock de fila.
+
+    También detecta items duplicados para evitar doble descuento de stock.
+
+    Debe ejecutarse DENTRO de transaction.atomic().
+    """
+    producto_ids = [i["id_producto_semanal"] for i in items_data]
+
+    # Validar duplicados antes de cualquier otra operación
+    if len(producto_ids) != len(set(producto_ids)):
+        logger.warning("Items duplicados detectados: %s", producto_ids)
+        raise ValidationError("No se permiten productos duplicados en un mismo pedido.")
+
+    # Lock rows in consistent order (ORDER BY pk) to prevent deadlocks
+    productos_qs = (
+        ProductoSemanal.objects.select_for_update()
+        .select_related("fk_producto", "fk_publicacion")
+        .filter(pk__in=producto_ids)
+        .order_by("pk")
+    )
+    productos_semanales = {ps.id_producto_semanal: ps for ps in productos_qs}
+
+    for pid in producto_ids:
+        if pid not in productos_semanales:
+            logger.warning("Producto semanal %s no encontrado durante creación de pedido", pid)
+            raise ValidationError(f"Producto semanal {pid} no encontrado.")
+
+    for item in items_data:
+        ps = productos_semanales[item["id_producto_semanal"]]
+        if item["cantidad"] > ps.stock:
+            logger.warning(
+                "Stock insuficiente para producto %s: disponible %d, solicitado %d",
+                ps.fk_producto.nombre_producto,
+                ps.stock,
+                item["cantidad"],
+            )
+            raise ValidationError(
+                f"Stock insuficiente para '{ps.fk_producto.nombre_producto}'. "
+                f"Disponible: {ps.stock}, solicitado: {item['cantidad']}."
+            )
+
+        # ponytail: revalida estados bajo select_for_update en ProductoSemanal.
+        # Los estados de Producto y PublicacionSemanal se leen desde FK cacheadas
+        # (select_related) pero NO están locked explícitamente. Cambios concurrentes
+        # a esas tablas son extremadamente raros.
+        if ps.estado != ProductoSemanal.ESTADO_ACTIVO:
+            logger.warning("Producto semanal %s ya no está activo durante creación de pedido", ps.id_producto_semanal)
+            raise ValidationError(f"El producto '{ps.fk_producto.nombre_producto}' ya no está activo.")
+        if ps.fk_publicacion.estado != "publicado":
+            logger.warning("Publicación %s ya no está disponible durante creación de pedido", ps.fk_publicacion_id)
+            raise ValidationError(
+                f"La publicación del producto '{ps.fk_producto.nombre_producto}' ya no está disponible."
+            )
+        if not ps.fk_producto.estado:
+            logger.warning("Producto del catálogo %s inactivo durante creación de pedido", ps.fk_producto_id)
+            raise ValidationError(f"El producto del catálogo '{ps.fk_producto.nombre_producto}' ya no está activo.")
+
+    return productos_semanales
+
+
+def _calcular_detalle(items_data, productos_semanales):
+    """Calcula subtotal y prepara datos de detalle.
+
+    Debe ejecutarse DENTRO de transaction.atomic().
+    """
+    subtotal = Decimal("0.00")
+    detalle_items = []
+    for item in items_data:
+        ps = productos_semanales[item["id_producto_semanal"]]
+        importe = ps.precio * item["cantidad"]
+        subtotal += importe
+        detalle_items.append(
+            {
+                "producto_semanal": ps,
+                "nombre_producto": ps.fk_producto.nombre_producto,
+                "precio_unitario": ps.precio,
+                "cantidad": item["cantidad"],
+                "importe": importe,
+            }
+        )
+    return subtotal, detalle_items
+
+
+def _crear_detalles_bulk(pedido, detalle_items):
+    """Crea DetallePedido en bulk para un pedido.
+
+    Debe ejecutarse DENTRO de transaction.atomic().
+    """
+    detalles = [
+        DetallePedido(
+            fk_pedido=pedido,
+            fk_producto_semanal=det["producto_semanal"],
+            nombre_producto=det["nombre_producto"],
+            precio_unitario=det["precio_unitario"],
+            cantidad=det["cantidad"],
+            importe=det["importe"],
+        )
+        for det in detalle_items
+    ]
+    DetallePedido.objects.bulk_create(detalles)
+
+
+def _validar_limite_credito(usuario, total_pedido: Decimal):
+    """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia.
+
+    Debe ejecutarse DENTRO de transaction.atomic() con select_for_update
+    para evitar race conditions entre requests concurrentes.
+    """
+    try:
+        limite = LimiteCliente.objects.select_for_update().get(fk_usuario=usuario)
+    except LimiteCliente.DoesNotExist:
+        return
+
+    usuario_ids = {usuario.id_usuario}
+    # ponytail: FamiliaUsuario bajo select_for_update para evitar race conditions
+    # en membresías concurrentes.
+    familias = list(
+        FamiliaUsuario.objects.select_for_update()
+        .filter(fk_usuario=usuario, estado=True)
+        .order_by("pk")
+        .values_list("fk_familia_id", flat=True)
+    )
+
+    if familias:
+        miembros = (
+            FamiliaUsuario.objects.select_for_update()
+            .filter(fk_familia_id__in=familias, estado=True)
+            .exclude(fk_usuario=usuario)
+            .order_by("pk")
+        )
+        usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
+
+    estado_pendiente_id = _get_estado_pendiente_id()
+    gasto_actual = PedidoCabecera.objects.select_for_update().filter(
+        fk_cliente_id__in=usuario_ids, fk_estado_id=estado_pendiente_id
+    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
+
+    nuevo_saldo = gasto_actual + total_pedido
+    if nuevo_saldo > limite.monto:
+        logger.warning(
+            "Crédito excedido para usuario %s: límite=%s gasto_actual=%s nuevo_pedido=%s",
+            usuario.id_usuario,
+            limite.monto,
+            gasto_actual,
+            total_pedido,
+        )
+        raise ValidationError(
+            f"El pedido excede el límite de crédito. "
+            f"Límite: ${limite.monto:.2f}, "
+            f"Saldo actual en pedidos pendientes: ${gasto_actual:.2f}, "
+            f"Total con este pedido: ${nuevo_saldo:.2f}."
+        )

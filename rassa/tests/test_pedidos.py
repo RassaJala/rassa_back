@@ -1,5 +1,6 @@
 """Pruebas unitarias para el módulo de Pedidos."""
 
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -8,7 +9,21 @@ from django.db import DatabaseError
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rassa.models import DetallePedido, EstadoPedido, HistorialEstadoPedido, PedidoCabecera, Persona, Rol, Usuario
+from rassa.models import (
+    CategoriaProducto,
+    DetallePedido,
+    EstadoPedido,
+    HistorialEstadoPedido,
+    LimiteCliente,
+    PedidoCabecera,
+    Persona,
+    Producto,
+    ProductoSemanal,
+    PublicacionSemanal,
+    Rol,
+    Unidad,
+    Usuario,
+)
 
 
 class PedidosTestCase(APITestCase):
@@ -613,3 +628,397 @@ class PedidosTestCase(APITestCase):
         item = response.data["results"][0]
         self.assertEqual(item["cliente_nombre"], "Maria Garcia")
         self.assertEqual(item["vendedor_nombre"], "Juan Perez")
+
+
+class PedidoCreateTestCase(APITestCase):
+    """Tests para POST /api/pedidos/ — creación de pedidos."""
+
+    def setUp(self):
+        # Roles
+        self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Administrador")
+        self.rol_vendedor = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
+        self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
+
+        # Estado de pedido — se crea con tipo_estado="pendiente" para que
+        # _get_estado_pendiente_id() lo encuentre por lookup dinámico
+        self.estado_pendiente, _ = EstadoPedido.objects.get_or_create(
+            tipo_estado="pendiente", defaults={"descripcion": "Pendiente"}
+        )
+
+        # Categoría y unidad
+        self.categoria = CategoriaProducto.objects.create(nombre="Frutas")
+        self.unidad = Unidad.objects.create(nombre="Kilogramo", abreviatura="kg", tipo="Peso")
+
+        # Producto del catálogo
+        self.producto = Producto.objects.create(
+            nombre_producto="Manzana",
+            fk_categoria=self.categoria,
+            es_perecedero=True,
+            precio=Decimal("10.00"),
+            stock=100,
+        )
+
+        # Publicación semanal (publicada)
+        self.publicacion = PublicacionSemanal.objects.create(
+            fecha_publicacion=date(2026, 7, 26),
+            semana=30,
+            estado="publicado",
+        )
+
+        # Producto semanal activo con stock
+        self.producto_semanal = ProductoSemanal.objects.create(
+            fk_publicacion=self.publicacion,
+            fk_producto=self.producto,
+            fk_unidad=self.unidad,
+            stock=50,
+            precio=Decimal("20.00"),
+            estado="activo",
+        )
+
+        # Segundo producto semanal
+        self.producto2 = Producto.objects.create(
+            nombre_producto="Pera",
+            fk_categoria=self.categoria,
+            es_perecedero=True,
+            precio=Decimal("8.00"),
+            stock=100,
+        )
+        self.producto_semanal2 = ProductoSemanal.objects.create(
+            fk_publicacion=self.publicacion,
+            fk_producto=self.producto2,
+            fk_unidad=self.unidad,
+            stock=30,
+            precio=Decimal("15.00"),
+            estado="activo",
+        )
+
+        # Cliente con límite de crédito
+        self.user_cliente = User.objects.create_user(
+            username="cliente_create", email="cliente_create@rassa.com", password="password123"
+        )
+        self.persona_cliente = Persona.objects.create(
+            nombre="Laura", apellido_paterno="Create", fecha_nacimiento="1995-05-05", sexo="F", domicilio="Calle Test"
+        )
+        self.usuario_cliente = Usuario.objects.create(
+            fk_user=self.user_cliente,
+            fk_persona=self.persona_cliente,
+            telefono="1111111111",
+            correo="cliente_create@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        self.limite = LimiteCliente.objects.create(fk_usuario=self.usuario_cliente, monto=Decimal("1000.00"))
+
+        # Vendedor (para referencia)
+        self.user_vendedor = User.objects.create_user(
+            username="vendedor_create", email="vendedor_create@rassa.com", password="password123"
+        )
+        self.persona_vendedor = Persona.objects.create(
+            nombre="Carlos",
+            apellido_paterno="Vende",
+            fecha_nacimiento="1985-03-10",
+            sexo="M",
+            domicilio="Calle Vendedor",
+        )
+        self.usuario_vendedor = Usuario.objects.create(
+            fk_user=self.user_vendedor,
+            fk_persona=self.persona_vendedor,
+            telefono="2222222222",
+            correo="vendedor_create@rassa.com",
+            fk_rol=self.rol_vendedor,
+        )
+
+        # Admin
+        self.user_admin = User.objects.create_superuser(
+            username="admin_create", email="admin_create@rassa.com", password="password123"
+        )
+        self.persona_admin = Persona.objects.create(
+            nombre="Admin", apellido_paterno="Create", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle Admin"
+        )
+        self.usuario_admin = Usuario.objects.create(
+            fk_user=self.user_admin,
+            fk_persona=self.persona_admin,
+            telefono="3333333333",
+            correo="admin_create@rassa.com",
+            fk_rol=self.rol_admin,
+        )
+
+    def _crear_payload(self, items):
+        return {"items": items}
+
+    # ── Happy path ────────────────────────────────────────────
+
+    def test_crear_pedido_exitoso(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("data", response.data)
+        data = response.data["data"]
+        self.assertEqual(data["cliente_nombre"], "Laura Create")
+        self.assertEqual(data["estado"], "pendiente")
+        self.assertEqual(Decimal(str(data["subtotal"])), Decimal("40.00"))
+        self.assertEqual(Decimal(str(data["iva"])), Decimal("8.40"))  # 21% de 40
+        self.assertEqual(Decimal(str(data["total"])), Decimal("48.40"))
+        self.assertIn("detalles", data)
+        self.assertEqual(len(data["detalles"]), 1)
+
+    def test_crear_pedido_multiples_items(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+                {"id_producto_semanal": self.producto_semanal2.id_producto_semanal, "cantidad": 3},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.data["data"]
+        self.assertEqual(len(data["detalles"]), 2)
+        # subtotal = 2*20 + 3*15 = 85
+        self.assertEqual(Decimal(str(data["subtotal"])), Decimal("85.00"))
+        # iva = 85 * 0.21 = 17.85
+        self.assertEqual(Decimal(str(data["iva"])), Decimal("17.85"))
+        # total = 85 + 17.85 = 102.85
+        self.assertEqual(Decimal(str(data["total"])), Decimal("102.85"))
+
+    def test_crear_pedido_descuenta_stock(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 5},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, 45)  # 50 - 5
+
+    def test_crear_pedido_crea_historial(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+        historial = HistorialEstadoPedido.objects.filter(fk_pedido_id=pedido_id)
+        self.assertEqual(historial.count(), 1)
+        h = historial.first()
+        self.assertIsNone(h.fk_estado_anterior)
+        self.assertEqual(h.fk_estado_nuevo.tipo_estado, "pendiente")
+
+    # ── Validaciones ──────────────────────────────────────────
+
+    def test_crear_pedido_sin_auth(self):
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_crear_pedido_como_vendedor(self):
+        self.client.force_authenticate(user=self.user_vendedor)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_crear_pedido_como_admin(self):
+        self.client.force_authenticate(user=self.user_admin)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_stock_insuficiente(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 999},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_producto_inexistente(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": 99999, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_producto_inactivo(self):
+        self.producto_semanal.estado = "inactivo"
+        self.producto_semanal.save(update_fields=["estado"])
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_publicacion_no_disponible(self):
+        self.publicacion.estado = "borrador"
+        self.publicacion.save(update_fields=["estado"])
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_items_vacios(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload([])
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_items_duplicados(self):
+        """Mismo id_producto_semanal dos veces no debe crear el pedido."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 2},
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 3},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Verificar que no se descontó stock
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, 50)
+
+    def test_cantidad_cero(self):
+        """Cantidad = 0 es inválida (min_value=1 en serializer)."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 0},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_producto_catalogo_desactivado(self):
+        """Producto del catálogo inactivo rechaza la creación."""
+        self.producto.estado = False
+        self.producto.save(update_fields=["estado"])
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Límite de crédito ─────────────────────────────────────
+
+    def test_credito_excede_limite(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        # producto vale 20 c/u, 50 unidades = 1000 + IVA 21% = 1210 > 1000 límite
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 50},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # DRF ValidationError devuelve el mensaje como string o lista
+        self.assertIn("límite de crédito", str(response.data).lower())
+
+    def test_credito_en_limite(self):
+        # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
+        # Con 41 unidades de 20 = 820 + 21% IVA = 992.20 → dentro del límite
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 41},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_sin_limite_asignado(self):
+        """Usuario sin LimiteCliente asociado puede crear pedidos."""
+        user_sin_limite = User.objects.create_user(
+            username="sin_limite", email="sin_limite@rassa.com", password="password123"
+        )
+        persona = Persona.objects.create(
+            nombre="Sin", apellido_paterno="Limite", fecha_nacimiento="1990-01-01", sexo="M", domicilio="Calle Sin"
+        )
+        Usuario.objects.create(
+            fk_user=user_sin_limite,
+            fk_persona=persona,
+            telefono="4444444444",
+            correo="sin_limite@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        self.client.force_authenticate(user=user_sin_limite)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_credito_excede_con_pedidos_pendientes(self):
+        """Cliente con pedido pendiente previo que sumado excede el límite."""
+        self.client.force_authenticate(user=self.user_cliente)
+        # Crear un pedido previo de $500
+        PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            subtotal=Decimal("413.22"),
+            iva=Decimal("86.78"),
+            total=Decimal("500.00"),
+        )
+        # Ahora intentar otro pedido de $600 → suma 1100 > 1000
+        # 30 unidades de 20 = 600 + IVA 126 = 726 pero el límite es 1000 y ya gastó 500
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 30},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("límite de crédito", str(response.data).lower())
+
+    # ── Campos de salida del serializer ───────────────────────
+
+    def test_output_serializer_usa_nombres_no_ids(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.data["data"]
+        self.assertIn("cliente_nombre", data)
+        self.assertIn("estado", data)
+        self.assertNotIn("fk_cliente", data)
+        self.assertNotIn("fk_estado", data)

@@ -14,6 +14,7 @@ Variables requeridas:
 
 import sys
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import dj_database_url
@@ -187,6 +188,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # === DEFAULT ===
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# === TAX ===
+IVA_RATE = Decimal("0.21")
 
 # === GOOGLE DRIVE ===
 GOOGLE_DRIVE_CREDENTIALS_PATH = config("GOOGLE_DRIVE_CREDENTIALS_PATH", default=None)

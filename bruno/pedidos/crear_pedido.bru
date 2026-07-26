@@ -1,0 +1,32 @@
+meta {
+  name: Crear Pedido
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/pedidos/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "id_producto_semanal": 1,
+        "cantidad": 2
+      },
+      {
+        "id_producto_semanal": 3,
+        "cantidad": 1
+      }
+    ]
+  }
+}
