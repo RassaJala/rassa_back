@@ -565,9 +565,7 @@ class PagoListTest(PagosTestBase):
         self.assertEqual(resp_filtered.status_code, status.HTTP_200_OK)
         data_filtered = resp_filtered.json()
         results_filtered = (
-            data_filtered
-            if isinstance(data_filtered, list)
-            else data_filtered.get("results", data_filtered)
+            data_filtered if isinstance(data_filtered, list) else data_filtered.get("results", data_filtered)
         )
         self.assertEqual(len(results_filtered), 1)
         self.assertEqual(results_filtered[0]["id_pago"], pago1.id_pago)
