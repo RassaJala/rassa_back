@@ -2151,6 +2151,7 @@ class Command(BaseCommand):
             if isinstance(m.get("creado_en"), str):
                 m["creado_en"] = timezone.make_aware(dt.strptime(m["creado_en"], "%Y-%m-%d %H:%M:%S"))
             Mensaje.objects.update_or_create(id_mensaje=m["id_mensaje"], defaults=m)
+        self._reset_pk_sequence(Mensaje)
         self.stdout.write("  Mensajes: OK")
 
     def _seed_documentos(self):
