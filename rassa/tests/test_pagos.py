@@ -487,7 +487,12 @@ class PagoListTest(PagosTestBase):
         self.assertIn("detalles", data)
 
     def test_tipos_pago_endpoint(self):
-        resp = self.client.get("/api/pagos/tipos/")
+        # El endpoint antiguo /api/pagos/tipos/ ya no existe (404)
+        resp_old = self.client.get("/api/pagos/tipos/")
+        self.assertEqual(resp_old.status_code, status.HTTP_404_NOT_FOUND)
+
+        # El nuevo endpoint /api/tipos-pago/ debe retornar los tipos de pago
+        resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         nombres = [t["nombre"] for t in resp.json()]
         self.assertIn("Efectivo", nombres)
@@ -525,3 +530,42 @@ class PagoListTest(PagosTestBase):
         results = data if isinstance(data, list) else data.get("results", data)
         pago_ids = [p["pedido_id"] for p in results]
         self.assertNotIn(pedido_otro.id_pedido, pago_ids)
+
+    def test_filtrar_pagos_por_pedido(self):
+        # Create two orders and pay them
+        pedido1 = self._crear_pedido(self.estado_listo)
+        self.client.post(
+            "/api/pagos/",
+            {
+                "fk_pedido": pedido1.id_pedido,
+                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago1 = Pago.objects.last()
+
+        pedido2 = self._crear_pedido(self.estado_listo)
+        self.client.post(
+            "/api/pagos/",
+            {
+                "fk_pedido": pedido2.id_pedido,
+                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago2 = Pago.objects.last()
+
+        # Query all
+        resp_all = self.client.get("/api/pagos/")
+        self.assertEqual(resp_all.status_code, status.HTTP_200_OK)
+        data_all = resp_all.json()
+        results_all = data_all if isinstance(data_all, list) else data_all.get("results", data_all)
+        self.assertTrue(len(results_all) >= 2)
+
+        # Query filtered by pedido1
+        resp_filtered = self.client.get(f"/api/pagos/?pedido={pedido1.id_pedido}")
+        self.assertEqual(resp_filtered.status_code, status.HTTP_200_OK)
+        data_filtered = resp_filtered.json()
+        results_filtered = data_filtered if isinstance(data_filtered, list) else data_filtered.get("results", data_filtered)
+        self.assertEqual(len(results_filtered), 1)
+        self.assertEqual(results_filtered[0]["id_pago"], pago1.id_pago)

@@ -10,4 +10,5 @@ router.register(r"pagos", PagoViewSet, basename="pago")
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path("api/tipos-pago/", PagoViewSet.as_view({"get": "tipos_pago"}), name="tipos-pago-list"),
 ]

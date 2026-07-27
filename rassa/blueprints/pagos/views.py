@@ -70,6 +70,10 @@ class PagoViewSet(
         elif nombre_rol != ADMIN:
             qs = qs.none()
 
+        pedido_id = self.request.query_params.get("pedido")
+        if pedido_id:
+            qs = qs.filter(fk_pedido_id=pedido_id)
+
         return qs
 
     def get_serializer_class(self):
@@ -174,8 +178,7 @@ class PagoViewSet(
             status_code=status.HTTP_201_CREATED,
         )
 
-    @action(detail=False, methods=["get"], url_path="tipos")
     def tipos_pago(self, request):
-        """GET /api/pagos/tipos/ — lista de tipos de pago disponibles."""
+        """GET /api/tipos-pago/ — lista de tipos de pago disponibles."""
         tipos = TipoPago.objects.all()
         return Response(TipoPagoSerializer(tipos, many=True).data)
