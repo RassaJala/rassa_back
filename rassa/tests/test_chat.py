@@ -270,7 +270,12 @@ class ChatTests(APITestCase):
         response = self.client.patch(url, data={})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("message", response.json())
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertIn("message", body)
+        self.assertIn("data", body)
+        self.assertEqual(body["data"]["id_mensaje"], mensaje.id_mensaje)
+        self.assertTrue(body["data"]["leido"])
         mensaje.refresh_from_db()
         self.assertTrue(mensaje.leido)
 

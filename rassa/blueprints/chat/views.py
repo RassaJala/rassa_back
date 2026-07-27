@@ -153,7 +153,10 @@ class MensajeLeerView(APIView):
         mensaje.leido = True
         mensaje.save(update_fields=["leido"])
 
-        return _ok(message="Mensaje marcado como leído.")
+        return _ok(
+            data=MensajeSerializer(mensaje).data,
+            message="Mensaje marcado como leído.",
+        )
 
 
 class MensajeInactivarView(APIView):
