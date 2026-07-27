@@ -4,7 +4,6 @@ import logging
 
 from django.db import DatabaseError, transaction
 from rest_framework import mixins, status, viewsets
-from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle

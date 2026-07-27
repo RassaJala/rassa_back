@@ -553,8 +553,6 @@ class PagoListTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
-        pago2 = Pago.objects.last()
-
         # Query all
         resp_all = self.client.get("/api/pagos/")
         self.assertEqual(resp_all.status_code, status.HTTP_200_OK)
@@ -566,6 +564,10 @@ class PagoListTest(PagosTestBase):
         resp_filtered = self.client.get(f"/api/pagos/?pedido={pedido1.id_pedido}")
         self.assertEqual(resp_filtered.status_code, status.HTTP_200_OK)
         data_filtered = resp_filtered.json()
-        results_filtered = data_filtered if isinstance(data_filtered, list) else data_filtered.get("results", data_filtered)
+        results_filtered = (
+            data_filtered
+            if isinstance(data_filtered, list)
+            else data_filtered.get("results", data_filtered)
+        )
         self.assertEqual(len(results_filtered), 1)
         self.assertEqual(results_filtered[0]["id_pago"], pago1.id_pago)
