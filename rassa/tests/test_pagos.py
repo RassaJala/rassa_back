@@ -655,12 +655,18 @@ class PagoConcurrencyTest(TransactionTestCase):
         self.tipo_efectivo = TipoPago.objects.create(id_tipo_pago=1, nombre="Efectivo")
 
         persona = Persona.objects.create(
-            nombre="Vendedor", apellido_paterno="Conc", sexo="M",
-            fecha_nacimiento="1990-01-01", domicilio="Calle 1",
+            nombre="Vendedor",
+            apellido_paterno="Conc",
+            sexo="M",
+            fecha_nacimiento="1990-01-01",
+            domicilio="Calle 1",
         )
         user = User.objects.create_user(username="vend@conc.test", email="vend@conc.test", password="pass")
         self.usuario = Usuario.objects.create(
-            fk_user=user, fk_persona=persona, fk_rol=self.rol_vendedor, correo="vend@conc.test",
+            fk_user=user,
+            fk_persona=persona,
+            fk_rol=self.rol_vendedor,
+            correo="vend@conc.test",
         )
 
         self.categoria = CategoriaProducto.objects.create(nombre="Verduras", descripcion="Verduras")
@@ -669,22 +675,34 @@ class PagoConcurrencyTest(TransactionTestCase):
             nombre_producto="Tomate", descripcion="Tomate rojo", fk_categoria=self.categoria
         )
         publicacion = PublicacionSemanal.objects.create(
-            fecha_publicacion="2026-07-28", semana=31, estado="publicado",
+            fecha_publicacion="2026-07-28",
+            semana=31,
+            estado="publicado",
         )
         self.producto_semanal = ProductoSemanal.objects.create(
-            fk_publicacion=publicacion, fk_producto=producto,
-            fk_unidad=self.unidad, precio=Decimal("25.00"), stock=100,
+            fk_publicacion=publicacion,
+            fk_producto=producto,
+            fk_unidad=self.unidad,
+            precio=Decimal("25.00"),
+            stock=100,
         )
 
     def _crear_pedido(self):
         pedido = PedidoCabecera.objects.create(
-            fk_cliente=self.usuario, fk_vendedor=self.usuario, fk_estado=self.estado_listo,
-            subtotal=Decimal("100.00"), iva=Decimal("16.00"), total=Decimal("116.00"),
+            fk_cliente=self.usuario,
+            fk_vendedor=self.usuario,
+            fk_estado=self.estado_listo,
+            subtotal=Decimal("100.00"),
+            iva=Decimal("16.00"),
+            total=Decimal("116.00"),
         )
         DetallePedido.objects.create(
-            fk_pedido=pedido, fk_producto_semanal=self.producto_semanal,
-            nombre_producto="Tomate", precio_unitario=Decimal("25.00"),
-            cantidad=4, importe=Decimal("100.00"),
+            fk_pedido=pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Tomate",
+            precio_unitario=Decimal("25.00"),
+            cantidad=4,
+            importe=Decimal("100.00"),
         )
         return pedido
 

@@ -49,15 +49,12 @@ class PagoViewSet(
         return super().get_throttles()
 
     def get_queryset(self):
-        qs = (
-            Pago.objects.select_related(
-                "fk_pedido__fk_estado",
-                "fk_pedido__fk_cliente__fk_persona",
-                "fk_pedido__fk_vendedor__fk_persona",
-                "fk_tipo",
-            )
-            .order_by("-creado_en")
-        )
+        qs = Pago.objects.select_related(
+            "fk_pedido__fk_estado",
+            "fk_pedido__fk_cliente__fk_persona",
+            "fk_pedido__fk_vendedor__fk_persona",
+            "fk_tipo",
+        ).order_by("-creado_en")
 
         usuario = getattr(self.request.user, "usuario", None)
         if usuario is None:
@@ -116,8 +113,10 @@ class PagoViewSet(
                 # could have changed between validation and lock acquisition.
                 if pedido.fk_estado.tipo_estado != "listo_para_retirar":
                     return Response(
-                        {"message": f"El pedido ya no está en estado 'listo_para_retirar' "
-                        f"(estado actual: '{pedido.fk_estado.tipo_estado}')."},
+                        {
+                            "message": f"El pedido ya no está en estado 'listo_para_retirar' "
+                            f"(estado actual: '{pedido.fk_estado.tipo_estado}')."
+                        },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
@@ -175,14 +174,18 @@ class PagoViewSet(
         )
 
         # Reload for serializer
-        pago = Pago.objects.select_related(
-            "fk_pedido__fk_estado",
-            "fk_pedido__fk_cliente__fk_persona",
-            "fk_pedido__fk_vendedor__fk_persona",
-            "fk_tipo",
-        ).prefetch_related(
-            "fk_pedido__detallepedido_set",
-        ).get(pk=pago.pk)
+        pago = (
+            Pago.objects.select_related(
+                "fk_pedido__fk_estado",
+                "fk_pedido__fk_cliente__fk_persona",
+                "fk_pedido__fk_vendedor__fk_persona",
+                "fk_tipo",
+            )
+            .prefetch_related(
+                "fk_pedido__detallepedido_set",
+            )
+            .get(pk=pago.pk)
+        )
 
         return Response(
             PagoOutputSerializer(pago).data,
