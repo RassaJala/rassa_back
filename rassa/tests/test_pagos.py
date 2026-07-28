@@ -390,6 +390,10 @@ class PagoCreateTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertTrue(Pago.objects.filter(fk_pedido=pedido).exists())
+        pago = Pago.objects.get(fk_pedido=pedido)
+        self.assertTrue(pago.folio.startswith("REC-"))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
 
 
 class PagoPermisosTest(PagosTestBase):
@@ -481,6 +485,12 @@ class PagoPermisosTest(PagosTestBase):
         self.client.force_authenticate(user=self.user_vendedor)
         resp = self.client.delete("/api/pagos/1/")
         self.assertEqual(resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_throttle_scopes_configured(self):
+        """Verificar que los scopes de throttle existen en la configuracion."""
+        from rassa.settings import REST_FRAMEWORK as rf
+        self.assertIn("pagos_read", rf["DEFAULT_THROTTLE_RATES"])
+        self.assertIn("pagos_write", rf["DEFAULT_THROTTLE_RATES"])
 
 
 class PagoListTest(PagosTestBase):

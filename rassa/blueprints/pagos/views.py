@@ -203,5 +203,7 @@ class PagoViewSet(
 
     def tipos_pago(self, request):
         """GET /api/tipos-pago/ — lista de tipos de pago disponibles."""
+        # Response() plano (sin _ok) porque el frontend espera
+        # response.data como el array directamente, no como {ok, data}
         tipos = TipoPago.objects.all()
         return Response(TipoPagoSerializer(tipos, many=True).data)

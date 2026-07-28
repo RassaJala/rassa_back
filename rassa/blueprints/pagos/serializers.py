@@ -122,7 +122,9 @@ class PagoOutputSerializer(serializers.ModelSerializer):
 
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
-        return _nombre_completo(pedido.fk_cliente) if pedido else None
+        if pedido and pedido.fk_cliente:
+            return _nombre_completo(pedido.fk_cliente)
+        return None
 
     def get_productos(self, obj):
         if not obj.fk_pedido:
@@ -156,4 +158,6 @@ class PagoListSerializer(serializers.ModelSerializer):
 
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
-        return _nombre_completo(pedido.fk_cliente) if pedido else None
+        if pedido and pedido.fk_cliente:
+            return _nombre_completo(pedido.fk_cliente)
+        return None
