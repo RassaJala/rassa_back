@@ -21,6 +21,7 @@ from .serializers import (
     MensajeDocumentoCreateSerializer,
     MensajeSerializer,
     MensajeUpdateSerializer,
+    UsuarioBuscarSerializer,
 )
 
 
@@ -137,25 +138,23 @@ class MensajeUpdateView(generics.UpdateAPIView):
         )
 
 
-class MensajeLeerView(APIView):
+class ConversacionLeerView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "chat_read"
 
-    def patch(self, request, mensaje_id):
-        try:
-            mensaje = Mensaje.objects.get(pk=mensaje_id, estado=True)
-        except Mensaje.DoesNotExist as err:
-            raise NotFound("Mensaje no encontrado.") from err
+    def patch(self, request, conversacion_id):
+        conversacion = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
 
-        if not mensaje.fk_conversacion.integrante_set.filter(fk_usuario=request.user.usuario, estado=True).exists():
-            raise PermissionDenied("No eres miembro de esta conversación.")
-
-        mensaje.leido = True
-        mensaje.save(update_fields=["leido"])
+        updated = Mensaje.objects.filter(
+            fk_conversacion=conversacion,
+            leido=False,
+        ).exclude(
+            fk_emisor=request.user.usuario
+        ).update(leido=True)
 
         return _ok(
-            data=MensajeSerializer(mensaje).data,
-            message="Mensaje marcado como leído.",
+            message=f"{updated} mensaje(s) marcado(s) como leído(s).",
+            data={"marcados": updated},
         )
 
 
@@ -169,7 +168,7 @@ class MensajeInactivarView(APIView):
         except Mensaje.DoesNotExist as err:
             raise NotFound("Mensaje no encontrado.") from err
 
-        # Membership check (parity with MensajeLeerView): a user removed from the
+        # Membership check (parity with ConversacionLeerView): a user removed from the
         # conversation must not be able to inactivate their old messages.
         es_miembro = mensaje.fk_conversacion.integrante_set.filter(
             fk_usuario=request.user.usuario, estado=True
@@ -592,3 +591,42 @@ class MensajeDocumentoCreateView(APIView):
             message="Mensaje con documento enviado correctamente.",
             status_code=status.HTTP_201_CREATED,
         )
+
+
+class ConversacionDetalleView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
+
+    def get(self, request, conversacion_id):
+        conversacion = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
+        return _ok(
+            data={
+                "id_conversacion": conversacion.id_conversacion,
+                "tipo": conversacion.tipo,
+                "nombre": conversacion.nombre or "",
+            },
+        )
+
+
+class UsuarioBuscarView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
+
+    def get(self, request):
+        q = request.query_params.get("q", "").strip()
+        if len(q) < 3:
+            return _ok(data=[])
+
+        usuarios = (
+            Usuario.objects.filter(estado=True)
+            .filter(
+                Q(correo__icontains=q)
+                | Q(fk_persona__nombre__icontains=q)
+                | Q(fk_persona__apellido_paterno__icontains=q)
+                | Q(fk_persona__apellido_materno__icontains=q)
+            )
+            .select_related("fk_persona", "fk_rol")[:10]
+        )
+
+        serializer = UsuarioBuscarSerializer(usuarios, many=True)
+        return _ok(data=serializer.data)

@@ -262,22 +262,33 @@ class ChatTests(APITestCase):
         mensaje.refresh_from_db()
         self.assertTrue(mensaje.estado)
 
-    def test_leer_mensaje_exitoso(self):
+    def test_conversacion_leer_exitoso(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="Hola", leido=False)
+        msg_otro = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De otro", leido=False)
+        msg_propio = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Mio", leido=False)
 
-        url = reverse("chat-mensajes-leer", args=[mensaje.id_mensaje])
-        response = self.client.patch(url, data={})
+        url = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
+        response = self.client.patch(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         body = response.json()
         self.assertTrue(body["ok"])
-        self.assertIn("message", body)
-        self.assertIn("data", body)
-        self.assertEqual(body["data"]["id_mensaje"], mensaje.id_mensaje)
-        self.assertTrue(body["data"]["leido"])
-        mensaje.refresh_from_db()
-        self.assertTrue(mensaje.leido)
+        self.assertEqual(body["data"]["marcados"], 1)
+
+        msg_otro.refresh_from_db()
+        self.assertTrue(msg_otro.leido)
+        msg_propio.refresh_from_db()
+        self.assertFalse(msg_propio.leido)
+
+    def test_conversacion_leer_sin_mensajes_pendientes(self):
+        conv = self._crear_conversacion_privada()
+        Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="x", leido=True)
+
+        url = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
+        response = self.client.patch(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"]["marcados"], 0)
 
     def test_crear_conversacion_privada_con_uno_mismo(self):
         url = reverse("chat-conversaciones-crear-privada")
@@ -360,13 +371,18 @@ class ChatTests(APITestCase):
         response = self.client.post(url, {"usuario_id": self.usuario2.id_usuario})
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_leer_mensaje_usuario_no_miembro(self):
+    def test_conversacion_leer_usuario_no_miembro(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="x")
+        Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="x")
         self.client.force_authenticate(self.user3)
-        url = reverse("chat-mensajes-leer", args=[mensaje.id_mensaje])
-        response = self.client.patch(url, data={})
+        url = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
+        response = self.client.patch(url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_conversacion_leer_conversacion_inexistente(self):
+        url = reverse("chat-conversaciones-leer", args=[99999])
+        response = self.client.patch(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_inactivar_mensaje_usuario_no_miembro(self):
         conv = self._crear_conversacion_privada()  # user1 emisor, user2 receptor
@@ -417,3 +433,57 @@ class ChatTests(APITestCase):
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Conversacion detalle ───────────────────────────────────────
+
+    def test_conversacion_detalle_exitoso(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-detalle", args=[conv.id_conversacion])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["data"]["tipo"], True)
+        self.assertEqual(body["data"]["nombre"], "Grupo test")
+
+    def test_conversacion_detalle_usuario_no_miembro(self):
+        conv = self._crear_conversacion_privada()
+        self.client.force_authenticate(self.user3)
+        url = reverse("chat-conversaciones-detalle", args=[conv.id_conversacion])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_conversacion_detalle_inexistente(self):
+        url = reverse("chat-conversaciones-detalle", args=[99999])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ── Usuario buscar ─────────────────────────────────────────────
+
+    def test_usuarios_buscar_exitoso(self):
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url, {"q": "user2"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertGreaterEqual(len(body["data"]), 1)
+        self.assertIn("id_usuario", body["data"][0])
+        self.assertIn("nombre_completo", body["data"][0])
+
+    def test_usuarios_buscar_sin_resultados(self):
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url, {"q": "zzzzz"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()["data"]), 0)
+
+    def test_usuarios_buscar_query_muy_corta(self):
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url, {"q": "ab"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()["data"]), 0)
+
+    def test_usuarios_buscar_sin_query(self):
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()["data"]), 0)

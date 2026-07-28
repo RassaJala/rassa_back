@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import serializers
 
-from rassa.models import Conversacion, Mensaje
+from rassa.models import Conversacion, Mensaje, Usuario
 
 
 class EmisorSerializer(serializers.Serializer):
@@ -98,3 +98,17 @@ class MensajeSerializer(serializers.ModelSerializer):
             "editado",
             "creado_en",
         ]
+
+
+class UsuarioBuscarSerializer(serializers.ModelSerializer):
+    nombre_completo = serializers.SerializerMethodField()
+    rol = serializers.CharField(source="fk_rol.nombre_rol", read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = ["id_usuario", "nombre_completo", "correo", "rol"]
+
+    def get_nombre_completo(self, obj):
+        p = obj.fk_persona
+        am = p.apellido_materno or ""
+        return f"{p.nombre} {p.apellido_paterno} {am}".strip()
