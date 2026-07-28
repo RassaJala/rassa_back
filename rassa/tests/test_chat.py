@@ -264,8 +264,14 @@ class ChatTests(APITestCase):
 
     def test_conversacion_leer_exitoso(self):
         conv = self._crear_conversacion_privada()
-        msg_otro = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De otro", leido=False)
-        msg_propio = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Mio", leido=False)
+        msg_otro = Mensaje.objects.create(
+            fk_emisor=self.usuario2, fk_conversacion=conv,
+            contenido="De otro", leido=False,
+        )
+        msg_propio = Mensaje.objects.create(
+            fk_emisor=self.usuario1, fk_conversacion=conv,
+            contenido="Mio", leido=False,
+        )
 
         url = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
         response = self.client.patch(url)
