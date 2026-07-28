@@ -2,10 +2,9 @@
 
 import logging
 
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.models import (
@@ -38,6 +37,11 @@ class PagoViewSet(
 
     permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN)]
     throttle_classes = [ScopedRateThrottle]
+
+    def get_permissions(self):
+        if self.action == "tipos_pago":
+            return [IsAuthenticated()]
+        return super().get_permissions()
 
     def get_throttles(self):
         self.throttle_scope = "pagos_write" if self.request.method in ("POST",) else "pagos_read"
@@ -107,7 +111,9 @@ class PagoViewSet(
                         status_code=status.HTTP_403_FORBIDDEN,
                     )
 
-                # Re-validate state inside transaction (TOCTOU protection)
+                # TOCTOU protection: re-validate state under lock.
+                # The serializer already validated this, but the state
+                # could have changed between validation and lock acquisition.
                 if pedido.fk_estado.tipo_estado != "listo_para_retirar":
                     return ok_response(
                         message=f"El pedido ya no está en estado 'listo_para_retirar' "
@@ -144,6 +150,14 @@ class PagoViewSet(
                     fk_cambiado_por=usuario,
                 )
 
+        except IntegrityError as exc:
+            if "folio" in str(exc):
+                logger.warning("Race condition en folio al registrar pago: %s", exc)
+                return ok_response(
+                    message="Error de concurrencia. Intente de nuevo.",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+            raise
         except DatabaseError as exc:
             logger.error("Error de base de datos al registrar pago: %s", exc)
             return ok_response(
@@ -180,4 +194,4 @@ class PagoViewSet(
     def tipos_pago(self, request):
         """GET /api/tipos-pago/ — lista de tipos de pago disponibles."""
         tipos = TipoPago.objects.all()
-        return Response(TipoPagoSerializer(tipos, many=True).data)
+        return ok_response(data=TipoPagoSerializer(tipos, many=True).data)

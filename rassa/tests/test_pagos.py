@@ -1,9 +1,10 @@
 """Tests para el módulo de Pagos."""
 
+import threading
 from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -421,6 +422,14 @@ class PagoPermisosTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_cliente_puede_ver_tipos_pago(self):
+        self.client.force_authenticate(user=self.user_cliente)
+        resp = self.client.get("/api/tipos-pago/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        nombres = [t["nombre"] for t in resp.json()["data"]]
+        self.assertIn("Efectivo", nombres)
+        self.assertIn("Transferencia", nombres)
+
     def test_vendedor_no_puede_pagar_pedido_de_otro_vendedor(self):
         persona2 = Persona.objects.create(
             nombre="Otro", apellido_paterno="Vendedor", sexo="M", fecha_nacimiento="1992-01-01", domicilio="Calle 4"
@@ -436,6 +445,21 @@ class PagoPermisosTest(PagosTestBase):
             "/api/pagos/",
             {
                 "pedido": pedido_otro.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_vendedor_no_puede_pagar_pedido_sin_vendedor(self):
+        self.client.force_authenticate(user=self.user_vendedor)
+        pedido = self._crear_pedido(self.estado_listo)
+        pedido.fk_vendedor = None
+        pedido.save(update_fields=["fk_vendedor"])
+        resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
                 "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
@@ -494,7 +518,7 @@ class PagoListTest(PagosTestBase):
         # El nuevo endpoint /api/tipos-pago/ debe retornar los tipos de pago
         resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        nombres = [t["nombre"] for t in resp.json()]
+        nombres = [t["nombre"] for t in resp.json()["data"]]
         self.assertIn("Efectivo", nombres)
         self.assertIn("Transferencia", nombres)
 
@@ -569,3 +593,110 @@ class PagoListTest(PagosTestBase):
         )
         self.assertEqual(len(results_filtered), 1)
         self.assertEqual(results_filtered[0]["id_pago"], pago1.id_pago)
+
+    def test_vendedor_no_puede_ver_detalle_pago_de_otro(self):
+        persona2 = Persona.objects.create(
+            nombre="Otro", apellido_paterno="Vendedor", sexo="M", fecha_nacimiento="1992-01-01", domicilio="Calle 4"
+        )
+        user2 = User.objects.create_user(username="vendedor2@test.com", email="vendedor2@test.com", password="pass123")
+        usuario2 = Usuario.objects.create(
+            fk_user=user2, fk_persona=persona2, fk_rol=self.rol_vendedor, correo="vendedor2@test.com"
+        )
+        pedido_otro = self._crear_pedido(self.estado_listo, vendedor=usuario2)
+
+        # Vendedor2 pays it
+        client2 = APIClient()
+        client2.force_authenticate(user=user2)
+        create_resp = client2.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido_otro.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_id = create_resp.json()["data"]["id_pago"]
+
+        # Original vendedor should NOT be able to see the detail
+        resp = self.client.get(f"/api/pagos/{pago_id}/")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class PagoConcurrencyTest(TransactionTestCase):
+    """Test de concurrencia para generación de folios."""
+
+    def setUp(self):
+        # Minimal shared setup (TransactionTestCase resets DB between tests)
+        self.rol_vendedor = Rol.objects.create(id_rol=2, nombre_rol="Vendedor", descripcion="Vendedor")
+        self.estado_listo = EstadoPedido.objects.create(
+            id_estado=4, tipo_estado="listo_para_retirar", descripcion="Listo para retirar"
+        )
+        self.estado_entregado = EstadoPedido.objects.create(
+            id_estado=5, tipo_estado="entregado", descripcion="Entregado"
+        )
+        self.tipo_efectivo = TipoPago.objects.create(id_tipo_pago=1, nombre="Efectivo")
+
+        persona = Persona.objects.create(
+            nombre="Vendedor", apellido_paterno="Conc", sexo="M",
+            fecha_nacimiento="1990-01-01", domicilio="Calle 1",
+        )
+        user = User.objects.create_user(username="vend@conc.test", email="vend@conc.test", password="pass")
+        self.usuario = Usuario.objects.create(
+            fk_user=user, fk_persona=persona, fk_rol=self.rol_vendedor, correo="vend@conc.test",
+        )
+
+        self.categoria = CategoriaProducto.objects.create(nombre="Verduras", descripcion="Verduras")
+        self.unidad = Unidad.objects.create(tipo="peso", nombre="Kilogramo", abreviatura="kg")
+        producto = Producto.objects.create(
+            nombre_producto="Tomate", descripcion="Tomate rojo", fk_categoria=self.categoria
+        )
+        publicacion = PublicacionSemanal.objects.create(
+            fecha_publicacion="2026-07-28", semana=31, estado="publicado",
+        )
+        self.producto_semanal = ProductoSemanal.objects.create(
+            fk_publicacion=publicacion, fk_producto=producto,
+            fk_unidad=self.unidad, precio=Decimal("25.00"), stock=100,
+        )
+
+    def _crear_pedido(self):
+        pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.usuario, fk_vendedor=self.usuario, fk_estado=self.estado_listo,
+            subtotal=Decimal("100.00"), iva=Decimal("16.00"), total=Decimal("116.00"),
+        )
+        DetallePedido.objects.create(
+            fk_pedido=pedido, fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Tomate", precio_unitario=Decimal("25.00"),
+            cantidad=4, importe=Decimal("100.00"),
+        )
+        return pedido
+
+    def test_folio_no_duplicado_bajo_concurrencia(self):
+        NUM_THREADS = 5
+        pedidos = [self._crear_pedido() for _ in range(NUM_THREADS)]
+        results = []
+        barrier = threading.Barrier(NUM_THREADS)
+
+        def pay(pedido):
+            client = APIClient()
+            client.force_authenticate(user=self.usuario.fk_user)
+            barrier.wait()
+            resp = client.post(
+                "/api/pagos/",
+                {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+            )
+            results.append(resp.status_code)
+
+        threads = [threading.Thread(target=pay, args=(p,)) for p in pedidos]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, results)
+        self.assertNotIn(status.HTTP_409_CONFLICT, results)
+        self.assertEqual(sum(1 for r in results if r == status.HTTP_201_CREATED), NUM_THREADS)
+
+        folios = list(Pago.objects.values_list("folio", flat=True))
+        self.assertEqual(len(folios), NUM_THREADS)
+        self.assertEqual(len(set(folios)), NUM_THREADS, "Folios duplicados bajo concurrencia")

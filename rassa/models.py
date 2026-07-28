@@ -12,7 +12,8 @@ Política de on_delete:
   registros dependientes (ej: TipoPago, EstadoPedido, Rol).
 """
 
-from django.db import models
+from django.db import connection, models
+from django.utils import timezone
 
 # ============================================================
 # 1. TABLAS BASE (sin dependencias)
@@ -490,15 +491,19 @@ class Pago(models.Model):
     class Meta:
         db_table = "pago"
         ordering = ["id_pago"]
+        constraints = [
+            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido"),
+        ]
 
     def __str__(self):
         return f"Pago #{self.id_pago} — ${self.monto}"
 
     def save(self, *args, **kwargs):
         if not self.folio:
-            from django.utils import timezone
-
             today_str = timezone.localdate().strftime("%Y%m%d")
+            lock_id = int(today_str)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
             prefix = f"REC-{today_str}-"
             last = Pago.objects.filter(folio__startswith=prefix).order_by("id_pago").last()
             next_num = int(last.folio.split("-")[-1]) + 1 if last else 1

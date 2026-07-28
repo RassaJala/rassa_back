@@ -89,9 +89,9 @@ class PagoOutputSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField()
     vendedor_nombre = serializers.SerializerMethodField()
     pedido_id = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
-    total_pedido = serializers.DecimalField(source="fk_pedido.total", max_digits=10, decimal_places=2, read_only=True)
-    subtotal = serializers.DecimalField(source="fk_pedido.subtotal", max_digits=10, decimal_places=2, read_only=True)
-    iva = serializers.DecimalField(source="fk_pedido.iva", max_digits=10, decimal_places=2, read_only=True)
+    total_pedido = serializers.SerializerMethodField()
+    subtotal = serializers.SerializerMethodField()
+    iva = serializers.SerializerMethodField()
     detalles = serializers.SerializerMethodField()
 
     class Meta:
@@ -111,6 +111,15 @@ class PagoOutputSerializer(serializers.ModelSerializer):
             "detalles",
             "creado_en",
         ]
+
+    def get_total_pedido(self, obj):
+        return obj.fk_pedido.total if obj.fk_pedido else None
+
+    def get_subtotal(self, obj):
+        return obj.fk_pedido.subtotal if obj.fk_pedido else None
+
+    def get_iva(self, obj):
+        return obj.fk_pedido.iva if obj.fk_pedido else None
 
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
