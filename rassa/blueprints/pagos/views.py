@@ -99,6 +99,8 @@ class PagoViewSet(
         rol = getattr(usuario, "fk_rol", None)
         nombre_rol = rol.nombre_rol if rol else None
 
+        estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
+
         try:
             with transaction.atomic():
                 # Lock the primary model row (no select_related to avoid outer join error in Postgres)
@@ -139,7 +141,6 @@ class PagoViewSet(
 
                 # Advance pedido to entregado
                 estado_anterior = pedido.fk_estado
-                estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
                 pedido.fk_estado = estado_entregado
                 pedido.save(update_fields=["fk_estado"])
 
@@ -151,13 +152,11 @@ class PagoViewSet(
                 )
 
         except IntegrityError as exc:
-            if "folio" in str(exc):
-                logger.warning("Race condition en folio al registrar pago: %s", exc)
-                return ok_response(
-                    message="Error de concurrencia. Intente de nuevo.",
-                    status_code=status.HTTP_409_CONFLICT,
-                )
-            raise
+            logger.warning("IntegrityError al registrar pago: %s", exc)
+            return ok_response(
+                message="Error de concurrencia. Intente de nuevo.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except DatabaseError as exc:
             logger.error("Error de base de datos al registrar pago: %s", exc)
             return ok_response(

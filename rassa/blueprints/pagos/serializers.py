@@ -21,7 +21,6 @@ class PagoCreateSerializer(serializers.Serializer):
     pedido = serializers.IntegerField()
     tipo_pago = serializers.IntegerField()
     monto = serializers.DecimalField(max_digits=10, decimal_places=2)
-    metodo_pago = serializers.CharField(max_length=20, required=False, default="efectivo")
     referencia = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
 
     def validate_tipo_pago(self, value):

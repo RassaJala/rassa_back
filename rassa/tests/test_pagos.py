@@ -466,6 +466,21 @@ class PagoPermisosTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_put_pago_retorna_405(self):
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp = self.client.put("/api/pagos/1/", {"monto": "100.00"})
+        self.assertEqual(resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_patch_pago_retorna_405(self):
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp = self.client.patch("/api/pagos/1/", {"monto": "100.00"})
+        self.assertEqual(resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_delete_pago_retorna_405(self):
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp = self.client.delete("/api/pagos/1/")
+        self.assertEqual(resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
 
 class PagoListTest(PagosTestBase):
     """Tests de listado y detalle de pagos."""
@@ -477,6 +492,9 @@ class PagoListTest(PagosTestBase):
     def test_listar_pagos_vacio(self):
         resp = self.client.get("/api/pagos/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(data["results"], [])
 
     def test_listar_pagos_con_datos(self):
         pedido = self._crear_pedido(self.estado_listo)
@@ -490,8 +508,10 @@ class PagoListTest(PagosTestBase):
         )
         resp = self.client.get("/api/pagos/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        results = resp.json()
-        self.assertTrue(len(results) >= 1)
+        data = resp.json()
+        self.assertGreaterEqual(data["count"], 1)
+        pedido_ids = [p["pedido_id"] for p in data["results"]]
+        self.assertIn(pedido.id_pedido, pedido_ids)
 
     def test_detalle_pago(self):
         pedido = self._crear_pedido(self.estado_listo)
@@ -551,7 +571,7 @@ class PagoListTest(PagosTestBase):
         resp = self.client.get("/api/pagos/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data = resp.json()
-        results = data if isinstance(data, list) else data.get("results", data)
+        results = data.get("results", data)
         pago_ids = [p["pedido_id"] for p in results]
         self.assertNotIn(pedido_otro.id_pedido, pago_ids)
 
@@ -581,16 +601,14 @@ class PagoListTest(PagosTestBase):
         resp_all = self.client.get("/api/pagos/")
         self.assertEqual(resp_all.status_code, status.HTTP_200_OK)
         data_all = resp_all.json()
-        results_all = data_all if isinstance(data_all, list) else data_all.get("results", data_all)
+        results_all = data_all.get("results", data_all)
         self.assertTrue(len(results_all) >= 2)
 
         # Query filtered by pedido1
         resp_filtered = self.client.get(f"/api/pagos/?pedido={pedido1.id_pedido}")
         self.assertEqual(resp_filtered.status_code, status.HTTP_200_OK)
         data_filtered = resp_filtered.json()
-        results_filtered = (
-            data_filtered if isinstance(data_filtered, list) else data_filtered.get("results", data_filtered)
-        )
+        results_filtered = data_filtered.get("results", data_filtered)
         self.assertEqual(len(results_filtered), 1)
         self.assertEqual(results_filtered[0]["id_pago"], pago1.id_pago)
 
