@@ -86,8 +86,8 @@ class PagoViewSet(
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        pedido_id = serializer.validated_data["fk_pedido"]
-        tipo_id = serializer.validated_data["fk_tipo"]
+        pedido_id = serializer.validated_data["pedido"]
+        tipo_id = serializer.validated_data["tipo_pago"]
         monto = serializer.validated_data["monto"]
         referencia = serializer.validated_data.get("referencia", "")
 

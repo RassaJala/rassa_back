@@ -18,12 +18,13 @@ class TipoPagoSerializer(serializers.ModelSerializer):
 class PagoCreateSerializer(serializers.Serializer):
     """Serializer de entrada para registrar un pago."""
 
-    fk_pedido = serializers.IntegerField()
-    fk_tipo = serializers.IntegerField()
+    pedido = serializers.IntegerField()
+    tipo_pago = serializers.IntegerField()
     monto = serializers.DecimalField(max_digits=10, decimal_places=2)
+    metodo_pago = serializers.CharField(max_length=20, required=False, default="efectivo")
     referencia = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
 
-    def validate_fk_tipo(self, value):
+    def validate_tipo_pago(self, value):
         if not TipoPago.objects.filter(pk=value).exists():
             raise serializers.ValidationError("El tipo de pago no existe.")
         return value
@@ -34,25 +35,25 @@ class PagoCreateSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        pedido_id = attrs.get("fk_pedido")
+        pedido_id = attrs.get("pedido")
         monto = attrs.get("monto")
 
         try:
             pedido = PedidoCabecera.objects.select_related("fk_estado").get(pk=pedido_id)
         except PedidoCabecera.DoesNotExist as err:
-            raise serializers.ValidationError({"fk_pedido": "El pedido no existe."}) from err
+            raise serializers.ValidationError({"pedido": "El pedido no existe."}) from err
 
         estado_actual = pedido.fk_estado.tipo_estado
         if estado_actual != ESTADO_REQUERIDO:
             raise serializers.ValidationError(
                 {
-                    "fk_pedido": f"Solo se puede registrar pago cuando el pedido está en '{ESTADO_REQUERIDO}'. "
+                    "pedido": f"Solo se puede registrar pago cuando el pedido está en '{ESTADO_REQUERIDO}'. "
                     f"Estado actual: '{estado_actual}'."
                 }
             )
 
         if Pago.objects.filter(fk_pedido_id=pedido_id).exists():
-            raise serializers.ValidationError({"fk_pedido": "Este pedido ya tiene un pago registrado."})
+            raise serializers.ValidationError({"pedido": "Este pedido ya tiene un pago registrado."})
 
         if monto is not None and abs(pedido.total - monto) > Decimal("0.001"):
             raise serializers.ValidationError(

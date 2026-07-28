@@ -166,8 +166,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -187,8 +187,8 @@ class PagoCreateTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -204,8 +204,8 @@ class PagoCreateTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": p1.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": p1.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -215,8 +215,8 @@ class PagoCreateTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": p2.id_pedido,
-                "fk_tipo": self.tipo_transferencia.id_tipo_pago,
+                "pedido": p2.id_pedido,
+                "tipo_pago": self.tipo_transferencia.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -231,8 +231,8 @@ class PagoCreateTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -246,8 +246,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -258,8 +258,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "1.00",
             },
         )
@@ -271,8 +271,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -283,8 +283,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -295,8 +295,8 @@ class PagoCreateTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -304,8 +304,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -315,8 +315,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": 99999,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": 99999,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -327,8 +327,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": 99999,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": 99999,
                 "monto": "116.00",
             },
         )
@@ -339,8 +339,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "0.00",
             },
         )
@@ -351,8 +351,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_transferencia.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_transferencia.id_tipo_pago,
                 "monto": "116.00",
                 "referencia": "TRANSF-12345",
             },
@@ -366,8 +366,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -382,8 +382,8 @@ class PagoCreateTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -402,8 +402,8 @@ class PagoPermisosTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -414,8 +414,8 @@ class PagoPermisosTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -435,8 +435,8 @@ class PagoPermisosTest(PagosTestBase):
         resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido_otro.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido_otro.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -459,8 +459,8 @@ class PagoListTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -474,8 +474,8 @@ class PagoListTest(PagosTestBase):
         create_resp = self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -517,8 +517,8 @@ class PagoListTest(PagosTestBase):
         client2.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido_otro.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido_otro.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -537,8 +537,8 @@ class PagoListTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido1.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido1.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
@@ -548,8 +548,8 @@ class PagoListTest(PagosTestBase):
         self.client.post(
             "/api/pagos/",
             {
-                "fk_pedido": pedido2.id_pedido,
-                "fk_tipo": self.tipo_efectivo.id_tipo_pago,
+                "pedido": pedido2.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
                 "monto": "116.00",
             },
         )
