@@ -91,7 +91,6 @@ class PagoViewSet(
         pedido_id = serializer.validated_data["pedido"]
         tipo_id = serializer.validated_data["tipo_pago"]
         monto = serializer.validated_data["monto"]
-        metodo_pago = serializer.validated_data.get("metodo_pago", "efectivo")
         referencia = serializer.validated_data.get("referencia", "")
 
         usuario = getattr(request.user, "usuario", None)
@@ -134,7 +133,6 @@ class PagoViewSet(
                     fk_pedido=pedido,
                     fk_tipo_id=tipo_id,
                     monto=monto,
-                    metodo_pago=metodo_pago,
                     referencia=referencia,
                 )
                 pago.save()
