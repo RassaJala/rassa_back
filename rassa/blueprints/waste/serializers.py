@@ -1,9 +1,15 @@
+from django.core.validators import MinValueValidator
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from rassa.models import DecisionMerma, Merma
 
 
 class DecisionMermaSerializer(serializers.ModelSerializer):
+    decision = serializers.CharField(
+        validators=[UniqueValidator(queryset=DecisionMerma.objects.all())]
+    )
+
     class Meta:
         model = DecisionMerma
         fields = ["id_decision", "decision", "creado_en", "estado"]
@@ -11,7 +17,7 @@ class DecisionMermaSerializer(serializers.ModelSerializer):
 
 
 class MermaCreateSerializer(serializers.ModelSerializer):
-    fk_producto_semanal = serializers.IntegerField()
+    fk_producto_semanal = serializers.IntegerField(validators=[MinValueValidator(1)])
 
     class Meta:
         model = Merma

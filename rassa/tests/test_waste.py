@@ -23,6 +23,7 @@ from rassa.models import (
     Unidad,
     Usuario,
 )
+from rassa.views import CatalogPagination
 
 
 def _create_user_with_role(nombre_rol, username):
@@ -409,15 +410,36 @@ class MermaListTests(WasteBaseTestCase):
         self.assertEqual(di["id"], self.decision.id_decision)
         self.assertEqual(di["nombre"], self.decision.decision)
 
-    def test_merma_list_pagination(self):
-        """Paginación: 25 mermas → page 1 tiene 20, next apunta a page 2."""
-        Merma.objects.bulk_create(
-            [Merma(cantidad=1, motivo=f"Merma extra {i}", fk_decision=self.decision) for i in range(24)]
+    def test_merma_list_incluye_inactivos(self):
+        """incluir_inactivos=true muestra mermas inactivas."""
+        m = Merma.objects.create(
+            cantidad=1,
+            motivo="Test inactivo",
+            fk_decision=self.decision,
+            fk_producto_semanal=self.producto_semanal,
+            estado=False,
         )
-        # Total = 1 (setUp) + 24 = 25
+        data = self._assert_success_envelope(
+            self.client.get(reverse("merma-list"), {"incluir_inactivos": "true"})
+        )
+        ids = [item["id_merma"] for item in data["results"]]
+        self.assertIn(m.id_merma, ids)
+
+    def test_merma_list_pagination(self):
+        """Paginación: 25 mermas → page 1 tiene page_size, next apunta a page 2."""
+        page_size = CatalogPagination.page_size
+        Merma.objects.bulk_create(
+            [
+                Merma(cantidad=1, motivo=f"Merma extra {i}", fk_decision=self.decision,
+                      fk_producto_semanal=self.producto_semanal)
+                for i in range(page_size + 4)
+            ]
+        )
+        # Total = 1 (setUp) + (page_size + 4) = page_size + 5
+        expected_total = 1 + page_size + 4
         data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
-        self.assertEqual(data["count"], 25)
-        self.assertEqual(len(data["results"]), 20)
+        self.assertEqual(data["count"], expected_total)
+        self.assertEqual(len(data["results"]), page_size)
         self.assertIsNotNone(data["next"])
         self.assertIsNone(data["previous"])
 

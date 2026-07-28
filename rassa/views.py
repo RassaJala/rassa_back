@@ -72,23 +72,26 @@ class OkResponseMixin:
 
     Class attributes
     ----------------
+    create_message : str or None
+        If set, included in the POST response envelope along with status_code.
     update_message : str or None
-        If set, included in the PATCH/PUT response envelope.
+        If set, included in the PATCH/PUT response envelope along with status_code.
     """
 
+    create_message = None
     update_message = None
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        return ok_response(data=response.data)
+        return ok_response(data=response.data, status_code=response.status_code)
 
     def retrieve(self, request, *args, **kwargs):
         response = super().retrieve(request, *args, **kwargs)
-        return ok_response(data=response.data)
+        return ok_response(data=response.data, status_code=response.status_code)
 
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        return ok_response(data=response.data, status_code=response.status_code)
+        return ok_response(data=response.data, status_code=response.status_code, message=self.create_message)
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)

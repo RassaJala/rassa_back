@@ -29,6 +29,7 @@ class DecisionMermaViewSet(OkResponseMixin, ModelViewSet):
     serializer_class = DecisionMermaSerializer
     permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
     pagination_class = CatalogPagination
+    create_message = "Decisión registrada correctamente."
     update_message = "Decisión actualizada correctamente."
 
     def get_queryset(self):
@@ -46,10 +47,10 @@ class DecisionMermaViewSet(OkResponseMixin, ModelViewSet):
         return ok_response(message="Decisión desactivada")
 
 
-class MermaViewSet(OkResponseMixin, mixins.ListModelMixin, mixins.CreateModelMixin, GenericViewSet):
+class MermaViewSet(OkResponseMixin, mixins.RetrieveModelMixin, mixins.ListModelMixin, mixins.CreateModelMixin, GenericViewSet):
     """ViewSet para registro y consulta de mermas.
 
-    - List: accesible por Admin y Vendedor.
+    - List / Retrieve: accesible por Admin y Vendedor.
     - Create: accesible por Admin y Vendedor. Descuenta stock del
       ProductoSemanal dentro de una transacción atómica con lock.
     """
