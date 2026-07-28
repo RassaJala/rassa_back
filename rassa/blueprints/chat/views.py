@@ -16,14 +16,6 @@ from rest_framework.views import APIView
 from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
-
-def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
-    body = {"ok": False, "message": message}
-    if data is not None:
-        body["data"] = data
-    return Response(body, status=status_code)
-
-
 from .serializers import (
     MensajeCreateSerializer,
     MensajeDocumentoCreateSerializer,
@@ -31,6 +23,13 @@ from .serializers import (
     MensajeUpdateSerializer,
     UsuarioBuscarSerializer,
 )
+
+
+def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
+    body = {"ok": False, "message": message}
+    if data is not None:
+        body["data"] = data
+    return Response(body, status=status_code)
 
 
 def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupal=False):
