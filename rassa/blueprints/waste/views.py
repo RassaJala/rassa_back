@@ -47,7 +47,13 @@ class DecisionMermaViewSet(OkResponseMixin, ModelViewSet):
         return ok_response(message="Decisión desactivada")
 
 
-class MermaViewSet(OkResponseMixin, mixins.RetrieveModelMixin, mixins.ListModelMixin, mixins.CreateModelMixin, GenericViewSet):
+class MermaViewSet(
+    OkResponseMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    GenericViewSet,
+):
     """ViewSet para registro y consulta de mermas.
 
     - List / Retrieve: accesible por Admin y Vendedor.
