@@ -502,9 +502,7 @@ class ChatTests(APITestCase):
 
     def test_inactivar_mensaje_justo_antes_del_limite(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(
-            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde"
-        )
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde")
         Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
             creado_en=timezone.now() - timedelta(minutes=14, seconds=59),
         )
@@ -515,9 +513,7 @@ class ChatTests(APITestCase):
 
     def test_inactivar_mensaje_justo_despues_del_limite(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(
-            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde"
-        )
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde")
         Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
             creado_en=timezone.now() - timedelta(minutes=15, seconds=1),
         )
@@ -530,9 +526,7 @@ class ChatTests(APITestCase):
 
     def test_editar_mensaje_exitoso(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(
-            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Original"
-        )
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Original")
 
         url = reverse("chat-mensajes-editar", args=[mensaje.id_mensaje])
         response = self.client.patch(url, {"contenido": "Editado"})
@@ -546,9 +540,7 @@ class ChatTests(APITestCase):
 
     def test_editar_mensaje_ajeno_denegado(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(
-            fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De otro"
-        )
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De otro")
 
         url = reverse("chat-mensajes-editar", args=[mensaje.id_mensaje])
         response = self.client.patch(url, {"contenido": "Hack"})
@@ -557,9 +549,7 @@ class ChatTests(APITestCase):
 
     def test_editar_mensaje_expirado(self):
         conv = self._crear_conversacion_privada()
-        mensaje = Mensaje.objects.create(
-            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Viejo"
-        )
+        mensaje = Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Viejo")
         Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
             creado_en=timezone.now() - timedelta(minutes=20),
         )
@@ -617,9 +607,7 @@ class ChatTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         conv_id = response.json()["data"]["id_conversacion"]
         self.assertEqual(
-            Integrante.objects.filter(
-                fk_conversacion_id=conv_id, estado=True
-            ).count(),
+            Integrante.objects.filter(fk_conversacion_id=conv_id, estado=True).count(),
             2,  # creator + user2, not duplicated
         )
 
