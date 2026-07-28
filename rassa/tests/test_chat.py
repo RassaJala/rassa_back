@@ -209,7 +209,11 @@ class ChatTests(APITestCase):
     def test_enviar_mensaje_con_documento_alias_conversacion_y_documento(self):
         conv = self._crear_conversacion_privada()
         url = reverse("chat-mensajes-enviar-con-documento")
-        archivo = SimpleUploadedFile("prueba.jpg", b"contenido de prueba", content_type="image/jpeg")
+        archivo = SimpleUploadedFile(
+            "prueba.jpg",
+            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00",
+            content_type="image/jpeg",
+        )
         response = self.client.post(
             url,
             {
