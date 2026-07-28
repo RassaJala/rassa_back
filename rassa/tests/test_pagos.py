@@ -489,6 +489,7 @@ class PagoPermisosTest(PagosTestBase):
     def test_throttle_scopes_configured(self):
         """Verificar que los scopes de throttle existen en la configuracion."""
         from rassa.settings import REST_FRAMEWORK as rf
+
         self.assertIn("pagos_read", rf["DEFAULT_THROTTLE_RATES"])
         self.assertIn("pagos_write", rf["DEFAULT_THROTTLE_RATES"])
 
