@@ -21,6 +21,7 @@ class PagoCreateSerializer(serializers.Serializer):
     pedido = serializers.IntegerField()
     tipo_pago = serializers.IntegerField()
     monto = serializers.DecimalField(max_digits=10, decimal_places=2)
+    metodo_pago = serializers.CharField(max_length=20, required=False, default="efectivo")
     referencia = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
 
     def validate_tipo_pago(self, value):
@@ -69,89 +70,82 @@ def _nombre_completo(usuario):
     return None
 
 
-class DetallePedidoReciboSerializer(serializers.ModelSerializer):
+class ProductoReciboSerializer(serializers.ModelSerializer):
+    nombre = serializers.CharField(source="nombre_producto", read_only=True)
+    precio = serializers.DecimalField(source="precio_unitario", max_digits=10, decimal_places=2, read_only=True)
+
     class Meta:
         model = DetallePedido
         fields = [
-            "id_detalle",
-            "nombre_producto",
-            "precio_unitario",
+            "nombre",
+            "precio",
             "cantidad",
-            "importe",
         ]
 
 
 class PagoOutputSerializer(serializers.ModelSerializer):
-    """Serializer de salida con datos del pago + recibo."""
+    """Serializer de salida con datos del pago + recibo (formato frontend)."""
 
-    tipo_pago = serializers.CharField(source="fk_tipo.nombre", read_only=True)
+    pedido = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    tipo_pago = serializers.IntegerField(source="fk_tipo_id", read_only=True)
+    tipo_pago_nombre = serializers.CharField(source="fk_tipo.nombre", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
-    vendedor_nombre = serializers.SerializerMethodField()
-    pedido_id = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    cliente_id = serializers.IntegerField(source="fk_pedido.fk_cliente_id", read_only=True)
     total_pedido = serializers.SerializerMethodField()
-    subtotal = serializers.SerializerMethodField()
-    iva = serializers.SerializerMethodField()
-    detalles = serializers.SerializerMethodField()
+    fecha_pago = serializers.DateTimeField(source="creado_en", read_only=True)
+    productos = serializers.SerializerMethodField()
 
     class Meta:
         model = Pago
         fields = [
             "id_pago",
             "folio",
-            "pedido_id",
-            "cliente_nombre",
-            "vendedor_nombre",
+            "pedido",
             "tipo_pago",
+            "tipo_pago_nombre",
+            "cliente_nombre",
+            "cliente_id",
+            "metodo_pago",
             "monto",
             "referencia",
-            "subtotal",
-            "iva",
             "total_pedido",
-            "detalles",
-            "creado_en",
+            "productos",
+            "fecha_pago",
         ]
 
     def get_total_pedido(self, obj):
-        return obj.fk_pedido.total if obj.fk_pedido else None
-
-    def get_subtotal(self, obj):
-        return obj.fk_pedido.subtotal if obj.fk_pedido else None
-
-    def get_iva(self, obj):
-        return obj.fk_pedido.iva if obj.fk_pedido else None
+        return str(obj.fk_pedido.total) if obj.fk_pedido else None
 
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
         return _nombre_completo(pedido.fk_cliente) if pedido else None
 
-    def get_vendedor_nombre(self, obj):
-        pedido = obj.fk_pedido
-        return _nombre_completo(pedido.fk_vendedor) if pedido else None
-
-    def get_detalles(self, obj):
+    def get_productos(self, obj):
         if not obj.fk_pedido:
             return []
         detalles = obj.fk_pedido.detallepedido_set.all()
-        return DetallePedidoReciboSerializer(detalles, many=True).data
+        return ProductoReciboSerializer(detalles, many=True).data
 
 
 class PagoListSerializer(serializers.ModelSerializer):
     """Serializer para listar pagos."""
 
-    tipo_pago = serializers.CharField(source="fk_tipo.nombre", read_only=True)
+    pedido = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    tipo_pago_nombre = serializers.CharField(source="fk_tipo.nombre", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
-    pedido_id = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    fecha_pago = serializers.DateTimeField(source="creado_en", read_only=True)
 
     class Meta:
         model = Pago
         fields = [
             "id_pago",
             "folio",
-            "pedido_id",
+            "pedido",
+            "tipo_pago_nombre",
             "cliente_nombre",
-            "tipo_pago",
+            "metodo_pago",
             "monto",
-            "creado_en",
+            "fecha_pago",
         ]
 
     def get_cliente_nombre(self, obj):

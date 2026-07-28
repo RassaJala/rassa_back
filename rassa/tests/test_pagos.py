@@ -173,11 +173,11 @@ class PagoCreateTest(PagosTestBase):
             },
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        data = resp.json()["data"]
+        data = resp.json()
         self.assertIn("folio", data)
         self.assertTrue(data["folio"].startswith("REC-"))
         self.assertEqual(data["monto"], "116.00")
-        self.assertEqual(data["tipo_pago"], "Efectivo")
+        self.assertEqual(data["tipo_pago_nombre"], "Efectivo")
 
         # Pedido debe pasar a entregado
         pedido.refresh_from_db()
@@ -359,7 +359,7 @@ class PagoCreateTest(PagosTestBase):
             },
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        data = resp.json()["data"]
+        data = resp.json()
         self.assertEqual(data["referencia"], "TRANSF-12345")
 
     def test_respuesta_incluye_detalles_pedido(self):
@@ -372,10 +372,10 @@ class PagoCreateTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
-        data = resp.json()["data"]
-        self.assertIn("detalles", data)
-        self.assertEqual(len(data["detalles"]), 1)
-        self.assertEqual(data["detalles"][0]["nombre_producto"], "Tomate")
+        data = resp.json()
+        self.assertIn("productos", data)
+        self.assertEqual(len(data["productos"]), 1)
+        self.assertEqual(data["productos"][0]["nombre"], "Tomate")
 
     def test_admin_puede_crear_pago(self):
         self.client.force_authenticate(user=self.user_admin)
@@ -426,7 +426,7 @@ class PagoPermisosTest(PagosTestBase):
         self.client.force_authenticate(user=self.user_cliente)
         resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        nombres = [t["nombre"] for t in resp.json()["data"]]
+        nombres = [t["nombre"] for t in resp.json()]
         self.assertIn("Efectivo", nombres)
         self.assertIn("Transferencia", nombres)
 
@@ -510,7 +510,7 @@ class PagoListTest(PagosTestBase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data = resp.json()
         self.assertGreaterEqual(data["count"], 1)
-        pedido_ids = [p["pedido_id"] for p in data["results"]]
+        pedido_ids = [p["pedido"] for p in data["results"]]
         self.assertIn(pedido.id_pedido, pedido_ids)
 
     def test_detalle_pago(self):
@@ -523,12 +523,12 @@ class PagoListTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
-        pago_id = create_resp.json()["data"]["id_pago"]
+        pago_id = create_resp.json()["id_pago"]
         resp = self.client.get(f"/api/pagos/{pago_id}/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data = resp.json()
         self.assertEqual(data["id_pago"], pago_id)
-        self.assertIn("detalles", data)
+        self.assertIn("productos", data)
 
     def test_tipos_pago_endpoint(self):
         # El endpoint antiguo /api/pagos/tipos/ ya no existe (404)
@@ -538,7 +538,7 @@ class PagoListTest(PagosTestBase):
         # El nuevo endpoint /api/tipos-pago/ debe retornar los tipos de pago
         resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        nombres = [t["nombre"] for t in resp.json()["data"]]
+        nombres = [t["nombre"] for t in resp.json()]
         self.assertIn("Efectivo", nombres)
         self.assertIn("Transferencia", nombres)
 
@@ -572,7 +572,7 @@ class PagoListTest(PagosTestBase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data = resp.json()
         results = data.get("results", data)
-        pago_ids = [p["pedido_id"] for p in results]
+        pago_ids = [p["pedido"] for p in results]
         self.assertNotIn(pedido_otro.id_pedido, pago_ids)
 
     def test_filtrar_pagos_por_pedido(self):
@@ -633,7 +633,7 @@ class PagoListTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
-        pago_id = create_resp.json()["data"]["id_pago"]
+        pago_id = create_resp.json()["id_pago"]
 
         # Original vendedor should NOT be able to see the detail
         resp = self.client.get(f"/api/pagos/{pago_id}/")
