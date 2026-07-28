@@ -240,14 +240,17 @@ class Command(BaseCommand):
                 [table, pk],
             )
             row = cursor.fetchone()
-            if row and row[0]:  # IDENTITY column
+            if row and row[0]:  # IDENTITY column — use setval on the auto-created sequence
+                seq = f"{table}_{pk}_seq"
                 cursor.execute(
-                    f"SELECT COALESCE(MAX({q_pk}), 0) + 1 FROM {q_table}",
+                    "SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = %s",
+                    [seq],
                 )
-                next_value = cursor.fetchone()[0]
-                cursor.execute(
-                    f"ALTER TABLE {q_table} ALTER COLUMN {q_pk} RESTART WITH {next_value}",
-                )
+                if cursor.fetchone():
+                    q_seq = connection.ops.quote_name(seq)
+                    cursor.execute(
+                        f"SELECT setval({q_seq}, COALESCE((SELECT MAX({q_pk}) FROM {q_table}), 1), true)",
+                    )
             else:
                 cursor.execute(
                     f"SELECT setval(pg_get_serial_sequence(%s, %s), "

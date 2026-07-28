@@ -209,7 +209,7 @@ class ChatTests(APITestCase):
     def test_enviar_mensaje_con_documento_alias_conversacion_y_documento(self):
         conv = self._crear_conversacion_privada()
         url = reverse("chat-mensajes-enviar-con-documento")
-        archivo = SimpleUploadedFile("prueba.txt", b"contenido de prueba", content_type="text/plain")
+        archivo = SimpleUploadedFile("prueba.jpg", b"contenido de prueba", content_type="image/jpeg")
         response = self.client.post(
             url,
             {
@@ -659,4 +659,4 @@ class ChatTests(APITestCase):
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("extensión", response.json()["message"].lower())
+        self.assertIn("extensión", response.json()["archivo"][0].lower())
