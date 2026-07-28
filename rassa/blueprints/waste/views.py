@@ -4,6 +4,7 @@ import logging
 
 from django.db import transaction
 from rest_framework import mixins, permissions, status
+from rest_framework.response import Response
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
@@ -28,6 +29,7 @@ class DecisionMermaViewSet(OkResponseMixin, ModelViewSet):
     serializer_class = DecisionMermaSerializer
     permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
     pagination_class = CatalogPagination
+    update_message = "Decisión actualizada correctamente."
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -61,15 +63,15 @@ class MermaViewSet(OkResponseMixin, mixins.ListModelMixin, mixins.CreateModelMix
         return MermaListSerializer
 
     def get_queryset(self):
-        return (
-            Merma.objects.select_related(
-                "fk_producto_semanal__fk_producto",
-                "fk_producto_semanal__fk_publicacion",
-                "fk_decision",
-            )
-            .all()
-            .order_by("-creado_en")
+        qs = Merma.objects.select_related(
+            "fk_producto_semanal__fk_producto",
+            "fk_producto_semanal__fk_publicacion",
+            "fk_decision",
         )
+        incluir_inactivos = self.request.query_params.get("incluir_inactivos", "").lower() in ("true", "1")
+        if not incluir_inactivos:
+            qs = qs.filter(estado=True)
+        return qs.order_by("-creado_en")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -103,9 +105,9 @@ class MermaViewSet(OkResponseMixin, mixins.ListModelMixin, mixins.CreateModelMix
             raise NotFound({"fk_producto_semanal": "El producto semanal no existe."}) from None
         except Exception as exc:
             logger.error("Error inesperado al registrar merma: %s", exc)
-            return ok_response(
-                message="Error al registrar la merma. Intente de nuevo.",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return Response(
+                {"ok": False, "message": "Error al registrar la merma. Intente de nuevo."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         _log(request.user, f"merma_creada Merma #{merma.id_merma} — {merma.motivo}", request)

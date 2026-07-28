@@ -63,15 +63,27 @@ class OkResponseMixin:
     Usage::
 
         class MyViewSet(OkResponseMixin, ModelViewSet):
+            update_message = "Registro actualizado correctamente."  # optional
             ...
 
     Override ``destroy()`` separately when using soft-delete or custom
     delete logic — this mixin does NOT wrap destroy since its behavior
     varies across the project.
+
+    Class attributes
+    ----------------
+    update_message : str or None
+        If set, included in the PATCH/PUT response envelope.
     """
+
+    update_message = None
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
+        return ok_response(data=response.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
         return ok_response(data=response.data)
 
     def create(self, request, *args, **kwargs):
@@ -80,7 +92,7 @@ class OkResponseMixin:
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
-        return ok_response(data=response.data)
+        return ok_response(data=response.data, status_code=response.status_code, message=self.update_message)
 
 
 class RegisterView(generics.CreateAPIView):

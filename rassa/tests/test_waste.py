@@ -133,6 +133,14 @@ class DecisionMermaTests(WasteBaseTestCase):
         super().setUp()
         self.client.force_authenticate(self.admin)
 
+    def test_admin_retrieve_decision(self):
+        data = self._assert_success_envelope(
+            self.client.get(reverse("decision-merma-detail", args=[self.decision.id_decision]))
+        )
+        self.assertEqual(data["id_decision"], self.decision.id_decision)
+        self.assertEqual(data["decision"], self.decision.decision)
+        self.assertTrue(data["estado"])
+
     def test_admin_list_decisiones(self):
         data = self._assert_success_envelope(self.client.get(reverse("decision-merma-list")))
         self.assertIn("count", data)
@@ -148,13 +156,14 @@ class DecisionMermaTests(WasteBaseTestCase):
         self.assertTrue(data["estado"])
 
     def test_admin_update_decision(self):
-        data = self._assert_success_envelope(
-            self.client.patch(
-                reverse("decision-merma-detail", args=[self.decision.id_decision]),
-                {"decision": "Reciclar"},
-                format="json",
-            )
+        response = self.client.patch(
+            reverse("decision-merma-detail", args=[self.decision.id_decision]),
+            {"decision": "Reciclar"},
+            format="json",
         )
+        body = response.json()
+        self.assertEqual(body.get("message"), "Decisión actualizada correctamente.")
+        data = self._assert_success_envelope(response)
         self.assertEqual(data["decision"], "Reciclar")
 
     def test_admin_delete_decision_soft(self):
