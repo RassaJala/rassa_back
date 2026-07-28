@@ -11,9 +11,16 @@ class DecisionMermaSerializer(serializers.ModelSerializer):
 
 
 class MermaCreateSerializer(serializers.ModelSerializer):
+    fk_producto_semanal = serializers.IntegerField()
+
     class Meta:
         model = Merma
         fields = ["fk_producto_semanal", "cantidad", "motivo", "comentarios", "fk_decision"]
+
+    def validate_fk_decision(self, value):
+        if not value.estado:
+            raise serializers.ValidationError("La decisión de merma no está activa.")
+        return value
 
     def validate_cantidad(self, value):
         if value <= 0:
@@ -45,6 +52,8 @@ class MermaListSerializer(serializers.ModelSerializer):
         if obj.fk_producto_semanal is None:
             return None
         ps = obj.fk_producto_semanal
+        if ps.fk_producto is None or ps.fk_publicacion is None:
+            return None
         return {
             "id": ps.id_producto_semanal,
             "producto": str(ps.fk_producto),
@@ -53,6 +62,8 @@ class MermaListSerializer(serializers.ModelSerializer):
         }
 
     def get_decision_info(self, obj):
+        if obj.fk_decision is None:
+            return None
         return {
             "id": obj.fk_decision.id_decision,
             "nombre": obj.fk_decision.decision,

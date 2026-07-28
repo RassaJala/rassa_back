@@ -1,12 +1,15 @@
 """Tests para el blueprint Waste (Mermas)."""
 
 from datetime import date
+from threading import Barrier, Thread
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections
+from django.test import TransactionTestCase
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from rassa.models import (
     CategoriaProducto,
@@ -186,6 +189,8 @@ class DecisionMermaTests(WasteBaseTestCase):
             # Delete
             response = self.client.delete(reverse("decision-merma-detail", args=[self.decision.id_decision]))
             self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        # Restore admin auth so subsequent tests are not polluted
+        self.client.force_authenticate(self.admin)
 
 
 # ======================================================================
@@ -240,13 +245,15 @@ class MermaCreateTests(WasteBaseTestCase):
         self.assertIn("fk_producto_semanal", body)
 
     def test_merma_invalid_producto(self):
-        """Error si producto_semanal no existe."""
+        """Error 404 si producto_semanal no existe."""
         response = self.client.post(
             reverse("merma-list"),
             self._create_merma_payload(fk_producto_semanal=99999),
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        body = response.json()
+        self.assertIn("fk_producto_semanal", body)
 
     def test_merma_stock_exacto(self):
         """Si cantidad == stock, queda en 0."""
@@ -285,6 +292,38 @@ class MermaCreateTests(WasteBaseTestCase):
         response = self.client.post(
             reverse("merma-list"),
             self._create_merma_payload(motivo=""),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_merma_sin_comentarios_guarda_null(self):
+        """Si no se envía comentarios, se guarda como NULL, no como ''."""
+        payload = self._create_merma_payload()
+        del payload["comentarios"]
+        data = self._assert_success_envelope(
+            self.client.post(reverse("merma-list"), payload, format="json"),
+            status_code=status.HTTP_201_CREATED,
+        )
+        self.assertIsNone(data["comentarios"])
+
+    def test_merma_con_comentarios_null_guarda_null(self):
+        """Si se envía comentarios como null, se guarda como NULL."""
+        data = self._assert_success_envelope(
+            self.client.post(
+                reverse("merma-list"),
+                self._create_merma_payload(comentarios=None),
+                format="json",
+            ),
+            status_code=status.HTTP_201_CREATED,
+        )
+        self.assertIsNone(data["comentarios"])
+
+    def test_merma_decision_inactiva_rechazada(self):
+        """Error si fk_decision está desactivada."""
+        decision_inactiva = DecisionMerma.objects.create(decision="Tirar", estado=False)
+        response = self.client.post(
+            reverse("merma-list"),
+            self._create_merma_payload(fk_decision=decision_inactiva.id_decision),
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -362,11 +401,16 @@ class MermaListTests(WasteBaseTestCase):
         self.assertEqual(di["nombre"], self.decision.decision)
 
     def test_merma_list_pagination(self):
+        """Paginación: 25 mermas → page 1 tiene 20, next apunta a page 2."""
+        Merma.objects.bulk_create(
+            [Merma(cantidad=1, motivo=f"Merma extra {i}", fk_decision=self.decision) for i in range(24)]
+        )
+        # Total = 1 (setUp) + 24 = 25
         data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
+        self.assertEqual(data["count"], 25)
+        self.assertEqual(len(data["results"]), 20)
+        self.assertIsNotNone(data["next"])
+        self.assertIsNone(data["previous"])
 
     def test_agricultor_cannot_list_mermas(self):
         self.client.force_authenticate(self.agricultor)
@@ -377,3 +421,91 @@ class MermaListTests(WasteBaseTestCase):
         self.client.force_authenticate(None)
         response = self.client.get(reverse("merma-list"))
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+# ======================================================================
+# CONCURRENCIA
+# ======================================================================
+
+
+class MermaConcurrencyTests(TransactionTestCase):
+    """Verifica que select_for_update() previene race conditions en stock.
+
+    Usa TransactionTestCase (no APITestCase) porque select_for_update()
+    requiere transacciones reales de base de datos — APITestCase envuelve
+    cada test en una transacción que bloquea el lock.
+    """
+
+    def setUp(self):
+        super().setUp()
+
+        patcher = patch("django.utils.timezone.localdate")
+        self.mock_date = patcher.start()
+        self.mock_date.return_value = date(2026, 7, 20)
+        self.addCleanup(patcher.stop)
+
+        self.admin = _create_user_with_role("Admin", "conc_admin")
+        self.vendedor = _create_user_with_role("Vendedor", "conc_vendedor")
+
+        self.categoria = CategoriaProducto.objects.create(nombre="Frutas", descripcion="Frutas", estado=True)
+        self.producto = Producto.objects.create(
+            nombre_producto="Manzana",
+            fk_categoria=self.categoria,
+            es_perecedero=True,
+            estado=True,
+        )
+        self.unidad = Unidad.objects.create(nombre="Kilogramo", abreviatura="kg", tipo="Kilogramo", estado=True)
+        self.decision = DecisionMerma.objects.create(decision="Donar")
+        self.publicacion = PublicacionSemanal.objects.create(
+            fk_agricultor=self.admin.usuario,
+            fecha_publicacion=date(2026, 7, 20),
+            semana=30,
+            estado=PublicacionSemanal.ESTADO_PUBLICADO,
+        )
+        self.producto_semanal = ProductoSemanal.objects.create(
+            fk_publicacion=self.publicacion,
+            fk_producto=self.producto,
+            fk_unidad=self.unidad,
+            stock=10,
+            precio="25.00",
+            foto="http://example.com/foto.jpg",
+            estado=ProductoSemanal.ESTADO_ACTIVO,
+        )
+
+    def test_concurrent_merma_race_condition(self):
+        """Dos hilos intentan crear mermas que agotan stock. Solo una debe fallar.
+
+        Stock=10. Dos hilos intentan crear mermas de 6 unidades cada uno.
+        select_for_update() serializa el acceso: el primero descuenta,
+        el segundo ve stock insuficiente y falla.
+        """
+        barrier = Barrier(2, timeout=30)
+        results = []
+
+        def _create():
+            close_old_connections()
+            client = APIClient()
+            client.force_authenticate(self.vendedor)
+            barrier.wait()  # Ambos hilos sincronizan antes de POST
+            payload = {
+                "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
+                "cantidad": 6,
+                "motivo": "Concurrente",
+                "fk_decision": self.decision.id_decision,
+            }
+            response = client.post(reverse("merma-list"), payload, format="json")
+            results.append(response.status_code)
+
+        threads = [Thread(target=_create) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), 2)
+        self.assertIn(status.HTTP_201_CREATED, results)
+        self.assertIn(status.HTTP_400_BAD_REQUEST, results)
+
+        # Verificar stock final
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, 4)  # 10 - 6 = 4

@@ -3,6 +3,10 @@
 This prevents ModuleNotFoundError caused by rassa/blueprints/producto_imagen/
 which imports googleapiclient at module level. The mock is minimal — enough
 for Django's URL resolver to load all blueprints without crashing.
+
+NOTE: The real fix is converting the googleapiclient import in
+producto_imagen/ to a lazy import (e.g., inside the view method that
+needs it). Until then, this conftest keeps tests running.
 """
 
 import sys

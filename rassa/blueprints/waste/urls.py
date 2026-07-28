@@ -3,9 +3,7 @@ from django.urls import path
 from .views import DecisionMermaViewSet, MermaViewSet
 
 decision_list = DecisionMermaViewSet.as_view({"get": "list", "post": "create"})
-decision_detail = DecisionMermaViewSet.as_view(
-    {"get": "retrieve", "patch": "partial_update", "delete": "destroy"}
-)
+decision_detail = DecisionMermaViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"})
 merma_list = MermaViewSet.as_view({"get": "list", "post": "create"})
 
 urlpatterns = [
