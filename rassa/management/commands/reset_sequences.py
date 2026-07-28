@@ -41,6 +41,7 @@ class Command(BaseCommand):
 
         tables = connection.introspection.table_names()
         reset_count = 0
+        skipped = []
 
         with connection.cursor() as cursor:
             if dry_run:
@@ -73,6 +74,7 @@ class Command(BaseCommand):
                     # view, schema mismatch, missing sequence). Each failure is logged;
                     # narrowing to specific DB errors would silently skip other recoverable
                     # cases and defeat the "reset everything we can" contract.
+                    skipped.append((table, str(err)))
                     self.stdout.write(self.style.WARNING(f"Skipping {table}: {err}"))
                     continue
 
@@ -122,3 +124,7 @@ class Command(BaseCommand):
         action = "requerirían reset" if dry_run else "resincronizadas"
         summary_style = self.style.NOTICE if dry_run else self.style.SUCCESS
         self.stdout.write(summary_style(f"\n{reset_count} secuencias {action}"))
+        if skipped:
+            self.stdout.write(self.style.WARNING(f"\n{len(skipped)} tablas saltadas:"))
+            for t, e in skipped:
+                self.stdout.write(f"  - {t}: {e}")

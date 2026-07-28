@@ -228,13 +228,32 @@ class Command(BaseCommand):
         if connection.vendor != "postgresql":
             return
 
-        table = connection.ops.quote_name(model._meta.db_table)
-        pk = connection.ops.quote_name(model._meta.pk.column)
+        table = model._meta.db_table
+        pk = model._meta.pk.column
+        q_table = connection.ops.quote_name(table)
+        q_pk = connection.ops.quote_name(pk)
         with connection.cursor() as cursor:
             cursor.execute(
-                f"SELECT setval(pg_get_serial_sequence(%s, %s), COALESCE((SELECT MAX({pk}) FROM {table}), 1), true)",
-                [model._meta.db_table, model._meta.pk.column],
+                "SELECT a.attidentity FROM pg_attribute a "
+                "JOIN pg_class c ON a.attrelid = c.oid "
+                "WHERE c.relname = %s AND a.attname = %s",
+                [table, pk],
             )
+            row = cursor.fetchone()
+            if row and row[0]:  # IDENTITY column
+                cursor.execute(
+                    f"SELECT COALESCE(MAX({q_pk}), 0) + 1 FROM {q_table}",
+                )
+                next_value = cursor.fetchone()[0]
+                cursor.execute(
+                    f"ALTER TABLE {q_table} ALTER COLUMN {q_pk} RESTART WITH {next_value}",
+                )
+            else:
+                cursor.execute(
+                    f"SELECT setval(pg_get_serial_sequence(%s, %s), "
+                    f"COALESCE((SELECT MAX({q_pk}) FROM {q_table}), 1), true)",
+                    [table, pk],
+                )
 
     def _seed_unidades(self):
         unidades = [

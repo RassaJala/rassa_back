@@ -118,7 +118,7 @@ class ChatTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(response.json()["ok"])
-        self.assertIn("número", response.json()["mensaje"])
+        self.assertIn("número", response.json()["message"])
 
     def test_crear_conversacion_privada_usuario_inexistente(self):
         url = reverse("chat-conversaciones-crear-privada")
@@ -181,7 +181,7 @@ class ChatTests(APITestCase):
         response = self.client.post(url, payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("lista", response.json()["mensaje"].lower())
+        self.assertIn("lista", response.json()["message"].lower())
 
     def test_agregar_integrante_acepta_alias_fk_usuario(self):
         conv = self._crear_conversacion_grupal()
@@ -306,7 +306,7 @@ class ChatTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(response.json()["ok"])
-        self.assertIn("contigo mismo", response.json()["mensaje"])
+        self.assertIn("contigo mismo", response.json()["message"])
 
     def test_agregar_integrante_ya_activo(self):
         conv = self._crear_conversacion_grupal()
@@ -317,7 +317,7 @@ class ChatTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(response.json()["ok"])
         self.assertEqual(
-            response.json()["mensaje"],
+            response.json()["message"],
             "El usuario ya es miembro de esta conversación.",
         )
 
@@ -453,7 +453,7 @@ class ChatTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         body = response.json()
         self.assertTrue(body["ok"])
-        self.assertEqual(body["data"]["tipo"], True)
+        self.assertEqual(body["data"]["tipo"], "grupal")
         self.assertEqual(body["data"]["nombre"], "Grupo test")
 
     def test_conversacion_detalle_usuario_no_miembro(self):
@@ -497,3 +497,178 @@ class ChatTests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.json()["data"]), 0)
+
+    # ── Post-review: CR3 — límite de 15 min ─────────────────────────
+
+    def test_inactivar_mensaje_justo_antes_del_limite(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde"
+        )
+        Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
+            creado_en=timezone.now() - timedelta(minutes=14, seconds=59),
+        )
+
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_inactivar_mensaje_justo_despues_del_limite(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Borde"
+        )
+        Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
+            creado_en=timezone.now() - timedelta(minutes=15, seconds=1),
+        )
+
+        url = reverse("chat-mensajes-inactivar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Post-review: R3.1 — editar mensaje ──────────────────────────
+
+    def test_editar_mensaje_exitoso(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Original"
+        )
+
+        url = reverse("chat-mensajes-editar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url, {"contenido": "Editado"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        mensaje.refresh_from_db()
+        self.assertEqual(mensaje.contenido, "Editado")
+        self.assertTrue(mensaje.editado)
+
+    def test_editar_mensaje_ajeno_denegado(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario2, fk_conversacion=conv, contenido="De otro"
+        )
+
+        url = reverse("chat-mensajes-editar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url, {"contenido": "Hack"})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_editar_mensaje_expirado(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Viejo"
+        )
+        Mensaje.objects.filter(pk=mensaje.id_mensaje).update(
+            creado_en=timezone.now() - timedelta(minutes=20),
+        )
+
+        url = reverse("chat-mensajes-editar", args=[mensaje.id_mensaje])
+        response = self.client.patch(url, {"contenido": "Editado"})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_editar_mensaje_inexistente(self):
+        url = reverse("chat-mensajes-editar", args=[99999])
+        response = self.client.patch(url, {"contenido": "Nope"})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ── Post-review: R3.2 — listar mensajes sin ser miembro ─────────
+
+    def test_listar_mensajes_usuario_no_miembro(self):
+        conv = self._crear_conversacion_privada()
+        self.client.force_authenticate(self.user3)
+        url = reverse("chat-mensajes", args=[conv.id_conversacion])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ── Post-review: R3.3 — crear conversación con usuario inactivo ─
+
+    def test_crear_conversacion_privada_usuario_inactivo(self):
+        self.usuario2.estado = False
+        self.usuario2.save(update_fields=["estado"])
+        url = reverse("chat-conversaciones-crear-privada")
+        response = self.client.post(url, {"fk_usuario": self.usuario2.id_usuario})
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ── Post-review: R3.4 — búsqueda excluye al usuario actual ──────
+
+    def test_usuario_buscar_excluye_actual(self):
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url, {"q": "user1"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [u["id_usuario"] for u in response.json()["data"]]
+        self.assertNotIn(self.usuario1.id_usuario, ids)
+
+    # ── Post-review: R3.5 — grupo con creador en fk_usuarios ────────
+
+    def test_crear_conversacion_grupal_creador_en_fk_usuarios(self):
+        url = reverse("chat-conversaciones-crear-grupal")
+        payload = {
+            "nombre": "Grupo",
+            "fk_usuarios": [
+                self.usuario1.id_usuario,
+                self.usuario2.id_usuario,
+            ],
+        }
+        response = self.client.post(url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        conv_id = response.json()["data"]["id_conversacion"]
+        self.assertEqual(
+            Integrante.objects.filter(
+                fk_conversacion_id=conv_id, estado=True
+            ).count(),
+            2,  # creator + user2, not duplicated
+        )
+
+    # ── Post-review: R4.3 — usuario inactivo no puede enviar ────────
+
+    def test_enviar_mensaje_usuario_inactivo(self):
+        self.usuario1.estado = False
+        self.usuario1.save(update_fields=["estado"])
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar")
+        response = self.client.post(
+            url,
+            {"fk_conversacion": conv.id_conversacion, "contenido": "Hola"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("desactivada", response.json()["message"])
+
+    def test_enviar_documento_usuario_inactivo(self):
+        self.usuario1.estado = False
+        self.usuario1.save(update_fields=["estado"])
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile("a.jpg", b"x", content_type="image/jpeg")
+        response = self.client.post(
+            url,
+            {
+                "conversacion": conv.id_conversacion,
+                "documento": archivo,
+                "tipo_documento": "imagen",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("desactivada", response.json()["message"])
+
+    # ── Post-review: CR1 — extensión de archivo inválida ────────────
+
+    def test_enviar_documento_extension_invalida(self):
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile("virus.exe", b"x", content_type="application/octet-stream")
+        response = self.client.post(
+            url,
+            {
+                "conversacion": conv.id_conversacion,
+                "documento": archivo,
+                "tipo_documento": "imagen",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("extensión", response.json()["message"].lower())

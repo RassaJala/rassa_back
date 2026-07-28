@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -40,6 +41,13 @@ class MensajeCreateSerializer(serializers.Serializer):
         )
 
 
+ALLOWED_EXTENSIONS = {
+    "imagen": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+    "audio": [".mp3", ".wav", ".ogg", ".m4a"],
+    "video": [".mp4", ".webm", ".avi", ".mov"],
+}
+
+
 class MensajeDocumentoCreateSerializer(serializers.Serializer):
     fk_conversacion = serializers.IntegerField(required=True)
     tipo_documento = serializers.ChoiceField(choices=["imagen", "audio", "video"], required=True)
@@ -49,6 +57,10 @@ class MensajeDocumentoCreateSerializer(serializers.Serializer):
     def validate_archivo(self, value):
         if value.size > 20 * 1024 * 1024:
             raise serializers.ValidationError("El archivo no puede superar los 20MB.")
+        ext = Path(value.name).suffix.lower()
+        tipo = self.initial_data.get("tipo_documento")
+        if tipo and ext not in ALLOWED_EXTENSIONS.get(tipo, []):
+            raise serializers.ValidationError(f"Extensión {ext} no permitida para tipo {tipo}.")
         return value
 
     def validate_fk_conversacion(self, value):

@@ -3,7 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -15,6 +15,14 @@ from rest_framework.views import APIView
 
 from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
+
+
+def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
+    body = {"ok": False, "message": message}
+    if data is not None:
+        body["data"] = data
+    return Response(body, status=status_code)
+
 
 from .serializers import (
     MensajeCreateSerializer,
@@ -97,6 +105,9 @@ class MensajeCreateView(generics.CreateAPIView):
         return context
 
     def create(self, request, *args, **kwargs):
+        if not request.user.usuario.estado:
+            return _error("Tu cuenta está desactivada.")
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mensaje = serializer.save()
@@ -200,35 +211,20 @@ class ConversacionPrivadaCreateView(APIView):
         usuario2_id = request.data.get("usuario2") or request.data.get("fk_usuario")
 
         if not usuario2_id:
-            return Response(
-                {"ok": False, "mensaje": "El campo usuario2 es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo usuario2 es requerido.")
 
         try:
             usuario2_id = int(usuario2_id)
         except (TypeError, ValueError):
-            return Response(
-                {"ok": False, "mensaje": "usuario2 debe ser un número entero."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("usuario2 debe ser un número entero.")
 
         try:
             usuario2 = Usuario.objects.get(pk=usuario2_id, estado=True)
         except Usuario.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "El usuario no existe."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error("El usuario no existe.", status_code=status.HTTP_404_NOT_FOUND)
 
         if usuario1.id_usuario == usuario2.id_usuario:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No puedes crear una conversación contigo mismo.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("No puedes crear una conversación contigo mismo.")
 
         with transaction.atomic():
             all_integrantes = list(
@@ -254,9 +250,34 @@ class ConversacionPrivadaCreateView(APIView):
                         message="La conversación ya existe.",
                     )
 
-            conv = Conversacion.objects.create(tipo=False)
-            Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
-            Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
+            try:
+                conv = Conversacion.objects.create(tipo=False)
+                Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
+                Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
+            except IntegrityError:
+                ids_u1 = set(
+                    Integrante.objects.filter(
+                        fk_usuario=usuario1,
+                        fk_conversacion__tipo=False,
+                        fk_conversacion__estado=True,
+                        estado=True,
+                    ).values_list("fk_conversacion_id", flat=True)
+                )
+                ids_u2 = set(
+                    Integrante.objects.filter(
+                        fk_usuario=usuario2,
+                        fk_conversacion__tipo=False,
+                        fk_conversacion__estado=True,
+                        estado=True,
+                    ).values_list("fk_conversacion_id", flat=True)
+                )
+                comunes = ids_u1 & ids_u2
+                if comunes:
+                    return _ok(
+                        data={"id_conversacion": comunes.pop()},
+                        message="La conversación ya existe.",
+                    )
+                raise
 
             return _ok(
                 data={"id_conversacion": conv.id_conversacion},
@@ -273,10 +294,7 @@ class ConversacionGrupalCreateView(APIView):
         nombre = request.data.get("nombre")
 
         if not nombre or not nombre.strip():
-            return Response(
-                {"ok": False, "mensaje": "El campo nombre es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo nombre es requerido.")
 
         usuario_creador = request.user.usuario
         fk_usuarios = request.data.get("fk_usuarios")
@@ -284,13 +302,7 @@ class ConversacionGrupalCreateView(APIView):
         if fk_usuarios is None:
             fk_usuarios = []
         if not isinstance(fk_usuarios, (list, tuple)):
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "fk_usuarios debe ser una lista de IDs.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("fk_usuarios debe ser una lista de IDs.")
 
         # Validate fk_usuarios is a list of integers
         invalid_ids = []
@@ -302,13 +314,9 @@ class ConversacionGrupalCreateView(APIView):
                 invalid_ids.append(uid)
 
         if invalid_ids:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "fk_usuarios debe contener solo IDs numéricos.",
-                    "data": {"invalidos": invalid_ids},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error(
+                "fk_usuarios debe contener solo IDs numéricos.",
+                data={"invalidos": invalid_ids},
             )
 
         # Resolve users and report missing IDs before creating anything
@@ -321,14 +329,15 @@ class ConversacionGrupalCreateView(APIView):
                 missing_ids.append(uid)
 
         if missing_ids:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "Algunos usuarios no existen.",
-                    "data": {"no_encontrados": missing_ids},
-                },
-                status=status.HTTP_404_NOT_FOUND,
+            return _error(
+                "Algunos usuarios no existen.",
+                status_code=status.HTTP_404_NOT_FOUND,
+                data={"no_encontrados": missing_ids},
             )
+
+        # Exclude the creator from the loop to avoid double-processing
+        cleaned_ids = [uid for uid in cleaned_ids if uid != usuario_creador.id_usuario]
+        usuarios = [u for u in usuarios if u.id_usuario != usuario_creador.id_usuario]
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
@@ -352,10 +361,7 @@ class ConversacionRenombrarView(APIView):
         nombre = request.data.get("nombre")
 
         if not nombre or not nombre.strip():
-            return Response(
-                {"ok": False, "mensaje": "El campo nombre es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo nombre es requerido.")
 
         conv = _get_active_conversation_for_user(
             conversacion_id,
@@ -380,18 +386,12 @@ class ConversacionAgregarIntegranteView(APIView):
         usuario_id = request.data.get("usuario_id") or request.data.get("fk_usuario")
 
         if not usuario_id:
-            return Response(
-                {"ok": False, "mensaje": "El campo usuario_id es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo usuario_id es requerido.")
 
         try:
             usuario_id = int(usuario_id)
         except (TypeError, ValueError):
-            return Response(
-                {"ok": False, "mensaje": "usuario_id debe ser un número entero."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("usuario_id debe ser un número entero.")
 
         conv = _get_active_conversation_for_user(
             conversacion_id,
@@ -402,20 +402,11 @@ class ConversacionAgregarIntegranteView(APIView):
         try:
             usuario_nuevo = Usuario.objects.get(pk=usuario_id, estado=True)
         except Usuario.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "El usuario no existe."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error("El usuario no existe.", status_code=status.HTTP_404_NOT_FOUND)
 
         integrante = Integrante.objects.filter(fk_usuario=usuario_nuevo, fk_conversacion=conv).first()
         if integrante and integrante.estado:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "El usuario ya es miembro de esta conversación.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El usuario ya es miembro de esta conversación.")
         if integrante:
             integrante.estado = True
             integrante.save(update_fields=["estado"])
@@ -535,6 +526,9 @@ class MensajeDocumentoCreateView(APIView):
     throttle_scope = "chat_write"
 
     def post(self, request):
+        if not request.user.usuario.estado:
+            return _error("Tu cuenta está desactivada.")
+
         data = request.data.dict()
 
         if "conversacion" in data and "fk_conversacion" not in data:
@@ -604,7 +598,7 @@ class ConversacionDetalleView(APIView):
         return _ok(
             data={
                 "id_conversacion": conversacion.id_conversacion,
-                "tipo": conversacion.tipo,
+                "tipo": "grupal" if conversacion.tipo else "privada",
                 "nombre": conversacion.nombre or "",
             },
         )
@@ -621,6 +615,7 @@ class UsuarioBuscarView(APIView):
 
         usuarios = (
             Usuario.objects.filter(estado=True)
+            .exclude(pk=request.user.usuario.id_usuario)
             .filter(
                 Q(correo__icontains=q)
                 | Q(fk_persona__nombre__icontains=q)
