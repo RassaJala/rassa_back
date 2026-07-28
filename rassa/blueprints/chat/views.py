@@ -145,12 +145,14 @@ class ConversacionLeerView(APIView):
     def patch(self, request, conversacion_id):
         conversacion = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
 
-        updated = Mensaje.objects.filter(
-            fk_conversacion=conversacion,
-            leido=False,
-        ).exclude(
-            fk_emisor=request.user.usuario
-        ).update(leido=True)
+        updated = (
+            Mensaje.objects.filter(
+                fk_conversacion=conversacion,
+                leido=False,
+            )
+            .exclude(fk_emisor=request.user.usuario)
+            .update(leido=True)
+        )
 
         return _ok(
             message=f"{updated} mensaje(s) marcado(s) como leído(s).",
