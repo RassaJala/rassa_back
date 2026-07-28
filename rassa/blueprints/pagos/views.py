@@ -55,9 +55,6 @@ class PagoViewSet(
                 "fk_pedido__fk_vendedor__fk_persona",
                 "fk_tipo",
             )
-            .prefetch_related(
-                "fk_pedido__detallepedido_set",
-            )
             .order_by("-creado_en")
         )
 
@@ -182,6 +179,8 @@ class PagoViewSet(
             "fk_pedido__fk_cliente__fk_persona",
             "fk_pedido__fk_vendedor__fk_persona",
             "fk_tipo",
+        ).prefetch_related(
+            "fk_pedido__detallepedido_set",
         ).get(pk=pago.pk)
 
         return ok_response(

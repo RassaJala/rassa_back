@@ -131,7 +131,7 @@ class PagoOutputSerializer(serializers.ModelSerializer):
     def get_detalles(self, obj):
         if not obj.fk_pedido:
             return []
-        detalles = DetallePedido.objects.filter(fk_pedido=obj.fk_pedido)
+        detalles = obj.fk_pedido.detallepedido_set.all()
         return DetallePedidoReciboSerializer(detalles, many=True).data
 
 
