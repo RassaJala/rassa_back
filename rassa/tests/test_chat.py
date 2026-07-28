@@ -666,7 +666,9 @@ class ChatTests(APITestCase):
     def test_crear_conversacion_grupal_sin_integrantes(self):
         url = reverse("chat-conversaciones-crear-grupal")
         response = self.client.post(
-            url, {"nombre": "Grupo", "fk_usuarios": []}, format="json",
+            url,
+            {"nombre": "Grupo", "fk_usuarios": []},
+            format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("integrante", response.json()["message"].lower())
@@ -686,12 +688,17 @@ class ChatTests(APITestCase):
     def test_no_leidos_excluye_mensajes_inactivos(self):
         conv = self._crear_conversacion_privada()
         Mensaje.objects.create(
-            fk_emisor=self.usuario2, fk_conversacion=conv,
-            contenido="visible", leido=False,
+            fk_emisor=self.usuario2,
+            fk_conversacion=conv,
+            contenido="visible",
+            leido=False,
         )
         Mensaje.objects.create(
-            fk_emisor=self.usuario2, fk_conversacion=conv,
-            contenido="inactivo", leido=False, estado=False,
+            fk_emisor=self.usuario2,
+            fk_conversacion=conv,
+            contenido="inactivo",
+            leido=False,
+            estado=False,
         )
 
         url = reverse("chat-conversaciones")
@@ -702,12 +709,16 @@ class ChatTests(APITestCase):
     def test_no_leidos_excluye_mensajes_sin_emisor(self):
         conv = self._crear_conversacion_privada()
         Mensaje.objects.create(
-            fk_emisor=self.usuario2, fk_conversacion=conv,
-            contenido="visible", leido=False,
+            fk_emisor=self.usuario2,
+            fk_conversacion=conv,
+            contenido="visible",
+            leido=False,
         )
         Mensaje.objects.create(
-            fk_emisor=None, fk_conversacion=conv,
-            contenido="sin emisor", leido=False,
+            fk_emisor=None,
+            fk_conversacion=conv,
+            contenido="sin emisor",
+            leido=False,
         )
 
         url = reverse("chat-conversaciones")

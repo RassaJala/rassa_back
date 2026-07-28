@@ -22,11 +22,15 @@ from rassa.models import (
 )
 
 _original_context_copy = _django_context.Context.__copy__
+
+
 def _patched_context_copy(self):
     cls = type(self)
     duplicate = cls.__new__(cls)
     duplicate.dicts = self.dicts[:]
     return duplicate
+
+
 _django_context.Context.__copy__ = _patched_context_copy
 
 
