@@ -155,11 +155,14 @@ class PagoViewSet(
                 )
 
         except IntegrityError as exc:
-            logger.warning("IntegrityError al registrar pago: %s", exc)
-            return Response(
-                {"message": "Error de concurrencia. Intente de nuevo."},
-                status=status.HTTP_409_CONFLICT,
-            )
+            err_str = str(exc)
+            if "folio" in err_str or "unique_pago_per_pedido" in err_str:
+                logger.warning("IntegrityError esperado (concurrencia): %s", exc)
+                return Response(
+                    {"message": "Error de concurrencia. Intente de nuevo."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            raise
         except DatabaseError as exc:
             logger.error("Error de base de datos al registrar pago: %s", exc)
             return Response(
