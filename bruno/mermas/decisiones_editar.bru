@@ -1,0 +1,22 @@
+meta {
+  name: Editar decisión de merma
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/decisiones-merma/{{decisionId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "decision": "Reciclar"
+  }
+}

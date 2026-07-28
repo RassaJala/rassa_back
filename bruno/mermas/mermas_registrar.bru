@@ -1,0 +1,26 @@
+meta {
+  name: Registrar merma
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/mermas/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "fk_producto_semanal": 1,
+    "cantidad": 5,
+    "motivo": "Producto dañado durante transporte",
+    "comentarios": "Se encontró moho en la carga",
+    "fk_decision": 1
+  }
+}
