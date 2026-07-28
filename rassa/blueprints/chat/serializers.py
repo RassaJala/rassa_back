@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -28,17 +29,22 @@ class MensajeCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Conversación no encontrada.") from err
 
         usuario = self.context.get("usuario")
+        if usuario and not usuario.estado:
+            raise serializers.ValidationError("Tu cuenta está desactivada.")
         if not conversacion.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
             raise serializers.ValidationError("No eres miembro de esta conversación.")
         return value
 
     def create(self, validated_data):
-        usuario = self.context["usuario"]
-        return Mensaje.objects.create(
-            fk_emisor=usuario,
-            fk_conversacion_id=validated_data["fk_conversacion"],
-            contenido=validated_data["contenido"],
-        )
+        try:
+            usuario = self.context["usuario"]
+            return Mensaje.objects.create(
+                fk_emisor=usuario,
+                fk_conversacion_id=validated_data["fk_conversacion"],
+                contenido=validated_data["contenido"],
+            )
+        except IntegrityError as err:
+            raise serializers.ValidationError("Error al crear el mensaje.") from err
 
 
 ALLOWED_EXTENSIONS = {
@@ -69,6 +75,8 @@ class MensajeDocumentoCreateSerializer(serializers.Serializer):
         except Conversacion.DoesNotExist as err:
             raise serializers.ValidationError("Conversación no encontrada.") from err
         usuario = self.context.get("usuario")
+        if usuario and not usuario.estado:
+            raise serializers.ValidationError("Tu cuenta está desactivada.")
         if not conversacion.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
             raise serializers.ValidationError("No eres miembro de esta conversación.")
         return value

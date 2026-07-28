@@ -623,7 +623,7 @@ class ChatTests(APITestCase):
             {"fk_conversacion": conv.id_conversacion, "contenido": "Hola"},
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("desactivada", response.json()["message"])
+        self.assertIn("desactivada", str(response.json()))
 
     def test_enviar_documento_usuario_inactivo(self):
         self.usuario1.estado = False
@@ -641,7 +641,7 @@ class ChatTests(APITestCase):
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("desactivada", response.json()["message"])
+        self.assertIn("desactivada", str(response.json()))
 
     # ── Post-review: CR1 — extensión de archivo inválida ────────────
 
@@ -660,3 +660,66 @@ class ChatTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("extensión", response.json()["archivo"][0].lower())
+
+    # ── Post-review ronda 2: grupo sin integrantes ───────────────────
+
+    def test_crear_conversacion_grupal_sin_integrantes(self):
+        url = reverse("chat-conversaciones-crear-grupal")
+        response = self.client.post(
+            url, {"nombre": "Grupo", "fk_usuarios": []}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("integrante", response.json()["message"].lower())
+
+    def test_crear_conversacion_grupal_solo_creador(self):
+        url = reverse("chat-conversaciones-crear-grupal")
+        response = self.client.post(
+            url,
+            {"nombre": "Grupo", "fk_usuarios": [self.usuario1.id_usuario]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("integrante", response.json()["message"].lower())
+
+    # ── Post-review ronda 2: no_leidos excluye mensajes inválidos ────
+
+    def test_no_leidos_excluye_mensajes_inactivos(self):
+        conv = self._crear_conversacion_privada()
+        Mensaje.objects.create(
+            fk_emisor=self.usuario2, fk_conversacion=conv,
+            contenido="visible", leido=False,
+        )
+        Mensaje.objects.create(
+            fk_emisor=self.usuario2, fk_conversacion=conv,
+            contenido="inactivo", leido=False, estado=False,
+        )
+
+        url = reverse("chat-conversaciones")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"][0]["no_leidos"], 1)
+
+    def test_no_leidos_excluye_mensajes_sin_emisor(self):
+        conv = self._crear_conversacion_privada()
+        Mensaje.objects.create(
+            fk_emisor=self.usuario2, fk_conversacion=conv,
+            contenido="visible", leido=False,
+        )
+        Mensaje.objects.create(
+            fk_emisor=None, fk_conversacion=conv,
+            contenido="sin emisor", leido=False,
+        )
+
+        url = reverse("chat-conversaciones")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"][0]["no_leidos"], 1)
+
+    # ── Post-review ronda 2: lista vacía ─────────────────────────────
+
+    def test_listar_conversaciones_sin_conversaciones(self):
+        self.client.force_authenticate(self.user3)
+        url = reverse("chat-conversaciones")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()["data"]), 0)

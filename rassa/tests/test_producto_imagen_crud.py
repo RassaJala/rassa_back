@@ -3,6 +3,20 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
+
+# Workaround for Python 3.14 incompatibility with Django 5.0.14's Context.__copy__
+# https://code.djangoproject.com/ticket/36079
+import django.template.context as _django_context
+import copy as _copy
+
+_original_context_copy = _django_context.Context.__copy__
+def _patched_context_copy(self):
+    cls = type(self)
+    # Avoid super().__copy__() which breaks in Python 3.14
+    duplicate = cls.__new__(cls)
+    duplicate.dicts = self.dicts[:]
+    return duplicate
+_django_context.Context.__copy__ = _patched_context_copy
 from rest_framework import status
 from rest_framework.test import APITestCase
 

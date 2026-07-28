@@ -104,9 +104,6 @@ class MensajeCreateView(generics.CreateAPIView):
         return context
 
     def create(self, request, *args, **kwargs):
-        if not request.user.usuario.estado:
-            return _error("Tu cuenta está desactivada.")
-
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mensaje = serializer.save()
@@ -338,6 +335,9 @@ class ConversacionGrupalCreateView(APIView):
         cleaned_ids = [uid for uid in cleaned_ids if uid != usuario_creador.id_usuario]
         usuarios = [u for u in usuarios if u.id_usuario != usuario_creador.id_usuario]
 
+        if not usuarios:
+            return _error("Se requiere al menos un integrante adicional.")
+
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
             _get_or_reactivate_integrante(usuario_creador, conv)
@@ -525,9 +525,6 @@ class MensajeDocumentoCreateView(APIView):
     throttle_scope = "chat_write"
 
     def post(self, request):
-        if not request.user.usuario.estado:
-            return _error("Tu cuenta está desactivada.")
-
         data = request.data.dict()
 
         if "conversacion" in data and "fk_conversacion" not in data:
