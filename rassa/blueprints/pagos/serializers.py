@@ -85,11 +85,11 @@ class ProductoReciboSerializer(serializers.ModelSerializer):
 class PagoOutputSerializer(serializers.ModelSerializer):
     """Serializer de salida con datos del pago + recibo (formato frontend)."""
 
-    pedido = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    pedido = serializers.SerializerMethodField()
     tipo_pago = serializers.IntegerField(source="fk_tipo_id", read_only=True)
     tipo_pago_nombre = serializers.CharField(source="fk_tipo.nombre", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
-    cliente_id = serializers.IntegerField(source="fk_pedido.fk_cliente_id", read_only=True)
+    cliente_id = serializers.SerializerMethodField()
     total_pedido = serializers.SerializerMethodField()
     fecha_pago = serializers.DateTimeField(source="creado_en", read_only=True)
     productos = serializers.SerializerMethodField()
@@ -111,6 +111,12 @@ class PagoOutputSerializer(serializers.ModelSerializer):
             "fecha_pago",
         ]
 
+    def get_pedido(self, obj):
+        return obj.fk_pedido.id_pedido if obj.fk_pedido else None
+
+    def get_cliente_id(self, obj):
+        return obj.fk_pedido.fk_cliente_id if obj.fk_pedido else None
+
     def get_total_pedido(self, obj):
         return str(obj.fk_pedido.total) if obj.fk_pedido else None
 
@@ -128,7 +134,7 @@ class PagoOutputSerializer(serializers.ModelSerializer):
 class PagoListSerializer(serializers.ModelSerializer):
     """Serializer para listar pagos."""
 
-    pedido = serializers.IntegerField(source="fk_pedido.id_pedido", read_only=True)
+    pedido = serializers.SerializerMethodField()
     tipo_pago_nombre = serializers.CharField(source="fk_tipo.nombre", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
     fecha_pago = serializers.DateTimeField(source="creado_en", read_only=True)
@@ -144,6 +150,9 @@ class PagoListSerializer(serializers.ModelSerializer):
             "monto",
             "fecha_pago",
         ]
+
+    def get_pedido(self, obj):
+        return obj.fk_pedido.id_pedido if obj.fk_pedido else None
 
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido

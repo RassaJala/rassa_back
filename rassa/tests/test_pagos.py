@@ -389,6 +389,7 @@ class PagoCreateTest(PagosTestBase):
             },
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Pago.objects.filter(fk_pedido=pedido).exists())
 
 
 class PagoPermisosTest(PagosTestBase):
@@ -638,6 +639,31 @@ class PagoListTest(PagosTestBase):
         # Original vendedor should NOT be able to see the detail
         resp = self.client.get(f"/api/pagos/{pago_id}/")
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Admin should be able to see any payment's detail
+        admin_client = APIClient()
+        admin_client.force_authenticate(user=self.user_admin)
+        resp_admin = admin_client.get(f"/api/pagos/{pago_id}/")
+        self.assertEqual(resp_admin.status_code, status.HTTP_200_OK)
+
+    def test_listar_pagos_no_crashea_con_pedido_eliminado(self):
+        # Create and then orphan the payment (simulate SET_NULL)
+        pedido = self._crear_pedido(self.estado_listo)
+        create_resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_id = create_resp.json()["id_pago"]
+        pago = Pago.objects.get(pk=pago_id)
+        pago.fk_pedido = None
+        pago.save(update_fields=["fk_pedido"])
+
+        resp = self.client.get("/api/pagos/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
 
 class PagoConcurrencyTest(TransactionTestCase):

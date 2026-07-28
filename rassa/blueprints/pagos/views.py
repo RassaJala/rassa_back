@@ -94,7 +94,13 @@ class PagoViewSet(
         rol = getattr(usuario, "fk_rol", None)
         nombre_rol = rol.nombre_rol if rol else None
 
-        estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
+        try:
+            estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
+        except EstadoPedido.DoesNotExist:
+            return Response(
+                {"message": "Estado 'entregado' no configurado en la base de datos."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         try:
             with transaction.atomic():

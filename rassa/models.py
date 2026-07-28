@@ -492,7 +492,7 @@ class Pago(models.Model):
         db_table = "pago"
         ordering = ["id_pago"]
         constraints = [
-            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido"),
+            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=False),
         ]
 
     def __str__(self):
@@ -502,11 +502,16 @@ class Pago(models.Model):
         if not self.folio:
             today_str = timezone.localdate().strftime("%Y%m%d")
             lock_id = int(today_str)
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
             prefix = f"REC-{today_str}-"
             last = Pago.objects.filter(folio__startswith=prefix).order_by("id_pago").last()
-            next_num = int(last.folio.split("-")[-1]) + 1 if last else 1
+            try:
+                last_num = int(last.folio.rsplit("-", 1)[-1]) if last else 0
+            except (ValueError, IndexError):
+                last_num = 0
+            next_num = last_num + 1
             self.folio = f"{prefix}{next_num:03d}"
         super().save(*args, **kwargs)
 
