@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+from django.conf import settings
 from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers
@@ -53,23 +54,39 @@ ALLOWED_EXTENSIONS = {
     "video": [".mp4", ".webm", ".avi", ".mov"],
 }
 
+ALLOWED_MIMES = {
+    "imagen": ["image/jpeg", "image/png", "image/gif", "image/webp"],
+    "audio": ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"],
+    "video": ["video/mp4", "video/webm", "video/x-msvideo", "video/quicktime"],
+}
+
+try:
+    import magic as _magiclib
+except ImportError:
+    _magiclib = None
+
 
 class MensajeDocumentoCreateSerializer(serializers.Serializer):
-    fk_conversacion = serializers.IntegerField(required=True)
+    conversacion = serializers.IntegerField(required=True, source="fk_conversacion")
     tipo_documento = serializers.ChoiceField(choices=["imagen", "audio", "video"], required=True)
     contenido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    archivo = serializers.FileField(required=True, max_length=None)
+    documento = serializers.FileField(required=True, source="archivo", max_length=None)
 
-    def validate_archivo(self, value):
+    def validate_documento(self, value):
         if value.size > 20 * 1024 * 1024:
             raise serializers.ValidationError("El archivo no puede superar los 20MB.")
         ext = Path(value.name).suffix.lower()
         tipo = self.initial_data.get("tipo_documento")
         if tipo and ext not in ALLOWED_EXTENSIONS.get(tipo, []):
             raise serializers.ValidationError(f"Extensión {ext} no permitida para tipo {tipo}.")
+        if _magiclib is not None and tipo:
+            mime = _magiclib.from_buffer(value.read(2048), mime=True)
+            value.seek(0)
+            if mime not in ALLOWED_MIMES.get(tipo, []):
+                raise serializers.ValidationError(f"Tipo MIME '{mime}' no permitido para tipo '{tipo}'.")
         return value
 
-    def validate_fk_conversacion(self, value):
+    def validate_conversacion(self, value):
         try:
             conversacion = Conversacion.objects.get(pk=value, estado=True)
         except Conversacion.DoesNotExist as err:
@@ -93,7 +110,7 @@ class MensajeUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError("No puedes editar un mensaje que no te pertenece.")
 
         antiguedad = timezone.now() - mensaje.creado_en
-        if antiguedad > timedelta(minutes=15):
+        if antiguedad > timedelta(minutes=settings.CHAT_EDIT_WINDOW_MINUTES):
             raise serializers.ValidationError("Solo puedes editar mensajes con menos de 15 minutos de antigüedad.")
 
         return attrs

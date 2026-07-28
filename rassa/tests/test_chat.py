@@ -659,7 +659,7 @@ class ChatTests(APITestCase):
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("extensión", response.json()["archivo"][0].lower())
+        self.assertIn("extensión", response.json()["documento"][0].lower())
 
     # ── Post-review ronda 2: grupo sin integrantes ───────────────────
 

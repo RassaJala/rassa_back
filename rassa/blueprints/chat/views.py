@@ -189,7 +189,7 @@ class MensajeInactivarView(APIView):
             raise PermissionDenied("No puedes eliminar un mensaje que no te pertenece.")
 
         antiguedad = timezone.now() - mensaje.creado_en
-        if antiguedad > timedelta(minutes=15):
+        if antiguedad > timedelta(minutes=settings.CHAT_EDIT_WINDOW_MINUTES):
             raise ValidationError("Solo se pueden eliminar mensajes de los últimos 15 minutos.")
 
         mensaje.estado = False
@@ -525,17 +525,8 @@ class MensajeDocumentoCreateView(APIView):
     throttle_scope = "chat_write"
 
     def post(self, request):
-        data = request.data.dict()
-
-        if "conversacion" in data and "fk_conversacion" not in data:
-            data["fk_conversacion"] = data.pop("conversacion")
-        if "documento" in data and "archivo" not in data:
-            data["archivo"] = data.pop("documento")
-
-        # Membership is validated by MensajeDocumentoCreateSerializer.validate_fk_conversacion
-        # via context={"usuario": request.user.usuario}.
         serializer = MensajeDocumentoCreateSerializer(
-            data=data,
+            data=request.data,
             context={"usuario": request.user.usuario},
         )
         serializer.is_valid(raise_exception=True)

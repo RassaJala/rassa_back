@@ -11,8 +11,10 @@ Ejecuta:
     python manage.py reset_sequences --database=default --dry-run
 """
 
+from contextlib import nullcontext
+
 from django.core.management.base import BaseCommand
-from django.db import connections
+from django.db import connections, transaction
 
 
 class Command(BaseCommand):
@@ -43,7 +45,8 @@ class Command(BaseCommand):
         reset_count = 0
         skipped = []
 
-        with connection.cursor() as cursor:
+        atomic = transaction.atomic(using=database) if not dry_run else nullcontext()
+        with connection.cursor() as cursor, atomic:
             if dry_run:
                 self.stdout.write(self.style.NOTICE("Dry-run. Sentencias que se ejecutarían:"))
             else:

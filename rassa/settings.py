@@ -191,6 +191,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 # === DEFAULT ===
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# === CHAT ===
+CHAT_EDIT_WINDOW_MINUTES = 15
+
 # === TAX ===
 IVA_RATE = Decimal("0.21")
 
