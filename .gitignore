@@ -59,3 +59,7 @@ opencode.json
 
 # Bruno environments (contains secrets)
 bruno/environments/local.bru
+
+# Local scripts (potentially contain secrets)
+_check_*.ps1
+_create_*.ps1
