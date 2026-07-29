@@ -3,9 +3,12 @@
 import logging
 
 from django.db import transaction
+from django.db.models import Count, F, Sum
+from django.db.models.functions import TruncMonth, TruncWeek
 from rest_framework import mixins, permissions, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from rassa.models import DecisionMerma, Merma, ProductoSemanal
@@ -130,4 +133,111 @@ class MermaViewSet(
             data=output_serializer.data,
             message="Merma registrada",
             status_code=status.HTTP_201_CREATED,
+        )
+
+
+class MermaResumenView(APIView):
+    """Resumen agregado de mermas agrupadas por período, producto y decisión.
+
+    Query params:
+        fecha_desde (str, opcional): Fecha inicio (YYYY-MM-DD). Filtra por creado_en.
+        fecha_hasta (str, opcional): Fecha fin (YYYY-MM-DD).
+        producto (int, opcional): ID de producto para filtrar.
+        agrupar_por (str, opcional): ``semana`` | ``mes`` (default). Define el
+          período de agrupación temporal.
+
+    Respuesta:
+        .. code-block:: json
+
+            {
+              "ok": true,
+              "data": {
+                "agrupacion": "mes",
+                "total_general": 100,
+                "producto_mas_afectado": {
+                  "nombre": "Manzana",
+                  "total": 50
+                },
+                "detalle": [
+                  {
+                    "periodo": "2026-07-01T00:00:00-03:00",
+                    "producto_nombre": "Manzana",
+                    "producto_id": 1,
+                    "decision_nombre": "Donar",
+                    "decision_id": 1,
+                    "total_cantidad": 25,
+                    "total_mermas": 3
+                  }
+                ]
+              }
+            }
+    """
+
+    permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
+
+    def get(self, request):
+        qs = Merma.objects.filter(estado=True).select_related(
+            "fk_producto_semanal__fk_producto",
+            "fk_decision",
+        )
+
+        fecha_desde = request.query_params.get("fecha_desde")
+        fecha_hasta = request.query_params.get("fecha_hasta")
+        producto_id = request.query_params.get("producto")
+        agrupar_por = request.query_params.get("agrupar_por", "mes")
+
+        if fecha_desde:
+            qs = qs.filter(creado_en__date__gte=fecha_desde)
+        if fecha_hasta:
+            qs = qs.filter(creado_en__date__lte=fecha_hasta)
+        if producto_id:
+            qs = qs.filter(fk_producto_semanal__fk_producto_id=producto_id)
+
+        trunc_fn = TruncMonth if agrupar_por == "mes" else TruncWeek
+        qs = (
+            qs.annotate(
+                periodo=trunc_fn("creado_en"),
+                producto_nombre=F("fk_producto_semanal__fk_producto__nombre_producto"),
+                producto_id=F("fk_producto_semanal__fk_producto__id_producto"),
+                decision_nombre=F("fk_decision__decision"),
+                decision_id=F("fk_decision__id_decision"),
+            )
+            .values(
+                "periodo",
+                "producto_nombre",
+                "producto_id",
+                "decision_nombre",
+                "decision_id",
+            )
+            .annotate(
+                total_cantidad=Sum("cantidad"),
+                total_mermas=Count("id_merma"),
+            )
+            .order_by("-periodo", "-total_cantidad")
+        )
+
+        detalle = list(qs)
+        total_general = sum(row["total_cantidad"] for row in detalle)
+
+        producto_totales: dict[str, int] = {}
+        for row in detalle:
+            nombre = row["producto_nombre"]
+            producto_totales[nombre] = producto_totales.get(nombre, 0) + row["total_cantidad"]
+
+        producto_mas_afectado = None
+        if producto_totales:
+            top_nombre = max(producto_totales, key=producto_totales.get)
+            producto_mas_afectado = {
+                "nombre": top_nombre,
+                "total": producto_totales[top_nombre],
+            }
+
+        return ok_response(
+            data={
+                "agrupacion": agrupar_por,
+                "total_general": total_general,
+                "producto_mas_afectado": producto_mas_afectado,
+                "detalle": detalle,
+            },
+            message="Resumen de mermas",
         )
