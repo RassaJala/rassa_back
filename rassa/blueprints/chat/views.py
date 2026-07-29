@@ -35,9 +35,12 @@ def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
 def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupal=False):
     """Obtiene una conversación activa y verifica que el usuario sea miembro.
 
-    Lanza NotFound si no existe, PermissionDenied si no es miembro,
+    Lanza NotFound si no existe, PermissionDenied si no es miembro o está inactivo,
     y ValidationError si require_grupal=True y la conversación no es grupal.
     """
+    if not usuario.estado:
+        raise PermissionDenied("Tu cuenta está desactivada.")
+
     try:
         conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
     except Conversacion.DoesNotExist as err:
@@ -505,7 +508,7 @@ class ConversacionListView(APIView):
             result.append(
                 {
                     "id_conversacion": conv.id_conversacion,
-                    "tipo": conv.tipo,
+                    "tipo": "grupal" if conv.tipo else "privada",
                     "nombre": nombre,
                     "ultimo_mensaje": conv.ultimo_mensaje_contenido,
                     "ultimo_mensaje_creado_en": (
@@ -542,9 +545,6 @@ class MensajeDocumentoCreateView(APIView):
         # tipo_documento is validated by the serializer against ["imagen","audio","video"].
         nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
-        with open(ruta, "wb") as f:
-            for chunk in archivo.chunks():
-                f.write(chunk)
 
         with transaction.atomic():
             documento = Documento.objects.create(
@@ -564,6 +564,11 @@ class MensajeDocumentoCreateView(APIView):
                 fk_mensaje=mensaje,
                 fk_documento=documento,
             )
+
+        # Escribir archivo solo si la transacción fue exitosa
+        with open(ruta, "wb") as f:
+            for chunk in archivo.chunks():
+                f.write(chunk)
 
         return _ok(
             data={
@@ -596,6 +601,9 @@ class UsuarioBuscarView(APIView):
     throttle_scope = "chat_read"
 
     def get(self, request):
+        if not request.user.usuario.estado:
+            raise PermissionDenied("Tu cuenta está desactivada.")
+
         q = request.query_params.get("q", "").strip()
         if len(q) < 3:
             return _ok(data=[])
