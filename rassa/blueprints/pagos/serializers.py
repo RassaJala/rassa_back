@@ -69,6 +69,14 @@ def _nombre_completo(usuario):
     return None
 
 
+class ClienteNombreMixin:
+    def get_cliente_nombre(self, obj):
+        pedido = obj.fk_pedido
+        if pedido and pedido.fk_cliente:
+            return _nombre_completo(pedido.fk_cliente)
+        return None
+
+
 class ProductoReciboSerializer(serializers.ModelSerializer):
     nombre = serializers.CharField(source="nombre_producto", read_only=True)
     precio = serializers.DecimalField(source="precio_unitario", max_digits=10, decimal_places=2, read_only=True)
@@ -82,7 +90,7 @@ class ProductoReciboSerializer(serializers.ModelSerializer):
         ]
 
 
-class PagoOutputSerializer(serializers.ModelSerializer):
+class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
     """Serializer de salida con datos del pago + recibo (formato frontend)."""
 
     pedido = serializers.SerializerMethodField()
@@ -120,12 +128,6 @@ class PagoOutputSerializer(serializers.ModelSerializer):
     def get_total_pedido(self, obj):
         return str(obj.fk_pedido.total) if obj.fk_pedido else None
 
-    def get_cliente_nombre(self, obj):
-        pedido = obj.fk_pedido
-        if pedido and pedido.fk_cliente:
-            return _nombre_completo(pedido.fk_cliente)
-        return None
-
     def get_productos(self, obj):
         if not obj.fk_pedido:
             return []
@@ -133,7 +135,7 @@ class PagoOutputSerializer(serializers.ModelSerializer):
         return ProductoReciboSerializer(detalles, many=True).data
 
 
-class PagoListSerializer(serializers.ModelSerializer):
+class PagoListSerializer(ClienteNombreMixin, serializers.ModelSerializer):
     """Serializer para listar pagos."""
 
     pedido = serializers.SerializerMethodField()
@@ -155,9 +157,3 @@ class PagoListSerializer(serializers.ModelSerializer):
 
     def get_pedido(self, obj):
         return obj.fk_pedido.id_pedido if obj.fk_pedido else None
-
-    def get_cliente_nombre(self, obj):
-        pedido = obj.fk_pedido
-        if pedido and pedido.fk_cliente:
-            return _nombre_completo(pedido.fk_cliente)
-        return None

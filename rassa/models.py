@@ -485,7 +485,7 @@ class Pago(models.Model):
     fk_tipo = models.ForeignKey(TipoPago, on_delete=models.PROTECT, db_column="fk_tipo")
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     referencia = models.CharField(max_length=100, blank=True, null=True)
-    folio = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    folio = models.CharField(max_length=50, unique=True, blank=True, default="")
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
