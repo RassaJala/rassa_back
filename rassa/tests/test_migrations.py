@@ -5,8 +5,8 @@ expected files (after the migration cleanup that removed stale individual
 0007-0017 stubs).
 """
 
-from django.db.migrations.executor import MigrationExecutor
 from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 
