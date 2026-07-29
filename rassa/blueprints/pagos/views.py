@@ -1,0 +1,209 @@
+"""Vistas para el módulo de Pagos."""
+
+import logging
+
+from django.db import DatabaseError, IntegrityError, transaction
+from rest_framework import mixins, status, viewsets
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+
+from rassa.models import (
+    EstadoPedido,
+    HistorialEstadoPedido,
+    Pago,
+    PedidoCabecera,
+    TipoPago,
+)
+from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.views import _log
+
+from .serializers import (
+    PagoCreateSerializer,
+    PagoListSerializer,
+    PagoOutputSerializer,
+    TipoPagoSerializer,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class PagoViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """ViewSet para registrar y consultar pagos."""
+
+    permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN)]
+    throttle_classes = [ScopedRateThrottle]
+
+    def get_permissions(self):
+        if self.action == "tipos_pago":
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
+    def get_throttles(self):
+        self.throttle_scope = "pagos_write" if self.request.method in ("POST",) else "pagos_read"
+        return super().get_throttles()
+
+    def get_queryset(self):
+        qs = Pago.objects.select_related(
+            "fk_pedido__fk_estado",
+            "fk_pedido__fk_cliente__fk_persona",
+            "fk_pedido__fk_vendedor__fk_persona",
+            "fk_tipo",
+        ).order_by("-creado_en")
+
+        usuario = getattr(self.request.user, "usuario", None)
+        if usuario is None:
+            return qs.none()
+
+        rol = getattr(usuario, "fk_rol", None)
+        nombre_rol = rol.nombre_rol if rol else None
+
+        if nombre_rol == VENDEDOR:
+            qs = qs.filter(fk_pedido__fk_vendedor=usuario)
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
+
+        pedido_id = self.request.query_params.get("pedido")
+        if pedido_id:
+            qs = qs.filter(fk_pedido_id=pedido_id)
+
+        return qs
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return PagoCreateSerializer
+        if self.action == "retrieve":
+            return PagoOutputSerializer
+        return PagoListSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        pedido_id = serializer.validated_data["pedido"]
+        tipo_id = serializer.validated_data["tipo_pago"]
+        monto = serializer.validated_data["monto"]
+        referencia = serializer.validated_data.get("referencia", "")
+
+        usuario = getattr(request.user, "usuario", None)
+        rol = getattr(usuario, "fk_rol", None)
+        nombre_rol = rol.nombre_rol if rol else None
+
+        try:
+            estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
+        except EstadoPedido.DoesNotExist:
+            return Response(
+                {"message": "Estado 'entregado' no configurado en la base de datos."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        try:
+            with transaction.atomic():
+                # Lock the primary model row (no select_related to avoid outer join error in Postgres)
+                pedido = PedidoCabecera.objects.select_for_update().get(pk=pedido_id)
+
+                # Check vendor ownership if non-admin
+                if nombre_rol == VENDEDOR and pedido.fk_vendedor != usuario:
+                    return Response(
+                        {"message": "No tienes permiso para registrar el pago de un pedido asignado a otro vendedor."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                # TOCTOU protection: re-validate state under lock.
+                # The serializer already validated this, but the state
+                # could have changed between validation and lock acquisition.
+                if pedido.fk_estado.tipo_estado != "listo_para_retirar":
+                    return Response(
+                        {
+                            "message": f"El pedido ya no está en estado 'listo_para_retirar' "
+                            f"(estado actual: '{pedido.fk_estado.tipo_estado}')."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Check not already paid (under lock)
+                if Pago.objects.filter(fk_pedido=pedido).exists():
+                    return Response(
+                        {"message": "Este pedido ya tiene un pago registrado."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Create payment (folio auto-generated by model.save)
+                pago = Pago(
+                    fk_pedido=pedido,
+                    fk_tipo_id=tipo_id,
+                    monto=monto,
+                    referencia=referencia,
+                )
+                pago.save()
+
+                # Advance pedido to entregado
+                estado_anterior = pedido.fk_estado
+                pedido.fk_estado = estado_entregado
+                pedido.save(update_fields=["fk_estado"])
+
+                HistorialEstadoPedido.objects.create(
+                    fk_pedido=pedido,
+                    fk_estado_anterior=estado_anterior,
+                    fk_estado_nuevo=estado_entregado,
+                    fk_cambiado_por=usuario,
+                )
+
+        except IntegrityError as exc:
+            err_str = str(exc)
+            if "folio" in err_str or "unique_pago_per_pedido" in err_str:
+                logger.warning("IntegrityError esperado (concurrencia): %s", exc)
+                return Response(
+                    {"message": "Error de concurrencia. Intente de nuevo."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            raise
+        except DatabaseError as exc:
+            logger.error("Error de base de datos al registrar pago: %s", exc)
+            return Response(
+                {"message": "Error al procesar el pago. Intente de nuevo."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        _log(
+            request.user,
+            f"registrar_pago id={pago.id_pago} folio={pago.folio} pedido={pedido_id} monto={monto}",
+            request,
+        )
+        logger.info(
+            "Pago %s registrado para pedido %s con folio %s",
+            pago.id_pago,
+            pedido_id,
+            pago.folio,
+        )
+
+        # Reload for serializer
+        pago = (
+            Pago.objects.select_related(
+                "fk_pedido__fk_estado",
+                "fk_pedido__fk_cliente__fk_persona",
+                "fk_pedido__fk_vendedor__fk_persona",
+                "fk_tipo",
+            )
+            .prefetch_related(
+                "fk_pedido__detallepedido_set",
+            )
+            .get(pk=pago.pk)
+        )
+
+        return Response(
+            PagoOutputSerializer(pago).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def tipos_pago(self, request):
+        """GET /api/tipos-pago/ — lista de tipos de pago disponibles."""
+        # Response() plano (sin _ok) porque el frontend espera
+        # response.data como el array directamente, no como {ok, data}
+        tipos = TipoPago.objects.all()
+        return Response(TipoPagoSerializer(tipos, many=True).data)

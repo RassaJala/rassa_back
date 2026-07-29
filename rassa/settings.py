@@ -160,6 +160,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_write": "30/minute",
     "admin_users": "30/minute",
     "publicaciones_current": "60/minute",
+    "pagos_read": "60/minute",
+    "pagos_write": "20/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===
