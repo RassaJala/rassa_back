@@ -632,9 +632,7 @@ class MermaResumenTestCase(WasteBaseTestCase):
         for merma, fecha in zip(mermas, fechas, strict=False):
             Merma.objects.filter(id_merma=merma.id_merma).update(creado_en=fecha)
 
-        response = self.admin_client.get(
-            f"{reverse('merma-resumen')}?fecha_desde=2026-07-23&fecha_hasta=2026-07-26"
-        )
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?fecha_desde=2026-07-23&fecha_hasta=2026-07-26")
         self._assert_success_envelope(response)
         data = response.data["data"]
         self.assertEqual(data["total_general"], 8)
