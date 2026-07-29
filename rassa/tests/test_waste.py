@@ -542,3 +542,122 @@ class MermaConcurrencyTests(TransactionTestCase):
         # Verificar stock final
         self.producto_semanal.refresh_from_db()
         self.assertEqual(self.producto_semanal.stock, 4)  # 10 - 6 = 4
+
+
+class MermaResumenTestCase(WasteBaseTestCase):
+    """Tests para el endpoint de resumen de mermas."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin_client = APIClient()
+        self.admin_client.force_authenticate(self.admin)
+
+        # Crear producto adicional
+        self.producto2 = Producto.objects.create(
+            nombre_producto="Pera",
+            fk_categoria=self.categoria,
+            es_perecedero=True,
+            estado=True,
+        )
+        self.producto_semanal2 = ProductoSemanal.objects.create(
+            fk_publicacion=self.publicacion,
+            fk_producto=self.producto2,
+            fk_unidad=self.unidad,
+            stock=30,
+            precio="30.00",
+            estado=ProductoSemanal.ESTADO_ACTIVO,
+        )
+        self.decision2 = DecisionMerma.objects.create(decision="Desechar")
+
+        # creado_en se setea con auto_now_add (timezone.now), no podemos
+        # pasar valores explicitos. Todas quedan con la misma fecha/hora.
+        Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            cantidad=10,
+            motivo="Sobreproducción",
+            fk_decision=self.decision,
+        )
+        Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            cantidad=5,
+            motivo="Dañado",
+            fk_decision=self.decision2,
+        )
+        Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal2,
+            cantidad=8,
+            motivo="Maduración excesiva",
+            fk_decision=self.decision,
+        )
+
+    def test_acceso_no_autenticado(self):
+        response = self.client.get(reverse("merma-resumen"))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_acceso_sin_rol_admin(self):
+        vendedor_client = APIClient()
+        vendedor_client.force_authenticate(self.vendedor)
+        response = vendedor_client.get(reverse("merma-resumen"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_resumen_sin_filtros(self):
+        response = self.admin_client.get(reverse("merma-resumen"))
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["agrupacion"], "mes")
+        self.assertEqual(data["total_general"], 23)
+        self.assertIsNotNone(data["producto_mas_afectado"])
+        self.assertEqual(len(data["detalle"]), 3)
+
+    def test_resumen_filtro_por_producto(self):
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?producto={self.producto.id_producto}")
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["total_general"], 15)
+        for row in data["detalle"]:
+            self.assertEqual(row["producto_id"], self.producto.id_producto)
+
+    def test_resumen_filtro_por_fecha(self):
+        # creado_en es auto_now_add, así que actualizamos via query directa
+        from datetime import datetime
+
+        from django.utils import timezone
+
+        mermas = Merma.objects.all().order_by("id_merma")
+        fechas = [
+            timezone.make_aware(datetime(2026, 7, 20, 10, 0, 0)),
+            timezone.make_aware(datetime(2026, 7, 22, 10, 0, 0)),
+            timezone.make_aware(datetime(2026, 7, 25, 10, 0, 0)),
+        ]
+        for merma, fecha in zip(mermas, fechas, strict=False):
+            Merma.objects.filter(id_merma=merma.id_merma).update(creado_en=fecha)
+
+        response = self.admin_client.get(
+            f"{reverse('merma-resumen')}?fecha_desde=2026-07-23&fecha_hasta=2026-07-26"
+        )
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["total_general"], 8)
+
+    def test_resumen_agrupado_por_semana(self):
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?agrupar_por=semana")
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["agrupacion"], "semana")
+        self.assertEqual(data["total_general"], 23)
+
+    def test_resumen_producto_mas_afectado(self):
+        response = self.admin_client.get(reverse("merma-resumen"))
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["producto_mas_afectado"]["nombre"], "Manzana")
+        self.assertEqual(data["producto_mas_afectado"]["total"], 15)
+
+    def test_resumen_sin_mermas(self):
+        Merma.objects.all().delete()
+        response = self.admin_client.get(reverse("merma-resumen"))
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertEqual(data["total_general"], 0)
+        self.assertIsNone(data["producto_mas_afectado"])
+        self.assertEqual(len(data["detalle"]), 0)
