@@ -1,0 +1,15 @@
+meta {
+  name: Desactivar decisión de merma
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/decisiones-merma/{{decisionId}}
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

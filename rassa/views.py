@@ -53,6 +53,51 @@ def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
 ok_response = _ok  # Alias for backward compatibility
 
 
+class OkResponseMixin:
+    """Wraps DRF CRUD responses in the project's ``ok_response`` envelope.
+
+    ViewSets that inherit from this mixin automatically return the
+    ``{ok, data, message}`` envelope for list, create, and update actions
+    without manually overriding each method.
+
+    Usage::
+
+        class MyViewSet(OkResponseMixin, ModelViewSet):
+            update_message = "Registro actualizado correctamente."  # optional
+            ...
+
+    Override ``destroy()`` separately when using soft-delete or custom
+    delete logic — this mixin does NOT wrap destroy since its behavior
+    varies across the project.
+
+    Class attributes
+    ----------------
+    create_message : str or None
+        If set, included in the POST response envelope along with status_code.
+    update_message : str or None
+        If set, included in the PATCH/PUT response envelope along with status_code.
+    """
+
+    create_message = None
+    update_message = None
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        return ok_response(data=response.data, status_code=response.status_code)
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        return ok_response(data=response.data, status_code=response.status_code)
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        return ok_response(data=response.data, status_code=response.status_code, message=self.create_message)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return ok_response(data=response.data, status_code=response.status_code, message=self.update_message)
+
+
 class RegisterView(generics.CreateAPIView):
     """Endpoint para registrar un nuevo usuario con perfil completo.
 

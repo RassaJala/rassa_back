@@ -1,0 +1,15 @@
+meta {
+  name: Listar decisiones de merma
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/decisiones-merma/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

@@ -24,6 +24,7 @@ from rassa.blueprints.pagos.urls import urlpatterns as pagos_urls
 from rassa.blueprints.pedido.urls import urlpatterns as pedido_urls
 from rassa.blueprints.producto_imagen.urls import urlpatterns as producto_imagen_urls
 from rassa.blueprints.publicacion.urls import urlpatterns as publicacion_urls
+from rassa.blueprints.waste.urls import urlpatterns as waste_urls
 from rassa.models import Log, Usuario
 from rassa.productos_views import (
     ProductoDetailView,
@@ -161,4 +162,5 @@ urlpatterns = [
     path("", include(familias_urls)),
     path("", include(pedido_urls)),
     path("", include(pagos_urls)),
+    path("", include(waste_urls)),
 ]
