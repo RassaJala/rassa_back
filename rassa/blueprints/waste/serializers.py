@@ -6,9 +6,7 @@ from rassa.models import DecisionMerma, Merma
 
 
 class DecisionMermaSerializer(serializers.ModelSerializer):
-    decision = serializers.CharField(
-        validators=[UniqueValidator(queryset=DecisionMerma.objects.all())]
-    )
+    decision = serializers.CharField(validators=[UniqueValidator(queryset=DecisionMerma.objects.all())])
 
     class Meta:
         model = DecisionMerma

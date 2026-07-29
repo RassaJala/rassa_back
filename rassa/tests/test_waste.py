@@ -419,9 +419,7 @@ class MermaListTests(WasteBaseTestCase):
             fk_producto_semanal=self.producto_semanal,
             estado=False,
         )
-        data = self._assert_success_envelope(
-            self.client.get(reverse("merma-list"), {"incluir_inactivos": "true"})
-        )
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list"), {"incluir_inactivos": "true"}))
         ids = [item["id_merma"] for item in data["results"]]
         self.assertIn(m.id_merma, ids)
 
@@ -430,8 +428,12 @@ class MermaListTests(WasteBaseTestCase):
         page_size = CatalogPagination.page_size
         Merma.objects.bulk_create(
             [
-                Merma(cantidad=1, motivo=f"Merma extra {i}", fk_decision=self.decision,
-                      fk_producto_semanal=self.producto_semanal)
+                Merma(
+                    cantidad=1,
+                    motivo=f"Merma extra {i}",
+                    fk_decision=self.decision,
+                    fk_producto_semanal=self.producto_semanal,
+                )
                 for i in range(page_size + 4)
             ]
         )
