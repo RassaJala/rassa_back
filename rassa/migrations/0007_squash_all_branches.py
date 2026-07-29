@@ -65,7 +65,32 @@ def reverse_backfill_unidad_nombre_abreviatura(apps, schema_editor):
             unidad.abreviatura = None
             to_clear.append(unidad)
     if to_clear:
-        Unidad.objects.bulk_update(to_clear, ["nombre", "abreviatura"], batch_size=BULK_BATCH_SIZE)
+        try:
+            Unidad.objects.bulk_update(to_clear, ["nombre", "abreviatura"], batch_size=BULK_BATCH_SIZE)
+        except Exception:
+            for unidad in to_clear:
+                try:
+                    unidad.save(update_fields=["nombre", "abreviatura"])
+                except Exception as exc:
+                    logger.error("Reverse backfill failed for Unidad pk=%s: %s", unidad.pk, exc)
+                    raise
+
+
+def dedup_es_principal(apps, schema_editor):
+    """Ensure at most one ProductoImagen per producto has es_principal=True
+    before adding the unique constraint."""
+    ProductoImagen = apps.get_model("rassa", "ProductoImagen")
+    for fk_producto in (
+        ProductoImagen.objects.filter(es_principal=True)
+        .values_list("fk_producto", flat=True)
+        .distinct()
+    ):
+        qs = ProductoImagen.objects.filter(fk_producto=fk_producto, es_principal=True).order_by("id_imagen")
+        if qs.count() > 1:
+            # Keep the first one as principal, demote the rest
+            keep, *rest = qs
+            ProductoImagen.objects.filter(pk__in=[r.pk for r in rest]).update(es_principal=False)
+
 
 
 class Migration(migrations.Migration):
@@ -216,6 +241,8 @@ class Migration(migrations.Migration):
             name="drive_file_id",
             field=models.CharField(blank=True, max_length=255, null=True),
         ),
+        # === Dedup before adding unique constraint ===
+        migrations.RunPython(dedup_es_principal, migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name="productoimagen",
             constraint=models.UniqueConstraint(
