@@ -610,12 +610,24 @@ class MermaResumenTestCase(WasteBaseTestCase):
         self.assertEqual(len(data["detalle"]), 3)
 
     def test_resumen_filtro_por_producto(self):
-        response = self.admin_client.get(f"{reverse('merma-resumen')}?producto={self.producto.id_producto}")
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?producto_id={self.producto.id_producto}")
         self._assert_success_envelope(response)
         data = response.data["data"]
         self.assertEqual(data["total_general"], 15)
         for row in data["detalle"]:
             self.assertEqual(row["producto_id"], self.producto.id_producto)
+
+    def test_resumen_producto_id_invalido(self):
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?producto_id=abc")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resumen_fecha_invalida(self):
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?fecha_desde=invalida")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resumen_agrupar_por_invalido(self):
+        response = self.admin_client.get(f"{reverse('merma-resumen')}?agrupar_por=ano")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_resumen_filtro_por_fecha(self):
         # creado_en es auto_now_add, así que actualizamos via query directa

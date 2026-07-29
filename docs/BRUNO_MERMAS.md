@@ -63,7 +63,7 @@ Solo accesible por Administradores.
 |-----------|------|-------------|---------|
 | `fecha_desde` | string (YYYY-MM-DD) | Fecha inicio del filtro | `2026-07-01` |
 | `fecha_hasta` | string (YYYY-MM-DD) | Fecha fin del filtro | `2026-07-31` |
-| `producto` | int | ID del producto a filtrar | `1` |
+| `producto_id` | int | ID del producto a filtrar | `1` |
 | `agrupar_por` | string (`mes` o `semana`) | Período de agrupación | `semana` |
 
 **Respuesta:**
@@ -106,10 +106,10 @@ GET /api/mermas/resumen/?agrupar_por=semana
 GET /api/mermas/resumen/?fecha_desde=2026-07-01&fecha_hasta=2026-07-31
 
 # Filtrar por producto
-GET /api/mermas/resumen/?producto=1
+GET /api/mermas/resumen/?producto_id=1
 
 # Combinar filtros
-GET /api/mermas/resumen/?fecha_desde=2026-07-01&fecha_hasta=2026-07-31&agrupar_por=semana&producto=1
+GET /api/mermas/resumen/?fecha_desde=2026-07-01&fecha_hasta=2026-07-31&agrupar_por=semana&producto_id=1
 ```
 
 ### Gestionar decisiones de merma
