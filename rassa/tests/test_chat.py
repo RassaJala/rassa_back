@@ -371,21 +371,21 @@ class ChatTests(APITestCase):
         self.client.force_authenticate(self.user3)  # user3 no es miembro
         url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
         response = self.client.patch(url, {"nombre": "Hack"})
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_listar_integrantes_usuario_no_miembro(self):
         conv = self._crear_conversacion_grupal()
         self.client.force_authenticate(self.user3)
         url = reverse("chat-conversaciones-integrantes", args=[conv.id_conversacion])
         response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_agregar_integrante_usuario_no_miembro(self):
         conv = self._crear_conversacion_grupal()
         self.client.force_authenticate(self.user3)  # user3 no es miembro
         url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
         response = self.client.post(url, {"usuario_id": self.usuario2.id_usuario})
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_conversacion_leer_usuario_no_miembro(self):
         conv = self._crear_conversacion_privada()
@@ -393,7 +393,7 @@ class ChatTests(APITestCase):
         self.client.force_authenticate(self.user3)
         url = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
         response = self.client.patch(url)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_conversacion_leer_conversacion_inexistente(self):
         url = reverse("chat-conversaciones-leer", args=[99999])
@@ -467,7 +467,7 @@ class ChatTests(APITestCase):
         self.client.force_authenticate(self.user3)
         url = reverse("chat-conversaciones-detalle", args=[conv.id_conversacion])
         response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_conversacion_detalle_inexistente(self):
         url = reverse("chat-conversaciones-detalle", args=[99999])
@@ -578,7 +578,7 @@ class ChatTests(APITestCase):
         self.client.force_authenticate(self.user3)
         url = reverse("chat-mensajes", args=[conv.id_conversacion])
         response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     # ── Post-review: R3.3 — crear conversación con usuario inactivo ─
 
@@ -788,3 +788,15 @@ class ChatTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("id_mensaje", response.json()["data"])
+
+    def test_usuario_buscar_usuario_inactivo(self):
+        self.usuario1.estado = False
+        self.usuario1.save(update_fields=["estado"])
+        url = reverse("chat-usuarios-buscar")
+        response = self.client.get(url, {"q": "test"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_listar_mensajes_conversacion_inexistente(self):
+        url = reverse("chat-mensajes", args=[99999])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

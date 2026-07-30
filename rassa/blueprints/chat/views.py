@@ -35,22 +35,21 @@ def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
 def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupal=False):
     """Obtiene una conversación activa y verifica que el usuario sea miembro.
 
-    Lanza NotFound si no existe, PermissionDenied si no es miembro o está inactivo,
+    Lanza NotFound si no existe, PermissionDenied si el usuario está inactivo,
     y ValidationError si require_grupal=True y la conversación no es grupal.
     """
     if not usuario.estado:
         raise PermissionDenied("Tu cuenta está desactivada.")
 
-    try:
-        conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
-    except Conversacion.DoesNotExist as err:
-        raise NotFound("Conversación no encontrada.") from err
+    conv = Conversacion.objects.filter(
+        pk=conversacion_id, estado=True,
+        integrante__fk_usuario=usuario, integrante__estado=True,
+    ).first()
+    if not conv:
+        raise NotFound("Conversación no encontrada.")
 
     if require_grupal and not conv.tipo:
         raise ValidationError("Esta acción solo aplica a conversaciones grupales.")
-
-    if not conv.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
-        raise PermissionDenied("No eres miembro de esta conversación.")
 
     return conv
 
@@ -254,28 +253,6 @@ class ConversacionPrivadaCreateView(APIView):
                 Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
                 Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
             except IntegrityError:
-                ids_u1 = set(
-                    Integrante.objects.filter(
-                        fk_usuario=usuario1,
-                        fk_conversacion__tipo=False,
-                        fk_conversacion__estado=True,
-                        estado=True,
-                    ).values_list("fk_conversacion_id", flat=True)
-                )
-                ids_u2 = set(
-                    Integrante.objects.filter(
-                        fk_usuario=usuario2,
-                        fk_conversacion__tipo=False,
-                        fk_conversacion__estado=True,
-                        estado=True,
-                    ).values_list("fk_conversacion_id", flat=True)
-                )
-                comunes = ids_u1 & ids_u2
-                if comunes:
-                    return _ok(
-                        data={"id_conversacion": comunes.pop()},
-                        message="La conversación ya existe.",
-                    )
                 raise
 
             return _ok(
@@ -542,9 +519,12 @@ class MensajeDocumentoCreateView(APIView):
         # tipo_documento is validated by the serializer against ["imagen","audio","video"].
         nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
+        tmp_ruta = docs_dir / f"{nombre_archivo}.tmp"
 
-        # Write file BEFORE the DB transaction so we can clean it up if the DB fails.
-        with open(ruta, "wb") as f:
+        # Write to a temp file first; rename to final name only after the DB
+        # transaction commits, avoiding orphan files if the process crashes
+        # between write and commit.
+        with open(tmp_ruta, "wb") as f:
             for chunk in archivo.chunks():
                 f.write(chunk)
 
@@ -567,8 +547,10 @@ class MensajeDocumentoCreateView(APIView):
                     fk_mensaje=mensaje,
                     fk_documento=documento,
                 )
+
+                transaction.on_commit(lambda: tmp_ruta.rename(ruta))
         except BaseException:
-            ruta.unlink(missing_ok=True)
+            tmp_ruta.unlink(missing_ok=True)
             raise
 
         return _ok(

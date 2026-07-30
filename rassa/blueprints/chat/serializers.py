@@ -49,15 +49,15 @@ class MensajeCreateSerializer(serializers.Serializer):
 
 
 ALLOWED_EXTENSIONS = {
-    "imagen": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
-    "audio": [".mp3", ".wav", ".ogg", ".m4a"],
-    "video": [".mp4", ".webm", ".avi", ".mov"],
+    "imagen": (".jpg", ".jpeg", ".png", ".gif", ".webp"),
+    "audio": (".mp3", ".wav", ".ogg", ".m4a"),
+    "video": (".mp4", ".webm", ".avi", ".mov"),
 }
 
 ALLOWED_MIMES = {
-    "imagen": ["image/jpeg", "image/png", "image/gif", "image/webp"],
-    "audio": ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"],
-    "video": ["video/mp4", "video/webm", "video/x-msvideo", "video/quicktime"],
+    "imagen": ("image/jpeg", "image/png", "image/gif", "image/webp"),
+    "audio": ("audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"),
+    "video": ("video/mp4", "video/webm", "video/x-msvideo", "video/quicktime"),
 }
 
 try:
