@@ -34,6 +34,7 @@ def backfill_unidad_nombre_abreviatura(apps, schema_editor):
             continue
         nombre = unidad.nombre or unidad.tipo
         if not nombre:
+            logger.warning("Backfill skipped Unidad pk=%s: no name or tipo", unidad.pk)
             continue
         unidad.nombre = nombre
         unidad.abreviatura = unidad.abreviatura or _expected_abreviatura(nombre)
@@ -62,8 +63,17 @@ def reverse_backfill_unidad_nombre_abreviatura(apps, schema_editor):
             unidad.nombre = None
             unidad.abreviatura = None
             to_clear.append(unidad)
-    if to_clear:
+    if not to_clear:
+        return
+    try:
         Unidad.objects.bulk_update(to_clear, ["nombre", "abreviatura"], batch_size=BULK_BATCH_SIZE)
+    except Exception:
+        for unidad in to_clear:
+            try:
+                unidad.save(update_fields=["nombre", "abreviatura"])
+            except Exception as exc:
+                logger.error("Reverse backfill failed for Unidad pk=%s: %s", unidad.pk, exc)
+                raise
 
 
 class Migration(migrations.Migration):
