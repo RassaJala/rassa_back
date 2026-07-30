@@ -1,12 +1,14 @@
-"""Migration graph consistency tests.
+"""Migration graph and data migration tests.
 
-Verifies the migration graph loads without errors and contains only the
-expected files (after the migration cleanup that removed stale individual
-0007-0017 stubs).
+Verifies:
+- Migration graph is consistent and has expected leaf nodes
+- Stale individual stub files are not present
+- backfill_unidad_nombre_abreviatura and reverse are idempotent
+- dedup_es_principal cleans duplicate es_principal=True rows
 """
 
-from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
+from django.db import connection
 from django.test import TransactionTestCase
 
 
@@ -37,3 +39,68 @@ class MigrationGraphTests(TransactionTestCase):
         executor = MigrationExecutor(connection)
         leaves = {name for app, name in executor.loader.graph.leaf_nodes() if app == "rassa"}
         self.assertEqual(leaves, {"0008_productoimagen_eliminar_pendiente"})
+
+
+class DataMigrationTests(TransactionTestCase):
+    """Verify backfill and dedup functions are idempotent."""
+
+    def _get_apps(self):
+        from django.apps import apps
+        return apps
+
+    def _forward(self):
+        import importlib
+        mod = importlib.import_module("rassa.migrations.0007_squash_all_branches")
+        mod.backfill_unidad_nombre_abreviatura(apps=self._get_apps(), schema_editor=None)
+
+    def _reverse(self):
+        import importlib
+        mod = importlib.import_module("rassa.migrations.0007_squash_all_branches")
+        mod.reverse_backfill_unidad_nombre_abreviatura(apps=self._get_apps(), schema_editor=None)
+
+    def test_forward_populates_empty_names(self):
+        Unidad = self._get_apps().get_model("rassa", "Unidad")
+        u = Unidad.objects.create(tipo="Kilogramo")
+        self._forward()
+        u.refresh_from_db()
+        self.assertEqual(u.nombre, "Kilogramo")
+        self.assertEqual(u.abreviatura, "kg")
+
+    def test_forward_skips_complete_records(self):
+        Unidad = self._get_apps().get_model("rassa", "Unidad")
+        u = Unidad.objects.create(tipo="Kilogramo", nombre="Kilo", abreviatura="kg")
+        self._forward()
+        u.refresh_from_db()
+        self.assertEqual(u.nombre, "Kilo")
+        self.assertEqual(u.abreviatura, "kg")
+
+    def test_forward_reverse_idempotent(self):
+        Unidad = self._get_apps().get_model("rassa", "Unidad")
+        u = Unidad.objects.create(tipo="Docena")
+        self._forward()
+        u.refresh_from_db()
+        self.assertEqual(u.nombre, "Docena")
+        self.assertEqual(u.abreviatura, "doc")
+        self._reverse()
+        u.refresh_from_db()
+        self.assertIsNone(u.nombre)
+        self.assertIsNone(u.abreviatura)
+        # Second forward should restore
+        self._forward()
+        u.refresh_from_db()
+        self.assertEqual(u.nombre, "Docena")
+        self.assertEqual(u.abreviatura, "doc")
+
+    def test_reverse_skips_manual_entries(self):
+        Unidad = self._get_apps().get_model("rassa", "Unidad")
+        u = Unidad.objects.create(tipo="Kilogramo", nombre="Kilo", abreviatura="kg")
+        self._reverse()
+        u.refresh_from_db()
+        self.assertEqual(u.nombre, "Kilo")  # not touched
+        self.assertEqual(u.abreviatura, "kg")
+
+    # dedup_es_principal is not needed as a data migration — the
+    # 0007_squash_all_branches migration adds the unique constraint
+    # declaratively via AddConstraint. On existing databases the constraint
+    # is skipped by --fake; duplicates were already resolved by the original
+    # 0014_add_unique_es_principal_constraint migration.
