@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('rassa', '0008_productoimagen_eliminar_pendiente'),
+        ('rassa', '0012_pago_folio_default'),
     ]
 
     operations = [

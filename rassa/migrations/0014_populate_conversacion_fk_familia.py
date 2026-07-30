@@ -15,7 +15,7 @@ def populate_fk_familia(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("rassa", "0009_conversacion_fk_familia"),
+        ("rassa", "0013_conversacion_fk_familia"),
     ]
 
     operations = [
