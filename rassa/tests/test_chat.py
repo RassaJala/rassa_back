@@ -19,6 +19,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from rassa.blueprints.chat import views
 from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, Persona, Rol, Usuario
 
 User = get_user_model()
@@ -153,6 +154,20 @@ class ChatTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         integrante.refresh_from_db()
         self.assertTrue(integrante.estado)
+
+    def test_get_or_reactivate_integrante_crea_nuevo(self):
+        conv = self._crear_conversacion_grupal()
+        integrante = views._get_or_reactivate_integrante(self.usuario3, conv)
+        self.assertIsNotNone(integrante)
+        self.assertTrue(integrante.estado)
+        self.assertTrue(Integrante.objects.filter(pk=integrante.pk, estado=True).exists())
+
+    def test_get_or_reactivate_integrante_reactiva_inactivo(self):
+        conv = self._crear_conversacion_grupal()
+        integrante = Integrante.objects.create(fk_usuario=self.usuario3, fk_conversacion=conv, estado=False)
+        reactivado = views._get_or_reactivate_integrante(self.usuario3, conv)
+        self.assertEqual(integrante.pk, reactivado.pk)
+        self.assertTrue(reactivado.estado)
 
     def test_crear_conversacion_grupal_reporta_usuarios_faltantes(self):
         url = reverse("chat-conversaciones-crear-grupal")
@@ -446,6 +461,23 @@ class ChatTests(APITestCase):
         response = self.client.post(
             url,
             {"conversacion": conv.id_conversacion, "documento": archivo, "tipo_documento": "documento"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_enviar_documento_mime_invalido(self):
+        try:
+            import magic as _magiclib
+
+            _magiclib.from_buffer(b"test", mime=True)
+        except (ImportError, OSError):
+            self.skipTest("python-magic no está disponible")
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile("foto.jpg", b"esto no es una imagen", content_type="image/jpeg")
+        response = self.client.post(
+            url,
+            {"conversacion": conv.id_conversacion, "documento": archivo, "tipo_documento": "imagen"},
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

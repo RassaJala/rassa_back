@@ -1,10 +1,11 @@
+import shutil
 import uuid
 from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, OuterRef, Prefetch, Q, Subquery
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -13,7 +14,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from rassa.models import Conversacion, Documento, Integrante, Mensaje, MensajeDocumento, Usuario
+from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
 from .serializers import (
@@ -255,7 +256,7 @@ class ConversacionPrivadaCreateView(APIView):
                 Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
                 Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
             except IntegrityError:
-                raise
+                return _error("La conversación ya existe.", status_code=status.HTTP_409_CONFLICT)
 
             return _ok(
                 data={"id_conversacion": conv.id_conversacion},
@@ -456,7 +457,7 @@ class ConversacionListView(APIView):
                     )
                     & ~Q(mensaje__fk_emisor=usuario),
                 ),
-                es_familia=Q(fk_familia__isnull=False),
+                es_familia=Exists(Familia.objects.filter(pk=OuterRef("fk_familia_id"))),
             )
             .prefetch_related(
                 Prefetch(
@@ -549,11 +550,15 @@ class MensajeDocumentoCreateView(APIView):
                     fk_mensaje=mensaje,
                     fk_documento=documento,
                 )
-
-                transaction.on_commit(lambda: tmp_ruta.rename(ruta))
         except BaseException:
             tmp_ruta.unlink(missing_ok=True)
             raise
+        else:
+            try:
+                shutil.move(str(tmp_ruta), str(ruta))
+            except OSError:
+                tmp_ruta.unlink(missing_ok=True)
+                raise
 
         return _ok(
             data={
