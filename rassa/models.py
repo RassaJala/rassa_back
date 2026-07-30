@@ -612,6 +612,7 @@ class Conversacion(models.Model):
     id_conversacion = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100, blank=True, null=True)
     tipo = models.BooleanField(default=False)  # FALSE = privada, TRUE = grupal
+    fk_familia = models.ForeignKey(Familia, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_familia")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 

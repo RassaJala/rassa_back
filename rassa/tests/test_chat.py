@@ -94,8 +94,10 @@ class ChatTests(APITestCase):
         self.assertFalse(body["data"][0]["es_familia"])
 
     def test_listar_conversaciones_marca_es_familia(self):
-        self._crear_conversacion_grupal()
-        Familia.objects.create(nombre_familia="Grupo test", estado=True)
+        conv = self._crear_conversacion_grupal()
+        familia = Familia.objects.create(nombre_familia="Grupo test", estado=True)
+        conv.fk_familia = familia
+        conv.save(update_fields=["fk_familia"])
 
         url = reverse("chat-conversaciones")
         response = self.client.get(url)
@@ -738,3 +740,51 @@ class ChatTests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.json()["data"]), 0)
+
+    # ── Post-review ronda 3: flujo completo ──────────────────────────
+
+    def test_flujo_completo_enviar_leer_no_leidos(self):
+        conv = self._crear_conversacion_privada()
+        # user1 envía mensaje a user2
+        url_enviar = reverse("chat-mensajes-enviar")
+        self.client.post(
+            url_enviar,
+            {"fk_conversacion": conv.id_conversacion, "contenido": "Hola"},
+        )
+
+        # user2 ve no_leidos = 1
+        self.client.force_authenticate(self.user2)
+        url_lista = reverse("chat-conversaciones")
+        response = self.client.get(url_lista)
+        self.assertEqual(response.json()["data"][0]["no_leidos"], 1)
+
+        # user2 marca como leído
+        url_leer = reverse("chat-conversaciones-leer", args=[conv.id_conversacion])
+        self.client.patch(url_leer)
+
+        # no_leidos ahora 0
+        response = self.client.get(url_lista)
+        self.assertEqual(response.json()["data"][0]["no_leidos"], 0)
+
+        self.client.force_authenticate(self.user1)
+
+    def test_flujo_completo_con_documento(self):
+        conv = self._crear_conversacion_privada()
+        url = reverse("chat-mensajes-enviar-con-documento")
+        archivo = SimpleUploadedFile(
+            "foto.jpg",
+            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00",
+            content_type="image/jpeg",
+        )
+        response = self.client.post(
+            url,
+            {
+                "conversacion": conv.id_conversacion,
+                "documento": archivo,
+                "tipo_documento": "imagen",
+                "contenido": "Con foto",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("id_mensaje", response.json()["data"])

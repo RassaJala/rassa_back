@@ -4,7 +4,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -13,7 +13,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
+from rassa.models import Conversacion, Documento, Integrante, Mensaje, MensajeDocumento, Usuario
 from rassa.views import _ok
 
 from .serializers import (
@@ -458,9 +458,6 @@ class ConversacionListView(APIView):
         usuario = request.user.usuario
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
-        # ponytail: relies on conversacion.nombre == familia.nombre_familia naming convention;
-        # a direct FK from Conversacion to Familia would be cleaner but is out of scope for this PR.
-        es_familia_subq = Familia.objects.filter(nombre_familia=OuterRef("nombre"), estado=True)
 
         conversaciones = (
             Conversacion.objects.filter(
@@ -480,7 +477,7 @@ class ConversacionListView(APIView):
                     )
                     & ~Q(mensaje__fk_emisor=usuario),
                 ),
-                es_familia=Exists(es_familia_subq),
+                es_familia=Q(fk_familia__isnull=False),
             )
             .prefetch_related(
                 Prefetch(
@@ -546,29 +543,33 @@ class MensajeDocumentoCreateView(APIView):
         nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
 
-        with transaction.atomic():
-            documento = Documento.objects.create(
-                fk_usuario=usuario,
-                nombre_documento=archivo.name,
-                url_documento=f"documentos/{nombre_archivo}",
-                tipo_documento=data["tipo_documento"],
-            )
-
-            mensaje = Mensaje.objects.create(
-                fk_emisor=usuario,
-                fk_conversacion_id=data["fk_conversacion"],
-                contenido=data.get("contenido") or "",
-            )
-
-            MensajeDocumento.objects.create(
-                fk_mensaje=mensaje,
-                fk_documento=documento,
-            )
-
-        # Escribir archivo solo si la transacción fue exitosa
+        # Write file BEFORE the DB transaction so we can clean it up if the DB fails.
         with open(ruta, "wb") as f:
             for chunk in archivo.chunks():
                 f.write(chunk)
+
+        try:
+            with transaction.atomic():
+                documento = Documento.objects.create(
+                    fk_usuario=usuario,
+                    nombre_documento=archivo.name,
+                    url_documento=f"documentos/{nombre_archivo}",
+                    tipo_documento=data["tipo_documento"],
+                )
+
+                mensaje = Mensaje.objects.create(
+                    fk_emisor=usuario,
+                    fk_conversacion_id=data["fk_conversacion"],
+                    contenido=data.get("contenido") or "",
+                )
+
+                MensajeDocumento.objects.create(
+                    fk_mensaje=mensaje,
+                    fk_documento=documento,
+                )
+        except BaseException:
+            ruta.unlink(missing_ok=True)
+            raise
 
         return _ok(
             data={
