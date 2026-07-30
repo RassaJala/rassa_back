@@ -42,8 +42,10 @@ def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupa
         raise PermissionDenied("Tu cuenta está desactivada.")
 
     conv = Conversacion.objects.filter(
-        pk=conversacion_id, estado=True,
-        integrante__fk_usuario=usuario, integrante__estado=True,
+        pk=conversacion_id,
+        estado=True,
+        integrante__fk_usuario=usuario,
+        integrante__estado=True,
     ).first()
     if not conv:
         raise NotFound("Conversación no encontrada.")
