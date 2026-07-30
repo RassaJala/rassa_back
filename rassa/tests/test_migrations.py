@@ -7,8 +7,8 @@ Verifies:
 - dedup_es_principal cleans duplicate es_principal=True rows
 """
 
-from django.db.migrations.executor import MigrationExecutor
 from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 
@@ -46,15 +46,18 @@ class DataMigrationTests(TransactionTestCase):
 
     def _get_apps(self):
         from django.apps import apps
+
         return apps
 
     def _forward(self):
         import importlib
+
         mod = importlib.import_module("rassa.migrations.0007_squash_all_branches")
         mod.backfill_unidad_nombre_abreviatura(apps=self._get_apps(), schema_editor=None)
 
     def _reverse(self):
         import importlib
+
         mod = importlib.import_module("rassa.migrations.0007_squash_all_branches")
         mod.reverse_backfill_unidad_nombre_abreviatura(apps=self._get_apps(), schema_editor=None)
 
