@@ -13,7 +13,9 @@ from django.db.models import Max
 from django.test import TestCase
 
 from rassa.models import (
+    Conversacion,
     DetallePedido,
+    Mensaje,
     PedidoCabecera,
     Producto,
     Rol,
@@ -85,3 +87,16 @@ class SeedRassaDataTest(TestCase):
 
         self.assertEqual(Unidad.objects.count(), initial_count + 1)
         self.assertEqual(nueva.id_unidad, max_id_before + 1)
+
+    def test_seed_deja_secuencias_consistentes(self):
+        """Crear un Mensaje post-seed no lanza IntegrityError."""
+        call_command("seed_rassa_data")
+
+        conv = Conversacion.objects.first()
+        usuario = Usuario.objects.first()
+        Mensaje.objects.create(
+            fk_emisor=usuario,
+            fk_conversacion=conv,
+            contenido="Post-seed test",
+        )
+        self.assertEqual(Mensaje.objects.count(), 16)  # 15 del seed + 1 nuevo

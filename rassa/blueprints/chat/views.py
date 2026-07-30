@@ -1,9 +1,10 @@
+import shutil
 import uuid
 from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -21,25 +22,37 @@ from .serializers import (
     MensajeDocumentoCreateSerializer,
     MensajeSerializer,
     MensajeUpdateSerializer,
+    UsuarioBuscarSerializer,
 )
+
+
+def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
+    body = {"ok": False, "message": message}
+    if data is not None:
+        body["data"] = data
+    return Response(body, status=status_code)
 
 
 def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupal=False):
     """Obtiene una conversación activa y verifica que el usuario sea miembro.
 
-    Lanza NotFound si no existe, PermissionDenied si no es miembro,
+    Lanza NotFound si no existe, PermissionDenied si el usuario está inactivo,
     y ValidationError si require_grupal=True y la conversación no es grupal.
     """
-    try:
-        conv = Conversacion.objects.get(pk=conversacion_id, estado=True)
-    except Conversacion.DoesNotExist as err:
-        raise NotFound("Conversación no encontrada.") from err
+    if not usuario.estado:
+        raise PermissionDenied("Tu cuenta está desactivada.")
+
+    conv = Conversacion.objects.filter(
+        pk=conversacion_id,
+        estado=True,
+        integrante__fk_usuario=usuario,
+        integrante__estado=True,
+    ).first()
+    if not conv:
+        raise NotFound("Conversación no encontrada.")
 
     if require_grupal and not conv.tipo:
         raise ValidationError("Esta acción solo aplica a conversaciones grupales.")
-
-    if not conv.integrante_set.filter(fk_usuario=usuario, estado=True).exists():
-        raise PermissionDenied("No eres miembro de esta conversación.")
 
     return conv
 
@@ -137,23 +150,26 @@ class MensajeUpdateView(generics.UpdateAPIView):
         )
 
 
-class MensajeLeerView(APIView):
+class ConversacionLeerView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "chat_read"
 
-    def patch(self, request, mensaje_id):
-        try:
-            mensaje = Mensaje.objects.get(pk=mensaje_id, estado=True)
-        except Mensaje.DoesNotExist as err:
-            raise NotFound("Mensaje no encontrado.") from err
+    def patch(self, request, conversacion_id):
+        conversacion = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
 
-        if not mensaje.fk_conversacion.integrante_set.filter(fk_usuario=request.user.usuario, estado=True).exists():
-            raise PermissionDenied("No eres miembro de esta conversación.")
+        updated = (
+            Mensaje.objects.filter(
+                fk_conversacion=conversacion,
+                leido=False,
+            )
+            .exclude(fk_emisor=request.user.usuario)
+            .update(leido=True)
+        )
 
-        mensaje.leido = True
-        mensaje.save(update_fields=["leido"])
-
-        return _ok(message="Mensaje marcado como leído.")
+        return _ok(
+            message=f"{updated} mensaje(s) marcado(s) como leído(s).",
+            data={"marcados": updated},
+        )
 
 
 class MensajeInactivarView(APIView):
@@ -166,7 +182,7 @@ class MensajeInactivarView(APIView):
         except Mensaje.DoesNotExist as err:
             raise NotFound("Mensaje no encontrado.") from err
 
-        # Membership check (parity with MensajeLeerView): a user removed from the
+        # Membership check (parity with ConversacionLeerView): a user removed from the
         # conversation must not be able to inactivate their old messages.
         es_miembro = mensaje.fk_conversacion.integrante_set.filter(
             fk_usuario=request.user.usuario, estado=True
@@ -178,7 +194,7 @@ class MensajeInactivarView(APIView):
             raise PermissionDenied("No puedes eliminar un mensaje que no te pertenece.")
 
         antiguedad = timezone.now() - mensaje.creado_en
-        if antiguedad > timedelta(minutes=15):
+        if antiguedad > timedelta(minutes=settings.CHAT_EDIT_WINDOW_MINUTES):
             raise ValidationError("Solo se pueden eliminar mensajes de los últimos 15 minutos.")
 
         mensaje.estado = False
@@ -196,35 +212,20 @@ class ConversacionPrivadaCreateView(APIView):
         usuario2_id = request.data.get("usuario2") or request.data.get("fk_usuario")
 
         if not usuario2_id:
-            return Response(
-                {"ok": False, "mensaje": "El campo usuario2 es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo usuario2 es requerido.")
 
         try:
             usuario2_id = int(usuario2_id)
         except (TypeError, ValueError):
-            return Response(
-                {"ok": False, "mensaje": "usuario2 debe ser un número entero."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("usuario2 debe ser un número entero.")
 
         try:
             usuario2 = Usuario.objects.get(pk=usuario2_id, estado=True)
         except Usuario.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "El usuario no existe."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error("El usuario no existe.", status_code=status.HTTP_404_NOT_FOUND)
 
         if usuario1.id_usuario == usuario2.id_usuario:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "No puedes crear una conversación contigo mismo.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("No puedes crear una conversación contigo mismo.")
 
         with transaction.atomic():
             all_integrantes = list(
@@ -250,9 +251,12 @@ class ConversacionPrivadaCreateView(APIView):
                         message="La conversación ya existe.",
                     )
 
-            conv = Conversacion.objects.create(tipo=False)
-            Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
-            Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
+            try:
+                conv = Conversacion.objects.create(tipo=False)
+                Integrante.objects.create(fk_usuario=usuario1, fk_conversacion=conv)
+                Integrante.objects.create(fk_usuario=usuario2, fk_conversacion=conv)
+            except IntegrityError:
+                return _error("La conversación ya existe.", status_code=status.HTTP_409_CONFLICT)
 
             return _ok(
                 data={"id_conversacion": conv.id_conversacion},
@@ -269,10 +273,7 @@ class ConversacionGrupalCreateView(APIView):
         nombre = request.data.get("nombre")
 
         if not nombre or not nombre.strip():
-            return Response(
-                {"ok": False, "mensaje": "El campo nombre es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo nombre es requerido.")
 
         usuario_creador = request.user.usuario
         fk_usuarios = request.data.get("fk_usuarios")
@@ -280,13 +281,7 @@ class ConversacionGrupalCreateView(APIView):
         if fk_usuarios is None:
             fk_usuarios = []
         if not isinstance(fk_usuarios, (list, tuple)):
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "fk_usuarios debe ser una lista de IDs.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("fk_usuarios debe ser una lista de IDs.")
 
         # Validate fk_usuarios is a list of integers
         invalid_ids = []
@@ -298,13 +293,9 @@ class ConversacionGrupalCreateView(APIView):
                 invalid_ids.append(uid)
 
         if invalid_ids:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "fk_usuarios debe contener solo IDs numéricos.",
-                    "data": {"invalidos": invalid_ids},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error(
+                "fk_usuarios debe contener solo IDs numéricos.",
+                data={"invalidos": invalid_ids},
             )
 
         # Resolve users and report missing IDs before creating anything
@@ -317,14 +308,18 @@ class ConversacionGrupalCreateView(APIView):
                 missing_ids.append(uid)
 
         if missing_ids:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "Algunos usuarios no existen.",
-                    "data": {"no_encontrados": missing_ids},
-                },
-                status=status.HTTP_404_NOT_FOUND,
+            return _error(
+                "Algunos usuarios no existen.",
+                status_code=status.HTTP_404_NOT_FOUND,
+                data={"no_encontrados": missing_ids},
             )
+
+        # Exclude the creator from the loop to avoid double-processing
+        cleaned_ids = [uid for uid in cleaned_ids if uid != usuario_creador.id_usuario]
+        usuarios = [u for u in usuarios if u.id_usuario != usuario_creador.id_usuario]
+
+        if not usuarios:
+            return _error("Se requiere al menos un integrante adicional.")
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
@@ -348,10 +343,7 @@ class ConversacionRenombrarView(APIView):
         nombre = request.data.get("nombre")
 
         if not nombre or not nombre.strip():
-            return Response(
-                {"ok": False, "mensaje": "El campo nombre es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo nombre es requerido.")
 
         conv = _get_active_conversation_for_user(
             conversacion_id,
@@ -376,18 +368,12 @@ class ConversacionAgregarIntegranteView(APIView):
         usuario_id = request.data.get("usuario_id") or request.data.get("fk_usuario")
 
         if not usuario_id:
-            return Response(
-                {"ok": False, "mensaje": "El campo usuario_id es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El campo usuario_id es requerido.")
 
         try:
             usuario_id = int(usuario_id)
         except (TypeError, ValueError):
-            return Response(
-                {"ok": False, "mensaje": "usuario_id debe ser un número entero."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("usuario_id debe ser un número entero.")
 
         conv = _get_active_conversation_for_user(
             conversacion_id,
@@ -398,20 +384,11 @@ class ConversacionAgregarIntegranteView(APIView):
         try:
             usuario_nuevo = Usuario.objects.get(pk=usuario_id, estado=True)
         except Usuario.DoesNotExist:
-            return Response(
-                {"ok": False, "mensaje": "El usuario no existe."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error("El usuario no existe.", status_code=status.HTTP_404_NOT_FOUND)
 
         integrante = Integrante.objects.filter(fk_usuario=usuario_nuevo, fk_conversacion=conv).first()
         if integrante and integrante.estado:
-            return Response(
-                {
-                    "ok": False,
-                    "mensaje": "El usuario ya es miembro de esta conversación.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error("El usuario ya es miembro de esta conversación.")
         if integrante:
             integrante.estado = True
             integrante.save(update_fields=["estado"])
@@ -461,9 +438,6 @@ class ConversacionListView(APIView):
         usuario = request.user.usuario
 
         ultimo_subq = Mensaje.objects.filter(fk_conversacion=OuterRef("pk"), estado=True).order_by("-creado_en")
-        # ponytail: relies on conversacion.nombre == familia.nombre_familia naming convention;
-        # a direct FK from Conversacion to Familia would be cleaner but is out of scope for this PR.
-        es_familia_subq = Familia.objects.filter(nombre_familia=OuterRef("nombre"), estado=True)
 
         conversaciones = (
             Conversacion.objects.filter(
@@ -483,7 +457,7 @@ class ConversacionListView(APIView):
                     )
                     & ~Q(mensaje__fk_emisor=usuario),
                 ),
-                es_familia=Exists(es_familia_subq),
+                es_familia=Exists(Familia.objects.filter(pk=OuterRef("fk_familia_id"))),
             )
             .prefetch_related(
                 Prefetch(
@@ -511,7 +485,7 @@ class ConversacionListView(APIView):
             result.append(
                 {
                     "id_conversacion": conv.id_conversacion,
-                    "tipo": conv.tipo,
+                    "tipo": "grupal" if conv.tipo else "privada",
                     "nombre": nombre,
                     "ultimo_mensaje": conv.ultimo_mensaje_contenido,
                     "ultimo_mensaje_creado_en": (
@@ -531,17 +505,8 @@ class MensajeDocumentoCreateView(APIView):
     throttle_scope = "chat_write"
 
     def post(self, request):
-        data = request.data.dict()
-
-        if "conversacion" in data and "fk_conversacion" not in data:
-            data["fk_conversacion"] = data.pop("conversacion")
-        if "documento" in data and "archivo" not in data:
-            data["archivo"] = data.pop("documento")
-
-        # Membership is validated by MensajeDocumentoCreateSerializer.validate_fk_conversacion
-        # via context={"usuario": request.user.usuario}.
         serializer = MensajeDocumentoCreateSerializer(
-            data=data,
+            data=request.data,
             context={"usuario": request.user.usuario},
         )
         serializer.is_valid(raise_exception=True)
@@ -557,28 +522,43 @@ class MensajeDocumentoCreateView(APIView):
         # tipo_documento is validated by the serializer against ["imagen","audio","video"].
         nombre_archivo = f"{uuid.uuid4().hex}_{Path(archivo.name).name}"
         ruta = docs_dir / nombre_archivo
-        with open(ruta, "wb") as f:
+        tmp_ruta = docs_dir / f"{nombre_archivo}.tmp"
+
+        # Write to a temp file first; rename to final name only after the DB
+        # transaction commits, avoiding orphan files if the process crashes
+        # between write and commit.
+        with open(tmp_ruta, "wb") as f:
             for chunk in archivo.chunks():
                 f.write(chunk)
 
-        with transaction.atomic():
-            documento = Documento.objects.create(
-                fk_usuario=usuario,
-                nombre_documento=archivo.name,
-                url_documento=f"documentos/{nombre_archivo}",
-                tipo_documento=data["tipo_documento"],
-            )
+        try:
+            with transaction.atomic():
+                documento = Documento.objects.create(
+                    fk_usuario=usuario,
+                    nombre_documento=archivo.name,
+                    url_documento=f"documentos/{nombre_archivo}",
+                    tipo_documento=data["tipo_documento"],
+                )
 
-            mensaje = Mensaje.objects.create(
-                fk_emisor=usuario,
-                fk_conversacion_id=data["fk_conversacion"],
-                contenido=data.get("contenido") or "",
-            )
+                mensaje = Mensaje.objects.create(
+                    fk_emisor=usuario,
+                    fk_conversacion_id=data["fk_conversacion"],
+                    contenido=data.get("contenido") or "",
+                )
 
-            MensajeDocumento.objects.create(
-                fk_mensaje=mensaje,
-                fk_documento=documento,
-            )
+                MensajeDocumento.objects.create(
+                    fk_mensaje=mensaje,
+                    fk_documento=documento,
+                )
+        except BaseException:
+            tmp_ruta.unlink(missing_ok=True)
+            raise
+        else:
+            try:
+                shutil.move(str(tmp_ruta), str(ruta))
+            except OSError:
+                tmp_ruta.unlink(missing_ok=True)
+                raise
 
         return _ok(
             data={
@@ -589,3 +569,46 @@ class MensajeDocumentoCreateView(APIView):
             message="Mensaje con documento enviado correctamente.",
             status_code=status.HTTP_201_CREATED,
         )
+
+
+class ConversacionDetalleView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
+
+    def get(self, request, conversacion_id):
+        conversacion = _get_active_conversation_for_user(conversacion_id, request.user.usuario)
+        return _ok(
+            data={
+                "id_conversacion": conversacion.id_conversacion,
+                "tipo": "grupal" if conversacion.tipo else "privada",
+                "nombre": conversacion.nombre or "",
+            },
+        )
+
+
+class UsuarioBuscarView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_read"
+
+    def get(self, request):
+        if not request.user.usuario.estado:
+            raise PermissionDenied("Tu cuenta está desactivada.")
+
+        q = request.query_params.get("q", "").strip()
+        if len(q) < 3:
+            return _ok(data=[])
+
+        usuarios = (
+            Usuario.objects.filter(estado=True)
+            .exclude(pk=request.user.usuario.id_usuario)
+            .filter(
+                Q(correo__icontains=q)
+                | Q(fk_persona__nombre__icontains=q)
+                | Q(fk_persona__apellido_paterno__icontains=q)
+                | Q(fk_persona__apellido_materno__icontains=q)
+            )
+            .select_related("fk_persona", "fk_rol")[:10]
+        )
+
+        serializer = UsuarioBuscarSerializer(usuarios, many=True)
+        return _ok(data=serializer.data)
