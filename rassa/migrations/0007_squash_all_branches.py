@@ -1,10 +1,8 @@
-# Consolidated migration — replaces all parallel branches (unidad/localidad + producto + chat + imagen).
-# Individual 0007-0017 migration files were removed (they are all empty stubs or were overwritten
-# by stubs during the PR #50 merge). This single file contains all operations from those stubs.
+# Squashed migration — replaces ALL migrations from 0007 through 0017.
+# Consolidates all parallel branches (unidad/localidad + producto + chat + imagen) into one.
 #
-# Fresh DB:           `python manage.py migrate` — applies everything in order.
-# Existing DB:        `python manage.py migrate rassa 0007_squash_all_branches --fake`
-#                     then `python manage.py migrate` to apply 0008_productoimagen_eliminar_pendiente.
+# Fresh DB: this single migration applies all operations at once.
+# Existing DB: Django uses `replaces` to skip already-applied operations.
 
 import logging
 
@@ -36,7 +34,6 @@ def backfill_unidad_nombre_abreviatura(apps, schema_editor):
             continue
         nombre = unidad.nombre or unidad.tipo
         if not nombre:
-            logger.warning("Backfill skipped Unidad pk=%s: no name or tipo", unidad.pk)
             continue
         unidad.nombre = nombre
         unidad.abreviatura = unidad.abreviatura or _expected_abreviatura(nombre)
@@ -66,35 +63,33 @@ def reverse_backfill_unidad_nombre_abreviatura(apps, schema_editor):
             unidad.abreviatura = None
             to_clear.append(unidad)
     if to_clear:
-        try:
-            Unidad.objects.bulk_update(to_clear, ["nombre", "abreviatura"], batch_size=BULK_BATCH_SIZE)
-        except Exception:
-            for unidad in to_clear:
-                try:
-                    unidad.save(update_fields=["nombre", "abreviatura"])
-                except Exception as exc:
-                    logger.error("Reverse backfill failed for Unidad pk=%s: %s", unidad.pk, exc)
-                    raise
-
-
-def dedup_es_principal(apps, schema_editor):
-    """Ensure at most one ProductoImagen per producto has es_principal=True
-    before adding the unique constraint."""
-    ProductoImagen = apps.get_model("rassa", "ProductoImagen")
-    for fk_producto in (
-        ProductoImagen.objects.filter(es_principal=True)
-        .values_list("fk_producto", flat=True)
-        .distinct()
-    ):
-        qs = ProductoImagen.objects.filter(fk_producto=fk_producto, es_principal=True).order_by("id_imagen")
-        if qs.count() > 1:
-            # Keep the first one as principal, demote the rest
-            keep, *rest = qs
-            ProductoImagen.objects.filter(pk__in=[r.pk for r in rest]).update(es_principal=False)
-
+        Unidad.objects.bulk_update(to_clear, ["nombre", "abreviatura"], batch_size=BULK_BATCH_SIZE)
 
 
 class Migration(migrations.Migration):
+    replaces = [
+        ("rassa", "0007_add_producto_descripcion"),
+        ("rassa", "0007_unidad_abreviatura_unidad_nombre_alter_unidad_tipo"),
+        ("rassa", "0008_add_producto_precio_stock_unidad_imagen"),
+        ("rassa", "0008_backfill_unidad_nombre_abreviatura"),
+        ("rassa", "0009_alter_publicacionsemanal_estado"),
+        ("rassa", "0009_localidad_estado_municipio_estado"),
+        ("rassa", "0010_alter_productosemanal_fk_producto_and_more"),
+        ("rassa", "0011_merge_0009_localidad_estado_and_publicacion"),
+        ("rassa", "0012_alter_familiausuario_fk_usuario"),
+        ("rassa", "0012_mensaje_editado"),
+        ("rassa", "0012_alter_productoimagen_options_productoimagen_orden"),
+        ("rassa", "0012_merge_producto_and_main"),
+        ("rassa", "0013_add_productoimagen_archivo"),
+        ("rassa", "0013_alter_producto_fk_categoria"),
+        ("rassa", "0013_merge_20260718_1323"),
+        ("rassa", "0014_add_unique_es_principal_constraint"),
+        ("rassa", "0014_productoimagen_url_only"),
+        ("rassa", "0015_add_producto_imagen_drive_file_id"),
+        ("rassa", "0015_productoimagen_squash_and_drive_file_id"),
+        ("rassa", "0016_merge_20260719_1534"),
+        ("rassa", "0017_merge_20260722_1151"),
+    ]
 
     dependencies = [
         ("rassa", "0006_cascade_to_set_null_protect"),
@@ -242,8 +237,6 @@ class Migration(migrations.Migration):
             name="drive_file_id",
             field=models.CharField(blank=True, max_length=255, null=True),
         ),
-        # === Dedup before adding unique constraint ===
-        migrations.RunPython(dedup_es_principal, migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name="productoimagen",
             constraint=models.UniqueConstraint(

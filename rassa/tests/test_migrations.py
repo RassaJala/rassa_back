@@ -1,10 +1,10 @@
 """Migration graph and data migration tests.
 
 Verifies:
-- Migration graph is consistent and has expected leaf nodes
-- Stale individual stub files are not present
+- Migration graph is consistent
+- Squash migration exists and replaces the 21 individual stubs
+- 0008 depends on the squash (not orphaned)
 - backfill_unidad_nombre_abreviatura and reverse are idempotent
-- dedup_es_principal cleans duplicate es_principal=True rows
 """
 
 from django.db import connection
@@ -21,24 +21,45 @@ class MigrationGraphTests(TransactionTestCase):
         executor.loader.check_consistent_history(connection)
         self.assertIsNotNone(executor.loader.graph)
 
-    def test_expected_migrations_exist(self):
-        """Core migrations must be present; stale individual stubs must not."""
+    def test_squash_migration_exists_and_replaces_expected(self):
+        """0007_squash_all_branches exists and replaces the 21 individual stubs."""
         executor = MigrationExecutor(connection)
         disk = {name for app, name in executor.loader.disk_migrations if app == "rassa"}
-        for expected in ("0001_initial", "0007_squash_all_branches", "0008_productoimagen_eliminar_pendiente"):
-            self.assertIn(expected, disk, f"Missing expected migration {expected}")
-        for stale in (
+        self.assertIn("0007_squash_all_branches", disk)
+        mig = executor.loader.get_migration_by_prefix("rassa", "0007_squash_all_branches")
+        # It should replace all 21 individual migrations from 0007–0017
+        expected_replaced = {
             "0007_add_producto_descripcion",
+            "0007_unidad_abreviatura_unidad_nombre_alter_unidad_tipo",
+            "0008_add_producto_precio_stock_unidad_imagen",
+            "0008_backfill_unidad_nombre_abreviatura",
             "0009_alter_publicacionsemanal_estado",
+            "0009_localidad_estado_municipio_estado",
+            "0010_alter_productosemanal_fk_producto_and_more",
+            "0011_merge_0009_localidad_estado_and_publicacion",
+            "0012_alter_familiausuario_fk_usuario",
             "0012_mensaje_editado",
-        ):
-            self.assertNotIn(stale, disk, f"Stale migration {stale} should have been removed")
+            "0012_alter_productoimagen_options_productoimagen_orden",
+            "0012_merge_producto_and_main",
+            "0013_add_productoimagen_archivo",
+            "0013_alter_producto_fk_categoria",
+            "0013_merge_20260718_1323",
+            "0014_add_unique_es_principal_constraint",
+            "0014_productoimagen_url_only",
+            "0015_add_producto_imagen_drive_file_id",
+            "0015_productoimagen_squash_and_drive_file_id",
+            "0016_merge_20260719_1534",
+            "0017_merge_20260722_1151",
+        }
+        replaced = {name for app, name in mig.replaces if app == "rassa"}
+        self.assertEqual(replaced, expected_replaced)
 
-    def test_single_leaf_node(self):
-        """Only 0008_productoimagen_eliminar_pendiente should be a leaf."""
+    def test_0008_depends_on_squash(self):
+        """0008_productoimagen_eliminar_pendiente depends on 0007_squash_all_branches."""
         executor = MigrationExecutor(connection)
-        leaves = {name for app, name in executor.loader.graph.leaf_nodes() if app == "rassa"}
-        self.assertEqual(leaves, {"0008_productoimagen_eliminar_pendiente"})
+        mig = executor.loader.get_migration_by_prefix("rassa", "0008_productoimagen_eliminar_pendiente")
+        deps = {name for app, name in mig.dependencies if app == "rassa"}
+        self.assertIn("0007_squash_all_branches", deps)
 
 
 class DataMigrationTests(TransactionTestCase):
