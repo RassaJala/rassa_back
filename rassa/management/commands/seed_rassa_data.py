@@ -8,9 +8,15 @@ Flags:
   --clear   Elimina todos los datos antes de insertar (fresh start).
 """
 
+import math
+import struct
+import wave
+import zlib
 from datetime import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import connection, transaction
@@ -50,6 +56,39 @@ from rassa.models import (
     Unidad,
     Usuario,
 )
+
+
+def _write_tone_wav(path: Path, seconds: float = 3.0, freq: int = 440, rate: int = 22050) -> None:
+    """Genera un tono WAV (mono, 16-bit PCM) para el audio demo del seed."""
+    if path.exists():
+        return
+    frames = []
+    for i in range(int(rate * seconds)):
+        value = int(0.4 * 32767 * math.sin(2 * math.pi * freq * i / rate))
+        frames.append(struct.pack("<h", value))
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(rate)
+        f.writeframes(b"".join(frames))
+
+
+def _write_solid_png(path: Path, rgb: tuple[int, int, int], size: int = 320) -> None:
+    """Genera un PNG solido (truecolor) para las imagenes demo del seed."""
+    if path.exists():
+        return
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        payload = tag + data
+        return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+
+    row = b"\x00" + bytes(rgb) * size
+    raw = row * size
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n")
+        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)))
+        f.write(chunk(b"IDAT", zlib.compress(raw)))
+        f.write(chunk(b"IEND", b""))
 
 
 class Command(BaseCommand):
@@ -2159,28 +2198,36 @@ class Command(BaseCommand):
             {
                 "id_documento": 1,
                 "fk_usuario_id": 1,
-                "nombre_documento": "tomate_disponible.jpg",
-                "url_documento": "https://storage.rassa.com/chat/tomate_disponible.jpg",
+                "nombre_documento": "tomate_disponible.png",
+                "url_documento": "documentos/tomate_disponible.png",
                 "tipo_documento": "imagen",
             },
             {
                 "id_documento": 2,
                 "fk_usuario_id": 2,
-                "nombre_documento": "espinaca_organica.jpg",
-                "url_documento": "https://storage.rassa.com/chat/espinaca_organica.jpg",
+                "nombre_documento": "espinaca_organica.png",
+                "url_documento": "documentos/espinaca_organica.png",
                 "tipo_documento": "imagen",
             },
             {
                 "id_documento": 3,
                 "fk_usuario_id": 11,
-                "nombre_documento": "nota_recoleccion.mp3",
-                "url_documento": "https://storage.rassa.com/chat/nota_recoleccion.mp3",
+                "nombre_documento": "nota_recoleccion.wav",
+                "url_documento": "documentos/nota_recoleccion.wav",
                 "tipo_documento": "audio",
             },
         ]
         for d in documentos:
             Documento.objects.update_or_create(id_documento=d["id_documento"], defaults=d)
+        self._write_demo_media()
         self.stdout.write("  Documentos: OK")
+
+    def _write_demo_media(self):
+        docs_dir = Path(settings.MEDIA_ROOT) / "documentos"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        _write_tone_wav(docs_dir / "nota_recoleccion.wav")
+        _write_solid_png(docs_dir / "tomate_disponible.png", (200, 60, 50))
+        _write_solid_png(docs_dir / "espinaca_organica.png", (46, 139, 87))
 
     def _seed_mensajes_documentos(self):
         registros = [
