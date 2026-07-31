@@ -79,9 +79,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 Usuario.objects.select_for_update().get(pk=agricultor.pk)
-                if Recoleccion.objects.filter(
-                    fk_agricultor=agricultor, fecha_recoleccion=serializer.validated_data["fecha_recoleccion"]
-                ).exclude(estado="cancelado").exists():
+                if (
+                    Recoleccion.objects.filter(
+                        fk_agricultor=agricultor, fecha_recoleccion=serializer.validated_data["fecha_recoleccion"]
+                    )
+                    .exclude(estado="cancelado")
+                    .exists()
+                ):
                     raise ValidationError(
                         {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
                     )
