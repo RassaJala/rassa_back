@@ -1,4 +1,5 @@
 """Tests exhaustivos de seguridad, validación y edge cases para publicaciones."""
+
 from datetime import date
 from unittest.mock import patch
 
@@ -374,9 +375,12 @@ class FilterPaginationTests(PublicacionBaseTestCase):
         mock_tz = self._patcher.start()
         self.addCleanup(self._patcher.stop)
         mock_tz.localdate.side_effect = [
-            date(2026, 7, 27), date(2026, 7, 27),  # pub semana 31
-            date(2026, 8, 3),  date(2026, 8, 3),    # pub semana 32
-            date(2026, 8, 10), date(2026, 8, 10),   # pub semana 33
+            date(2026, 7, 27),
+            date(2026, 7, 27),  # pub semana 31
+            date(2026, 8, 3),
+            date(2026, 8, 3),  # pub semana 32
+            date(2026, 8, 10),
+            date(2026, 8, 10),  # pub semana 33
         ]
         for _ in range(3):
             self._create_publicacion()
