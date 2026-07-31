@@ -760,9 +760,7 @@ class Recoleccion(models.Model):
     ]
 
     id_recoleccion = models.AutoField(primary_key=True)
-    fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
-    )
+    fk_agricultor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=False, db_column="fk_agricultor")
     fecha_recoleccion = models.DateField()
     hora_inicio = models.TimeField(blank=True, null=True)
     hora_fin = models.TimeField(blank=True, null=True)
@@ -773,6 +771,13 @@ class Recoleccion(models.Model):
     class Meta:
         db_table = "recoleccion"
         ordering = ["id_recoleccion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "fecha_recoleccion"],
+                condition=~models.Q(estado="cancelado"),
+                name="uniq_recoleccion_activa_agricultor_fecha",
+            ),
+        ]
 
     def __str__(self):
         return f"Recolección #{self.id_recoleccion} — {self.fecha_recoleccion}"

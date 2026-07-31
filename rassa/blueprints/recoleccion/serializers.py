@@ -1,5 +1,6 @@
 """Serializers del módulo de Recolecciones."""
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from rassa.models import Recoleccion, Usuario
@@ -32,6 +33,7 @@ class RecoleccionSerializer(serializers.ModelSerializer):
             "creado_en",
         ]
         read_only_fields = ["id_recoleccion", "estado", "creado_en"]
+        validators = []
 
     def get_agricultor_nombre(self, obj):
         """Retorna el nombre completo del agricultor o None si no tiene."""
@@ -43,7 +45,7 @@ class RecoleccionSerializer(serializers.ModelSerializer):
     def validate_fk_agricultor(self, value):
         """Valida que el agricultor exista, esté activo y tenga rol Agricultor."""
         if value is None:
-            return value
+            raise serializers.ValidationError("El agricultor es obligatorio.")
         usuario = Usuario.objects.filter(pk=value.pk).first()
         if usuario is None or not usuario.estado:
             raise serializers.ValidationError("El agricultor especificado no existe o está inactivo.")
@@ -52,10 +54,18 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """Evita dos recolecciones activas del mismo agricultor en la misma fecha."""
-        estado = attrs.get("estado", self.instance.estado if self.instance else "pendiente")
-        if estado == "cancelado":
-            return attrs
+        """Valida duplicados, orden de horas y fechas pasadas."""
+        hora_inicio = attrs.get("hora_inicio")
+        hora_fin = attrs.get("hora_fin")
+        if self.instance:
+            hora_inicio = hora_inicio or self.instance.hora_inicio
+            hora_fin = hora_fin or self.instance.hora_fin
+        if hora_inicio and hora_fin and hora_fin <= hora_inicio:
+            raise serializers.ValidationError({"hora_fin": "hora_fin debe ser posterior a hora_inicio."})
+
+        fecha = attrs.get("fecha_recoleccion")
+        if fecha and fecha < timezone.localdate():
+            raise serializers.ValidationError({"fecha_recoleccion": "La fecha no puede ser anterior a hoy."})
 
         agricultor = attrs.get("fk_agricultor")
         fecha = attrs.get("fecha_recoleccion")
@@ -83,8 +93,6 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
     estado = serializers.ChoiceField(choices=Recoleccion.ESTADO_CHOICES)
 
     def validate(self, attrs):
-        if self.instance is None:
-            raise serializers.ValidationError("Recolección no encontrada.")
         estado_actual = self.instance.estado
         estado_nuevo = attrs.get("estado")
         if estado_nuevo == estado_actual:
