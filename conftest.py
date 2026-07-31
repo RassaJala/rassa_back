@@ -13,7 +13,6 @@ breaks on Python 3.14 because super() objects lost __dict__. This patches
 Context until Django is upgraded to 5.1+.
 """
 
-import copy
 import sys
 from unittest.mock import MagicMock
 
@@ -55,15 +54,17 @@ if "googleapiclient" not in sys.modules:
 # copy(super()) in Context.__copy__ fails on Python 3.14.
 # Remove this after upgrading to Django 5.1+.
 try:
+    import django
     from django.template.context import Context
 
-    _original_copy = Context.__copy__
+    if django.VERSION < (5, 1):
 
-    def _safe_copy(self):
-        duplicate = object.__new__(type(self))
-        duplicate.dicts = self.dicts[:]
-        return duplicate
+        def _safe_copy(self):
+            duplicate = object.__new__(type(self))
+            for k, v in self.__dict__.items():
+                setattr(duplicate, k, v[:] if isinstance(v, list) else v)
+            return duplicate
 
-    Context.__copy__ = _safe_copy
-except Exception:
+        Context.__copy__ = _safe_copy
+except (ImportError, AttributeError):
     pass

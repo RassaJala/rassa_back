@@ -48,8 +48,6 @@ class PublicacionBaseTestCase(APITestCase):
 
     def setUp(self):
         # Mockear lunes para que POST /api/publicaciones/ no devuelva 403
-        from datetime import date
-        from unittest.mock import patch
         self._patcher = patch("rassa.blueprints.publicacion.views.timezone")
         mock_tz = self._patcher.start()
         mock_tz.localdate.return_value = date(2026, 7, 27)  # lunes
@@ -368,16 +366,17 @@ class FilterPaginationTests(PublicacionBaseTestCase):
         for item in data["results"]:
             self.assertEqual(item["estado"], "borrador")
 
-    @patch("rassa.blueprints.publicacion.views.timezone")
-    def test_pagination_structure(self, mock_tz):
+    def test_pagination_structure(self):
         """Verificar estructura de paginación completa."""
-        from datetime import date as _date
-        # _create_publicacion llama timezone.localdate() 2 veces:
-        # una para weekday check y otra en calcular_proximo_lunes
+        # Override setUp's return_value with side_effect for different weeks
+        self._patcher.stop()
+        self._patcher = patch("rassa.blueprints.publicacion.views.timezone")
+        mock_tz = self._patcher.start()
+        self.addCleanup(self._patcher.stop)
         mock_tz.localdate.side_effect = [
-            _date(2026, 7, 27), _date(2026, 7, 27),  # pub semana 31
-            _date(2026, 8, 3),  _date(2026, 8, 3),    # pub semana 32
-            _date(2026, 8, 10), _date(2026, 8, 10),   # pub semana 33
+            date(2026, 7, 27), date(2026, 7, 27),  # pub semana 31
+            date(2026, 8, 3),  date(2026, 8, 3),    # pub semana 32
+            date(2026, 8, 10), date(2026, 8, 10),   # pub semana 33
         ]
         for _ in range(3):
             self._create_publicacion()
@@ -580,7 +579,7 @@ class ProductoDeleteProtectionTests(PublicacionBaseTestCase):
         """No se puede eliminar un Producto referenciado por ProductoSemanal."""
         pub = self._create_publicacion()
         self._create_producto_semanal(pub["id_publicacion"])
-        with self.assertRaises(Exception):  # ProtectedError
+        with self.assertRaises(IntegrityError):  # ProtectedError subclass
             self.producto.delete()
 
     def test_can_deactivate_producto(self):
