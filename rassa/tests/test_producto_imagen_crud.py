@@ -460,6 +460,7 @@ class ProductoImagenCrudTests(APITestCase):
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
+                format="multipart",
             )
         data = self._assert_success_envelope(
             response,
@@ -483,6 +484,7 @@ class ProductoImagenCrudTests(APITestCase):
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
+                format="multipart",
             )
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         body = response.json()
@@ -500,6 +502,7 @@ class ProductoImagenCrudTests(APITestCase):
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
+                format="multipart",
             )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -522,6 +525,7 @@ class ProductoImagenCrudTests(APITestCase):
             response = self.client.post(
                 reverse("producto-imagen-list", args=[self.producto.id_producto]),
                 {"archivo": fake_image},
+                format="multipart",
             )
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         mock_delete.assert_called_once_with("orphan456")

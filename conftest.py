@@ -7,8 +7,13 @@ for Django's URL resolver to load all blueprints without crashing.
 NOTE: The real fix is converting the googleapiclient import in
 producto_imagen/ to a lazy import (e.g., inside the view method that
 needs it). Until then, this conftest keeps tests running.
+
+Monkeypatch for Python 3.14 + Django 5.0: copy(super()) in Context.__copy__
+breaks on Python 3.14 because super() objects lost __dict__. This patches
+Context until Django is upgraded to 5.1+.
 """
 
+import copy
 import sys
 from unittest.mock import MagicMock
 
@@ -44,3 +49,21 @@ if "googleapiclient" not in sys.modules:
     sys.modules["googleapiclient.discovery"] = googleapiclient.discovery
     sys.modules["googleapiclient.errors"] = errors_mock
     sys.modules["googleapiclient.http"] = http_mock
+
+
+# --- Python 3.14 + Django 5.0 compatibility patch ---
+# copy(super()) in Context.__copy__ fails on Python 3.14.
+# Remove this after upgrading to Django 5.1+.
+try:
+    from django.template.context import Context
+
+    _original_copy = Context.__copy__
+
+    def _safe_copy(self):
+        duplicate = object.__new__(type(self))
+        duplicate.dicts = self.dicts[:]
+        return duplicate
+
+    Context.__copy__ = _safe_copy
+except Exception:
+    pass
