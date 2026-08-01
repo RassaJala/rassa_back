@@ -75,6 +75,8 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         if agricultor is None or fecha is None:
             return attrs
 
+        # Capa de pre-chequeo para UX: la garantía final de unicidad es el
+        # UniqueConstraint parcial (IntegrityError -> 400 en la vista).
         duplicados = Recoleccion.objects.filter(fk_agricultor=agricultor, fecha_recoleccion=fecha).exclude(
             estado="cancelado"
         )
@@ -99,4 +101,8 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
             raise serializers.ValidationError("La recolección ya está en ese estado.")
         if estado_nuevo not in TRANSICIONES_VALIDAS.get(estado_actual, []):
             raise serializers.ValidationError(f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'.")
+        if estado_nuevo != "cancelado" and self.instance.fecha_recoleccion < timezone.localdate():
+            raise serializers.ValidationError(
+                {"fecha_recoleccion": "La fecha de la recolección ya pasó; solo se permite cancelarla."}
+            )
         return attrs

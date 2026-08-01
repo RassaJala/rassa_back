@@ -1,7 +1,5 @@
 """Vistas del módulo de Recolecciones."""
 
-from datetime import datetime
-
 from django.db import IntegrityError, transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -9,10 +7,13 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from rassa.models import Recoleccion, Usuario
-from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.permissions.role_permissions import ADMIN, AGRICULTOR, VENDEDOR, HasRole
+from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log, ok_response
 
 from .serializers import RecoleccionCambiarEstadoSerializer, RecoleccionSerializer
+
+ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
 
 
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
@@ -23,19 +24,16 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, HasRole(ADMIN, VENDEDOR)]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
-    def _parse_date(self, raw, param_name):
-        """Validate and return a date object or raise ValidationError."""
-        try:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError as err:
-            raise ValidationError(
-                {param_name: f"{param_name} debe tener formato YYYY-MM-DD. Recibido: '{raw}'."}
-            ) from err
-
     def _get_recoleccion_locked(self, pk):
         try:
-            return Recoleccion.objects.select_for_update().get(pk=pk)
-        except Recoleccion.DoesNotExist:
+            return Recoleccion.objects.select_related("fk_agricultor__fk_persona").select_for_update().get(pk=pk)
+        except (Recoleccion.DoesNotExist, ValueError):
+            raise NotFound({"id_recoleccion": "Recolección no encontrada."}) from None
+
+    def get_object(self):
+        try:
+            return super().get_object()
+        except (Recoleccion.DoesNotExist, ValueError):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."}) from None
 
     def get_queryset(self):
@@ -48,7 +46,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         fecha_desde = params.get("fecha_desde")
         fecha_hasta = params.get("fecha_hasta")
         if estado:
-            if estado not in [c[0] for c in Recoleccion.ESTADO_CHOICES]:
+            if estado not in ESTADOS_VALIDOS:
                 raise ValidationError(
                     {"estado": "Estado inválido. Valores válidos: pendiente, en_ruta, recolectado, cancelado."}
                 )
@@ -58,13 +56,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 raise ValidationError({"fk_agricultor": "El parámetro 'fk_agricultor' debe ser un número entero."})
             queryset = queryset.filter(fk_agricultor_id=fk_agricultor)
         if fecha:
-            fecha = self._parse_date(fecha, "fecha")
+            fecha = parse_date_param(fecha, "fecha")
             queryset = queryset.filter(fecha_recoleccion=fecha)
         if fecha_desde:
-            fecha_desde = self._parse_date(fecha_desde, "fecha_desde")
+            fecha_desde = parse_date_param(fecha_desde, "fecha_desde")
             queryset = queryset.filter(fecha_recoleccion__gte=fecha_desde)
         if fecha_hasta:
-            fecha_hasta = self._parse_date(fecha_hasta, "fecha_hasta")
+            fecha_hasta = parse_date_param(fecha_hasta, "fecha_hasta")
             queryset = queryset.filter(fecha_recoleccion__lte=fecha_hasta)
         if fecha_desde and fecha_hasta and fecha_desde > fecha_hasta:
             raise ValidationError("fecha_desde no puede ser mayor a fecha_hasta.")
@@ -78,7 +76,17 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         agricultor = serializer.validated_data["fk_agricultor"]
         try:
             with transaction.atomic():
-                Usuario.objects.select_for_update().get(pk=agricultor.pk)
+                # Capa 1: el serializer ya validó el agricultor (capa UX).
+                # El lock sobre el agricultor serializa recolecciones concurrentes del mismo
+                # agricultor; el UniqueConstraint parcial es la última barrera.
+                try:
+                    agricultor = Usuario.objects.select_for_update().get(pk=agricultor.pk)
+                except Usuario.DoesNotExist:
+                    raise NotFound({"fk_agricultor": "El agricultor especificado no existe o está inactivo."}) from None
+                if not agricultor.estado:
+                    raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
+                if not agricultor.tiene_rol(AGRICULTOR):
+                    raise ValidationError({"fk_agricultor": "El agricultor especificado no tiene rol Agricultor."})
                 if (
                     Recoleccion.objects.filter(
                         fk_agricultor=agricultor, fecha_recoleccion=serializer.validated_data["fecha_recoleccion"]
@@ -115,6 +123,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             raise ValidationError({"estado": f"No se puede editar una recolección en estado '{recoleccion.estado}'."})
         serializer = self.get_serializer(recoleccion, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        # Sin lock: la unicidad en PATCH la garantiza el UniqueConstraint parcial (IntegrityError -> 400).
         try:
             serializer.save()
         except IntegrityError:

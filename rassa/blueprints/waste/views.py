@@ -1,7 +1,7 @@
 """Vistas para el módulo de Mermas (Waste)."""
 
 import logging
-from datetime import date, datetime
+from datetime import date
 
 from django.db import transaction
 from django.db.models import Count, F, Sum
@@ -14,6 +14,7 @@ from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from rassa.models import DecisionMerma, Merma, ProductoSemanal
 from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log
 from rassa.views import _ok as ok_response
 
@@ -181,12 +182,7 @@ class MermaResumenView(APIView):
 
     def _parse_date(self, raw: str, param_name: str) -> date:
         """Validate and return a date object or raise ValidationError."""
-        try:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError as err:
-            raise ValidationError(
-                {param_name: f"{param_name} debe tener formato YYYY-MM-DD. Recibido: '{raw}'."}
-            ) from err
+        return parse_date_param(raw, param_name)
 
     def _parse_producto_id(self, raw: str | None) -> int | None:
         """Validate and return an integer producto_id or raise ValidationError."""

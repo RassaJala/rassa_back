@@ -417,3 +417,58 @@ class RecoleccionesTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("hora_fin", response.data)
+
+    def test_filtro_fecha_hasta_invalida_retorna_400(self):
+        """Valida que un fecha_hasta malformado retorne 400 y no 500."""
+        response = self.client.get("/api/recolecciones/", {"fecha_hasta": "2026-13-99"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pk_no_numerico_retorna_404(self):
+        """Valida que un pk no numérico retorne 404 en detalle, estado y cancelar."""
+        response = self.client.get("/api/recolecciones/abc/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.client.post("/api/recolecciones/abc/estado/", {"estado": "en_ruta"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.client.post("/api/recolecciones/abc/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_estado_y_cancelar_recoleccion_inexistente_404(self):
+        """Valida que /estado/ y /cancelar/ retornen 404 para una recolección inexistente."""
+        response = self.client.post("/api/recolecciones/99999/estado/", {"estado": "en_ruta"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.client.post("/api/recolecciones/99999/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_duplicado_path_integrity_error(self):
+        """Valida que PATCH que viola el constraint devuelva 400 (path IntegrityError)."""
+        from unittest import mock
+
+        from rassa.blueprints.recoleccion.serializers import RecoleccionSerializer
+
+        self._crear_recoleccion()
+        recoleccion = self._crear_recoleccion(fecha_recoleccion="2026-08-11")
+        with mock.patch.object(RecoleccionSerializer, "validate", lambda self, attrs: attrs):
+            response = self.client.patch(
+                f"/api/recolecciones/{recoleccion.pk}/",
+                {"fecha_recoleccion": "2026-08-10"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+    def test_estado_transicion_fecha_pasada_bloqueada(self):
+        """Valida que una recolección con fecha pasada solo pueda cancelarse."""
+        recoleccion = self._crear_recoleccion(fecha_recoleccion="2020-01-01")
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fecha_recoleccion", response.data)
+
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "cancelado")
