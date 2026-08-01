@@ -33,6 +33,11 @@ class RecoleccionSerializer(serializers.ModelSerializer):
             "creado_en",
         ]
         read_only_fields = ["id_recoleccion", "estado", "creado_en"]
+        # validators vacío a propósito: DRF 3.15.2 autogenera un UniqueTogetherValidator
+        # para UniqueConstraints condicionales (get_unique_together_constraints aplica la
+        # condition al queryset). Ese validator rompe el shape del error (non_field_errors
+        # en vez de la key fk_agricultor). La unicidad la garantiza el UniqueConstraint
+        # parcial + el pre-check del serializer + el lock en create.
         validators = []
 
     def get_agricultor_nombre(self, obj):
@@ -101,7 +106,14 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
             raise serializers.ValidationError("La recolección ya está en ese estado.")
         if estado_nuevo not in TRANSICIONES_VALIDAS.get(estado_actual, []):
             raise serializers.ValidationError(f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'.")
-        if estado_nuevo != "cancelado" and self.instance.fecha_recoleccion < timezone.localdate():
+        # Solo se bloquea pasar de pendiente -> en_ruta en una fecha pasada.
+        # en_ruta -> recolectado SIEMPRE se permite (completado tardío) y cancelar
+        # (pendiente/en_ruta -> cancelado) también, independientemente de la fecha.
+        if (
+            estado_actual == "pendiente"
+            and estado_nuevo == "en_ruta"
+            and self.instance.fecha_recoleccion < timezone.localdate()
+        ):
             raise serializers.ValidationError(
                 {"fecha_recoleccion": "La fecha de la recolección ya pasó; solo se permite cancelarla."}
             )

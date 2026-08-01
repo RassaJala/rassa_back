@@ -771,6 +771,9 @@ class Recoleccion(models.Model):
     class Meta:
         db_table = "recoleccion"
         ordering = ["id_recoleccion"]
+        # Regla de negocio: una recolección pendiente, en_ruta o recolectada ocupa
+        # el slot agricultor+fecha. Solo el estado "cancelado" libera el slot, por
+        # eso el UniqueConstraint parcial excluye únicamente ese estado.
         constraints = [
             models.UniqueConstraint(
                 fields=["fk_agricultor", "fecha_recoleccion"],
@@ -781,6 +784,28 @@ class Recoleccion(models.Model):
 
     def __str__(self):
         return f"Recolección #{self.id_recoleccion} — {self.fecha_recoleccion}"
+
+
+class HistorialEstadoRecoleccion(models.Model):
+    """Historial de cambios de estado de una recolección."""
+
+    id_historial = models.AutoField(primary_key=True)
+    fk_recoleccion = models.ForeignKey(
+        Recoleccion, on_delete=models.CASCADE, db_column="fk_recoleccion", related_name="historial_estados"
+    )
+    estado_anterior = models.CharField(max_length=20, blank=True, null=True)
+    estado_nuevo = models.CharField(max_length=20)
+    fk_cambiado_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_cambiado_por"
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "historial_estado_recoleccion"
+        ordering = ["id_historial"]
+
+    def __str__(self):
+        return f"Historial #{self.id_historial} — Recolección #{self.fk_recoleccion_id}"
 
 
 class HistorialEstadoPedido(models.Model):

@@ -162,6 +162,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones_current": "60/minute",
     "pagos_read": "60/minute",
     "pagos_write": "20/hour",
+    "recolecciones": "60/minute",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===

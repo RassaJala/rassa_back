@@ -4,6 +4,51 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def cancelar_recolecciones_huerfanas(apps, schema_editor):
+    """Backfill de filas legacy con fk_agricultor NULL.
+
+    El modelo previo permitía fk_agricultor NULL. El AlterField a null=False
+    fallaría si quedan filas huérfanas, por lo que se cancelan primero: el
+    UniqueConstraint parcial (que excluye "cancelado") no se ve afectado.
+    """
+    Recoleccion = apps.get_model("rassa", "Recoleccion")
+    Recoleccion.objects.filter(fk_agricultor__isnull=True).update(estado="cancelado")
+
+
+def cancelar_duplicados_legacy(apps, schema_editor):
+    """Cancela duplicados legacy del par (fk_agricultor, fecha_recoleccion).
+
+    El modelo previo no tenía el UniqueConstraint parcial; si quedan filas
+    activas con el mismo par (fk_agricultor, fecha_recoleccion), el
+    AddConstraint fallaría en migrate. Se conserva la fila ACTIVA más antigua
+    (menor id_recoleccion entre las no canceladas) y se cancelan el resto de
+    las activas: "cancelado" queda fuera del constraint parcial y no se pierde
+    ningún registro activo.
+    """
+    from django.db.models import Count
+
+    Recoleccion = apps.get_model("rassa", "Recoleccion")
+    estados_activos = ["pendiente", "en_ruta", "recolectado"]
+    duplicados = (
+        Recoleccion.objects.filter(estado__in=estados_activos)
+        .values("fk_agricultor", "fecha_recoleccion")
+        .annotate(total=Count("id_recoleccion"))
+        .filter(total__gt=1)
+    )
+    for dup in duplicados:
+        ids_activos = (
+            Recoleccion.objects.filter(
+                fk_agricultor=dup["fk_agricultor"],
+                fecha_recoleccion=dup["fecha_recoleccion"],
+                estado__in=estados_activos,
+            )
+            .order_by("id_recoleccion")
+            .values_list("id_recoleccion", flat=True)
+        )
+        # conservar la fila activa más antigua (primer id), cancelar el resto de las activas
+        Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(estado="cancelado")
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -11,6 +56,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(cancelar_recolecciones_huerfanas, migrations.RunPython.noop),
+        migrations.RunPython(cancelar_duplicados_legacy, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='recoleccion',
             name='fk_agricultor',

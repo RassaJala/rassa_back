@@ -1,11 +1,20 @@
 """Pruebas unitarias para el módulo de Recolecciones."""
 
+from datetime import timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from rassa.models import Persona, Recoleccion, Rol, Usuario
+from rassa.models import HistorialEstadoRecoleccion, Persona, Recoleccion, Rol, Usuario
+
+# Fechas dinámicas relativas a hoy: evitan la "bomba de tiempo" del guard de
+# fechas pasadas (el CI se rompería cuando una fecha fija quedara atrás).
+FECHA_FUTURA = timezone.localdate() + timedelta(days=1)
+FECHA_FUTURA_2 = timezone.localdate() + timedelta(days=2)
+FECHA_PASADA = timezone.localdate() - timedelta(days=1)
 
 
 class RecoleccionesTestCase(TestCase):
@@ -50,7 +59,7 @@ class RecoleccionesTestCase(TestCase):
             fk_rol=rol,
         )
 
-    def _payload(self, fecha="2026-08-10"):
+    def _payload(self, fecha=str(FECHA_FUTURA)):
         return {
             "fk_agricultor": self.usuario_agricultor.id_usuario,
             "fecha_recoleccion": fecha,
@@ -60,7 +69,7 @@ class RecoleccionesTestCase(TestCase):
         }
 
     def _crear_recoleccion(self, **kwargs):
-        datos = {"fk_agricultor": self.usuario_agricultor, "fecha_recoleccion": "2026-08-10"}
+        datos = {"fk_agricultor": self.usuario_agricultor, "fecha_recoleccion": FECHA_FUTURA}
         datos.update(kwargs)
         return Recoleccion.objects.create(**datos)
 
@@ -71,6 +80,24 @@ class RecoleccionesTestCase(TestCase):
         self.assertTrue(response.data["ok"])
         self.assertEqual(response.data["data"]["estado"], "pendiente")
         self.assertEqual(Recoleccion.objects.count(), 1)
+        recoleccion = Recoleccion.objects.get()
+        historial = HistorialEstadoRecoleccion.objects.get(fk_recoleccion=recoleccion)
+        self.assertIsNone(historial.estado_anterior)
+        self.assertEqual(historial.estado_nuevo, "pendiente")
+
+    def test_crear_rollback_si_falla_el_historial(self):
+        """Valida que la transacción revierta si falla el registro del historial."""
+        from unittest import mock
+
+        self.client.raise_request_exception = False
+        with mock.patch(
+            "rassa.blueprints.recoleccion.views.HistorialEstadoRecoleccion.objects.create",
+            side_effect=Exception("boom"),
+        ):
+            response = self.client.post("/api/recolecciones/", self._payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(Recoleccion.objects.count(), 0)
+        self.assertEqual(HistorialEstadoRecoleccion.objects.count(), 0)
 
     def test_crear_sin_autenticacion(self):
         """Valida que un request sin autenticación retorne 401."""
@@ -92,7 +119,7 @@ class RecoleccionesTestCase(TestCase):
     def test_crear_mismo_agricultor_distinta_fecha(self):
         """Valida que el mismo agricultor pueda tener recolecciones en fechas distintas."""
         self.client.post("/api/recolecciones/", self._payload(), format="json")
-        response = self.client.post("/api/recolecciones/", self._payload(fecha="2026-08-11"), format="json")
+        response = self.client.post("/api/recolecciones/", self._payload(fecha=str(FECHA_FUTURA_2)), format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_crear_mismo_agricultor_fecha_despues_cancelar(self):
@@ -127,7 +154,7 @@ class RecoleccionesTestCase(TestCase):
     def test_listar_con_filtro_estado(self):
         """Valida el filtrado por estado en el listado de recolecciones."""
         self._crear_recoleccion()
-        self._crear_recoleccion(fecha_recoleccion="2026-08-11", estado="en_ruta")
+        self._crear_recoleccion(fecha_recoleccion=str(FECHA_FUTURA_2), estado="en_ruta")
         response = self.client.get("/api/recolecciones/", {"estado": "pendiente"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["data"]["results"]), 1)
@@ -136,18 +163,18 @@ class RecoleccionesTestCase(TestCase):
     def test_listar_con_filtro_agricultor_y_fecha(self):
         """Valida el filtrado combinado por agricultor y fecha."""
         self._crear_recoleccion()
-        self._crear_recoleccion(fecha_recoleccion="2026-08-11")
+        self._crear_recoleccion(fecha_recoleccion=str(FECHA_FUTURA_2))
         response = self.client.get(
             "/api/recolecciones/",
             {
                 "fk_agricultor": self.usuario_agricultor.id_usuario,
-                "fecha": "2026-08-10",
+                "fecha": str(FECHA_FUTURA),
             },
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["data"]["results"]), 1)
-        self.assertEqual(response.data["data"]["results"][0]["fecha_recoleccion"], "2026-08-10")
+        self.assertEqual(response.data["data"]["results"][0]["fecha_recoleccion"], str(FECHA_FUTURA))
 
     def test_detalle_recoleccion(self):
         """Valida el detalle de una recolección con el nombre del agricultor."""
@@ -254,15 +281,15 @@ class RecoleccionesTestCase(TestCase):
     def test_filtro_fecha_desde_hasta(self):
         """Valida el filtrado por rango de fechas."""
         self._crear_recoleccion()
-        self._crear_recoleccion(fecha_recoleccion="2026-08-11")
-        response = self.client.get("/api/recolecciones/", {"fecha_desde": "2026-08-11"}, format="json")
+        self._crear_recoleccion(fecha_recoleccion=str(FECHA_FUTURA_2))
+        response = self.client.get("/api/recolecciones/", {"fecha_desde": str(FECHA_FUTURA_2)}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["data"]["results"]), 1)
-        self.assertEqual(response.data["data"]["results"][0]["fecha_recoleccion"], "2026-08-11")
+        self.assertEqual(response.data["data"]["results"][0]["fecha_recoleccion"], str(FECHA_FUTURA_2))
 
         response = self.client.get(
             "/api/recolecciones/",
-            {"fecha_desde": "2026-08-11", "fecha_hasta": "2026-08-10"},
+            {"fecha_desde": str(FECHA_FUTURA_2), "fecha_hasta": str(FECHA_FUTURA)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -304,10 +331,10 @@ class RecoleccionesTestCase(TestCase):
     def test_patch_duplicado_misma_fecha(self):
         """Valida que no se pueda mover una recolección a una fecha con recolección activa."""
         self._crear_recoleccion()
-        recoleccion = self._crear_recoleccion(fecha_recoleccion="2026-08-11")
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_FUTURA_2))
         response = self.client.patch(
             f"/api/recolecciones/{recoleccion.pk}/",
-            {"fecha_recoleccion": "2026-08-10"},
+            {"fecha_recoleccion": str(FECHA_FUTURA)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -353,14 +380,14 @@ class RecoleccionesTestCase(TestCase):
 
     def test_fecha_pasada_retorna_400(self):
         """Valida que no se pueda programar una recolección en una fecha pasada."""
-        payload = self._payload(fecha="2020-01-01")
+        payload = self._payload(fecha=str(FECHA_PASADA))
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fecha_recoleccion", response.data)
 
     def test_patch_recoleccion_con_fecha_pasada_no_bloqueado(self):
         """Valida que editar campos (no la fecha) de una recolección con fecha pasada no se bloquee."""
-        recoleccion = self._crear_recoleccion(fecha_recoleccion="2026-07-01")
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_PASADA))
         response = self.client.patch(
             f"/api/recolecciones/{recoleccion.pk}/",
             {"comentarios": "Ajustar hora de llegada"},
@@ -374,7 +401,7 @@ class RecoleccionesTestCase(TestCase):
         recoleccion = self._crear_recoleccion()
         response = self.client.patch(
             f"/api/recolecciones/{recoleccion.pk}/",
-            {"fecha_recoleccion": "2020-01-01"},
+            {"fecha_recoleccion": str(FECHA_PASADA)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -449,11 +476,11 @@ class RecoleccionesTestCase(TestCase):
         from rassa.blueprints.recoleccion.serializers import RecoleccionSerializer
 
         self._crear_recoleccion()
-        recoleccion = self._crear_recoleccion(fecha_recoleccion="2026-08-11")
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_FUTURA_2))
         with mock.patch.object(RecoleccionSerializer, "validate", lambda self, attrs: attrs):
             response = self.client.patch(
                 f"/api/recolecciones/{recoleccion.pk}/",
-                {"fecha_recoleccion": "2026-08-10"},
+                {"fecha_recoleccion": str(FECHA_FUTURA)},
                 format="json",
             )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -461,7 +488,7 @@ class RecoleccionesTestCase(TestCase):
 
     def test_estado_transicion_fecha_pasada_bloqueada(self):
         """Valida que una recolección con fecha pasada solo pueda cancelarse."""
-        recoleccion = self._crear_recoleccion(fecha_recoleccion="2020-01-01")
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_PASADA))
         response = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
         )
@@ -472,3 +499,91 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "cancelado")
+
+    def test_en_ruta_fecha_pasada_puede_recolectarse(self):
+        """Valida que una recolección en ruta con fecha pasada pueda marcarse como recolectada (completado tardío)."""
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_PASADA), estado="en_ruta")
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "recolectado")
+
+    def test_historial_estado_se_registra(self):
+        """Valida que cada cambio de estado (estado/cancelar) registre historial."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        historial = HistorialEstadoRecoleccion.objects.filter(fk_recoleccion=recoleccion).order_by("id_historial")
+        self.assertEqual(historial.count(), 1)
+        self.assertEqual(historial.first().estado_anterior, "pendiente")
+        self.assertEqual(historial.first().estado_nuevo, "en_ruta")
+
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        historial = HistorialEstadoRecoleccion.objects.filter(fk_recoleccion=recoleccion).order_by("id_historial")
+        self.assertEqual(historial.count(), 2)
+        self.assertEqual(historial.last().estado_anterior, "en_ruta")
+        self.assertEqual(historial.last().estado_nuevo, "cancelado")
+
+    def test_cancelar_recoleccion_cancelada_idempotente(self):
+        """Valida que cancelar una recolección ya cancelada retorne 200 sin nuevo historial."""
+        recoleccion = self._crear_recoleccion(estado="cancelado")
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["message"], "La recolección ya estaba cancelada.")
+        self.assertEqual(HistorialEstadoRecoleccion.objects.filter(fk_recoleccion=recoleccion).count(), 0)
+
+    def test_cambiar_estado_rechaza_campos_extra(self):
+        """Valida que /estado/ rechace campos adicionales al body."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/",
+            {"estado": "en_ruta", "comentarios": "no permitido"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", response.data)
+
+    def test_agricultor_puede_listar_sus_recolecciones(self):
+        """Valida que un agricultor liste y vea solo sus propias recolecciones."""
+        recoleccion = self._crear_recoleccion()
+        usuario_agricultor2 = self._crear_usuario(
+            "agricultor2", "agricultor2@rassa.com", "Agricultor2", "Rassa", self.rol_agricultor
+        )
+        recoleccion_ajena = Recoleccion.objects.create(
+            fk_agricultor=usuario_agricultor2,
+            fecha_recoleccion=FECHA_FUTURA_2,
+        )
+        self.client.force_authenticate(user=self.usuario_agricultor.fk_user)
+
+        response = self.client.get("/api/recolecciones/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["id_recoleccion"] for item in response.data["data"]["results"]]
+        self.assertIn(recoleccion.pk, ids)
+        self.assertNotIn(recoleccion_ajena.pk, ids)
+
+        response = self.client.get(f"/api/recolecciones/{recoleccion.pk}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.get(f"/api/recolecciones/{recoleccion_ajena.pk}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_fk_agricultor_filtro_fuera_de_rango_retorna_400(self):
+        """Valida que un fk_agricultor fuera de rango en el filtro retorne 400 y no 500."""
+        response = self.client.get("/api/recolecciones/", {"fk_agricultor": "99999999999999999999"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+    def test_pk_fuera_de_rango_retorna_404(self):
+        """Valida que un pk fuera de rango retorne 404 y no 500."""
+        response = self.client.get("/api/recolecciones/99999999999999999999/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.client.post(
+            "/api/recolecciones/99999999999999999999/estado/", {"estado": "en_ruta"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
