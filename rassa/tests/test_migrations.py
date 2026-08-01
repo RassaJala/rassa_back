@@ -5,6 +5,8 @@ Verifies:
 - Squash migration exists and replaces the 21 individual stubs
 - 0008 depends on the squash (not orphaned)
 - backfill_unidad_nombre_abreviatura and reverse are idempotent
+- 0015 eliminates orphan Recoleccion rows (fk_agricultor NULL) before the
+  SET NOT NULL so the migration does not fail with "column contains null values"
 """
 
 from django.db import connection
@@ -128,3 +130,38 @@ class DataMigrationTests(TransactionTestCase):
     # declaratively via AddConstraint. On existing databases the constraint
     # is skipped by --fake; duplicates were already resolved by the original
     # 0014_add_unique_es_principal_constraint migration.
+
+
+class Migration0015Tests(TransactionTestCase):
+    """Verifica que la migración 0015 elimine las huérfanas antes del SET NOT NULL.
+
+    El estado previo (0014) permitía fk_agricultor NULL; la migración 0015 lo
+    vuelve NOT NULL, por lo que debe eliminar (o abortar) cualquier fila
+    huérfana antes de aplicar el AlterField.
+    """
+
+    def test_0015_elimina_huerfanas_y_aplica_not_null(self):
+        # La BD de test parte del estado final; bajar a 0014 revierte 0016 y 0015
+        # (sus RunPython tienen reverse=noop, no borran datos).
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0014_populate_conversacion_fk_familia")])
+
+        # Restaurar el esquema al estado final para no romper el resto de pruebas.
+        # addCleanup corre tras el test y reporta su propio fallo sin enmascarar el
+        # error principal (un finally podría tapar el fallo real de la migración).
+        def restaurar_esquema():
+            MigrationExecutor(connection).migrate([("rassa", "0016_historialestadorecoleccion")])
+
+        self.addCleanup(restaurar_esquema)
+
+        old_apps = executor.loader.project_state([("rassa", "0014_populate_conversacion_fk_familia")]).apps
+        Recoleccion = old_apps.get_model("rassa", "Recoleccion")
+        Recoleccion.objects.create(fk_agricultor=None, fecha_recoleccion="2026-01-01", estado="pendiente")
+        self.assertTrue(Recoleccion.objects.filter(fk_agricultor__isnull=True).exists())
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")])
+        new_apps = executor.loader.project_state([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")]).apps
+        RecoleccionNew = new_apps.get_model("rassa", "Recoleccion")
+        # La huérfana se eliminó y el SET NOT NULL pudo aplicarse sin error.
+        self.assertFalse(RecoleccionNew.objects.filter(fk_agricultor__isnull=True).exists())

@@ -771,9 +771,12 @@ class Recoleccion(models.Model):
     class Meta:
         db_table = "recoleccion"
         ordering = ["id_recoleccion"]
-        # Regla de negocio: una recolección pendiente, en_ruta o recolectada ocupa
-        # el slot agricultor+fecha. Solo el estado "cancelado" libera el slot, por
-        # eso el UniqueConstraint parcial excluye únicamente ese estado.
+        # Regla de negocio elegida: el slot agricultor+fecha queda ocupado mientras
+        # exista una fila NO cancelada (pendiente/en_ruta/recolectado), por eso el
+        # UniqueConstraint parcial excluye únicamente "cancelado". Esto impide dos
+        # recolecciones activas el mismo día y también reprogramar tras completar.
+        # Cambiar esta regla (ej. liberar el slot al recolectar) requiere decisión
+        # de negocio. Fijada por test: test_recolecciones.test_slot_ocupado_tras_recolectar.
         constraints = [
             models.UniqueConstraint(
                 fields=["fk_agricultor", "fecha_recoleccion"],

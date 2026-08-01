@@ -4,15 +4,36 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-def cancelar_recolecciones_huerfanas(apps, schema_editor):
-    """Backfill de filas legacy con fk_agricultor NULL.
+def eliminar_recolecciones_huerfanas(apps, schema_editor):
+    """Elimina filas legacy con fk_agricultor NULL.
 
-    El modelo previo permitía fk_agricultor NULL. El AlterField a null=False
-    fallaría si quedan filas huérfanas, por lo que se cancelan primero: el
-    UniqueConstraint parcial (que excluye "cancelado") no se ve afectado.
+    El modelo previo (hasta 0014) permitía fk_agricultor NULL. El AlterField a
+    null=False ejecuta ALTER COLUMN SET NOT NULL y fallaría con "column contains
+    null values" si quedara UNA fila huérfana en prod. Se ELIMINAN y no se
+    cancelan: una recolección sin agricultor es inválida (fk_agricultor es
+    obligatorio a partir de 0015) y no hay historia que preservar; cancelarla
+    además dejaría el NULL en pie sin resolver el SET NOT NULL.
     """
     Recoleccion = apps.get_model("rassa", "Recoleccion")
-    Recoleccion.objects.filter(fk_agricultor__isnull=True).update(estado="cancelado")
+    huerfanas = Recoleccion.objects.filter(fk_agricultor__isnull=True)
+    count = huerfanas.count()
+    huerfanas.delete()
+    print(f"  [0015] eliminadas {count} recolecciones huérfanas (fk_agricultor NULL)")
+
+
+def verificar_recolecciones_sin_huerfanas(apps, schema_editor):
+    """Guard previo al AlterField: aborta si quedara alguna fila huérfana.
+
+    Por construcción eliminar_recolecciones_huerfanas ya las eliminó; este guard
+    es la última barrera para que el SET NOT NULL falle con un mensaje claro y no
+    con un críptico "column contains null values".
+    """
+    Recoleccion = apps.get_model("rassa", "Recoleccion")
+    if Recoleccion.objects.filter(fk_agricultor__isnull=True).exists():
+        raise RuntimeError(
+            "Migración 0015: quedan recolecciones con fk_agricultor NULL y no se pudieron "
+            "eliminar; revisa los datos antes de aplicar el SET NOT NULL."
+        )
 
 
 def cancelar_duplicados_legacy(apps, schema_editor):
@@ -35,6 +56,7 @@ def cancelar_duplicados_legacy(apps, schema_editor):
         .annotate(total=Count("id_recoleccion"))
         .filter(total__gt=1)
     )
+    total_canceladas = 0
     for dup in duplicados:
         ids_activos = (
             Recoleccion.objects.filter(
@@ -46,25 +68,36 @@ def cancelar_duplicados_legacy(apps, schema_editor):
             .values_list("id_recoleccion", flat=True)
         )
         # conservar la fila activa más antigua (primer id), cancelar el resto de las activas
-        Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(estado="cancelado")
+        # ponytail: migración one-shot, list() aceptable
+        total_canceladas += Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(
+            estado="cancelado"
+        )
+    if total_canceladas:
+        print(f"  [0015] canceladas {total_canceladas} recolecciones duplicadas legacy")
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('rassa', '0014_populate_conversacion_fk_familia'),
+        ("rassa", "0014_populate_conversacion_fk_familia"),
     ]
 
     operations = [
-        migrations.RunPython(cancelar_recolecciones_huerfanas, migrations.RunPython.noop),
+        migrations.RunPython(eliminar_recolecciones_huerfanas, migrations.RunPython.noop),
+        migrations.RunPython(verificar_recolecciones_sin_huerfanas, migrations.RunPython.noop),
         migrations.RunPython(cancelar_duplicados_legacy, migrations.RunPython.noop),
         migrations.AlterField(
-            model_name='recoleccion',
-            name='fk_agricultor',
-            field=models.ForeignKey(db_column='fk_agricultor', on_delete=django.db.models.deletion.PROTECT, to='rassa.usuario'),
+            model_name="recoleccion",
+            name="fk_agricultor",
+            field=models.ForeignKey(
+                db_column="fk_agricultor", on_delete=django.db.models.deletion.PROTECT, to="rassa.usuario"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='recoleccion',
-            constraint=models.UniqueConstraint(condition=models.Q(('estado', 'cancelado'), _negated=True), fields=('fk_agricultor', 'fecha_recoleccion'), name='uniq_recoleccion_activa_agricultor_fecha'),
+            model_name="recoleccion",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("estado", "cancelado"), _negated=True),
+                fields=("fk_agricultor", "fecha_recoleccion"),
+                name="uniq_recoleccion_activa_agricultor_fecha",
+            ),
         ),
     ]

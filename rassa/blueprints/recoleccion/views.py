@@ -28,11 +28,33 @@ def _pk_entero_valido(raw):
     return 0 < int(raw) <= 2**31 - 1
 
 
+def _constraint_violada(exc):
+    """Nombre del constraint violado en un IntegrityError, o None si no aplica.
+
+    Django envuelve el error de psycopg2 (que expone el constraint en
+    ``diag.constraint_name``, no en ``exc.constraint``), por eso se recorre la
+    cadena de ``__cause__``.
+    """
+    causa = getattr(exc, "__cause__", None) or exc
+    diag = getattr(causa, "diag", None)
+    if diag is not None:
+        return getattr(diag, "constraint_name", None)
+    return getattr(causa, "constraint", None)
+
+
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     """ViewSet de recolecciones con filtros y transiciones de estado.
 
     Los errores de validación se devuelven como dicts crudos de DRF a propósito
     (patrón del resto del proyecto): no se aplica un EXCEPTION_HANDLER global.
+
+    Decisión de negocio actual: el AGRICULTOR solo lee sus recolecciones;
+    agendar/cancelar queda para Admin/Vendedor. Si el negocio requiere que el
+    agricultor agende/cancele, revisar get_permissions.
+
+    El borrado de un Usuario con recolecciones fallará con ProtectedError
+    (fk_agricultor es on_delete=PROTECT). Si algún día existe un admin de
+    usuarios, ese error debería traducirse a 409 Conflict.
     """
 
     serializer_class = RecoleccionSerializer
@@ -70,6 +92,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         """Retorna las recolecciones con filtros opcionales por query params."""
         queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona__fk_localidad__fk_municipio")
+        params = self.request.query_params
         # Lectura restringida: solo Admin/Vendedor (dataset completo) y Agricultor (solo
         # sus recolecciones). Un autenticado sin perfil Usuario o con otro rol no debe
         # ver el dataset completo: no ve nada.
@@ -77,9 +100,12 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         usuario = getattr(self.request.user, "usuario", None)
         if usuario is None or usuario.fk_rol.nombre_rol not in roles_lectura:
             return queryset.none()
-        if usuario.tiene_rol(AGRICULTOR):
+        if usuario.fk_rol.nombre_rol == AGRICULTOR:
             queryset = queryset.filter(fk_agricultor=usuario)
-        params = self.request.query_params
+            if params.get("fk_agricultor") and str(usuario.id_usuario) != params.get("fk_agricultor"):
+                raise ValidationError(
+                    {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
+                )
         estado = params.get("estado")
         fk_agricultor = params.get("fk_agricultor")
         fecha = params.get("fecha")
@@ -88,7 +114,11 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         if estado:
             if estado not in ESTADOS_VALIDOS:
                 raise ValidationError(
-                    {"estado": "Estado inválido. Valores válidos: pendiente, en_ruta, recolectado, cancelado."}
+                    {
+                        "estado": (
+                            f"Estado inválido. Valores válidos: {', '.join(c[0] for c in Recoleccion.ESTADO_CHOICES)}."
+                        )
+                    }
                 )
             queryset = queryset.filter(estado=estado)
         if fk_agricultor:
@@ -157,8 +187,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 )
         except ValidationError:
             raise
-        except IntegrityError:
+        except IntegrityError as exc:
             logger.exception("IntegrityError al guardar recolección (detalle):")
+            if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
+                raise
             raise ValidationError(
                 {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
             ) from None
@@ -176,6 +208,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         if "estado" in request.data:
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
+        # Capas que protegen la unicidad en partial_update:
+        # 1. Pre-check del serializer (UX, sin lock del agricultor).
+        # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
+        #    discriminado por constraint name).
+        # A diferencia de create, aquí NO hay lock del agricultor porque el
+        # constraint cubre la unicidad; el lock de la fila (select_for_update)
+        # serializa PATCH concurrentes sobre la misma recolección.
         try:
             with transaction.atomic():
                 recoleccion = self._get_recoleccion_locked(self.kwargs.get("pk"))
@@ -186,11 +225,37 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                     )
                 serializer = self.get_serializer(recoleccion, data=request.data, partial=True)
                 serializer.is_valid(raise_exception=True)
+                if "fk_agricultor" in serializer.validated_data:
+                    # Re-validar el agricultor bajo el lock (mismo patrón que create):
+                    # entre el validate del serializer y el save podría haberse
+                    # desactivado o cambiado de rol. Mismos mensajes que create.
+                    try:
+                        agricultor_nuevo = (
+                            Usuario.objects.select_related("fk_persona")
+                            .select_for_update()
+                            .get(pk=serializer.validated_data["fk_agricultor"].pk)
+                        )
+                    except Usuario.DoesNotExist:
+                        raise NotFound(
+                            {"fk_agricultor": "El agricultor especificado no existe o está inactivo."}
+                        ) from None
+                    if not agricultor_nuevo.estado:
+                        raise ValidationError(
+                            {"fk_agricultor": "El agricultor especificado no existe o está inactivo."}
+                        )
+                    if not agricultor_nuevo.tiene_rol(AGRICULTOR):
+                        raise ValidationError({"fk_agricultor": "El agricultor especificado no tiene rol Agricultor."})
+                    # Reemplazar la instancia pre-lock por la bloqueada: evita TOCTOU
+                    # y cachea fk_persona (select_related) para no disparar N+1 al
+                    # re-serializar la respuesta.
+                    serializer.validated_data["fk_agricultor"] = agricultor_nuevo
                 serializer.save()
         except ValidationError:
             raise
-        except IntegrityError:
+        except IntegrityError as exc:
             logger.exception("IntegrityError al guardar recolección (detalle):")
+            if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
+                raise
             raise ValidationError(
                 {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
             ) from None
@@ -199,7 +264,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="estado")
     def cambiar_estado(self, request, pk=None):
-        """Cambia el estado de una recolección validando las transiciones permitidas."""
+        """Cambia el estado de una recolección validando las transiciones permitidas.
+
+        Contrato ESTRICTO: pedir el estado actual devuelve 400 ("ya está en ese
+        estado"). A diferencia de /cancelar/ (idempotente, 200 si ya estaba
+        cancelado), este endpoint es una máquina de estados explícita y rechaza
+        cambios sin transición.
+        """
         if set(request.data.keys()) - {"estado"}:
             raise ValidationError({"estado": "Solo se permite el campo 'estado'."})
         with transaction.atomic():
@@ -227,10 +298,19 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancelar")
     def cancelar(self, request, pk=None):
-        """Cancela una recolección que aún no haya sido recolectada."""
+        """Cancela una recolección que aún no haya sido recolectada.
+
+        Contrato IDEMPOTENTE: cancelar una recolección ya cancelada devuelve 200
+        (acción de negocio "asegurar cancelado"). A diferencia de /estado/, que es
+        estricto (400 si ya está en el estado pedido).
+        """
         with transaction.atomic():
             recoleccion = self._get_recoleccion_locked(pk)
             if recoleccion.estado == "cancelado":
+                # Camino idempotente: no hay transición de estado, así que no se
+                # crea HistorialEstadoRecoleccion (el historial solo registra
+                # transiciones reales). Se audita igual para dejar rastro.
+                _log(request.user, f"cancelar_recoleccion id={recoleccion.pk} (ya estaba cancelada)", request)
                 return ok_response(
                     data=RecoleccionSerializer(recoleccion).data,
                     message="La recolección ya estaba cancelada.",

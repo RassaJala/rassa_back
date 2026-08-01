@@ -130,6 +130,24 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", self._payload(), format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_slot_ocupado_tras_recolectar(self):
+        """Fija la regla de negocio: una recolección recolectada SIGUE ocupando el slot
+        agricultor+fecha; no se puede programar otra activa ese mismo día."""
+        recoleccion = self._crear_recoleccion()
+        response_en_ruta = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
+        )
+        self.assertEqual(response_en_ruta.status_code, status.HTTP_200_OK)
+        response_recolectado = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
+        )
+        self.assertEqual(response_recolectado.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "recolectado")
+        response = self.client.post("/api/recolecciones/", self._payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
     def test_crear_con_agricultor_inactivo(self):
         """Valida que falle la creación si el agricultor está inactivo."""
         self.usuario_agricultor.estado = False
@@ -224,7 +242,7 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(recoleccion.estado, "recolectado")
 
     def test_cambiar_estado_transicion_invalida(self):
-        """Valida que no se pueda saltar de pendiente a recolectado."""
+        """Valida que un pendiente con fecha FUTURA no salte directo a recolectado (debe ir por en_ruta)."""
         recoleccion = self._crear_recoleccion()
         response = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
@@ -232,6 +250,16 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "pendiente")
+
+    def test_pendiente_vencido_puede_recolectarse_directo(self):
+        """Valida el completado tardío directo: un pendiente vencido puede marcarse recolectado."""
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_PASADA))
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "recolectado")
 
     def test_cambiar_estado_mismo_estado(self):
         """Valida que no se pueda cambiar al estado actual."""
@@ -377,6 +405,92 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("hora_fin", response.data)
+
+    def test_create_con_solo_hora_inicio_retorna_400(self):
+        """Valida la regla both-or-none: no se puede enviar solo hora_inicio."""
+        payload = self._payload()
+        del payload["hora_fin"]
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+
+    def test_create_con_solo_hora_fin_retorna_400(self):
+        """Valida la regla both-or-none: no se puede enviar solo hora_fin."""
+        payload = self._payload()
+        del payload["hora_inicio"]
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+
+    def test_create_con_ambas_horas_ok(self):
+        """Valida que enviar ambas horas sea válido."""
+        response = self.client.post("/api/recolecciones/", self._payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_sin_horas_ok(self):
+        """Valida que las horas sean opcionales: sin ninguna se crea la recolección."""
+        payload = self._payload()
+        del payload["hora_inicio"]
+        del payload["hora_fin"]
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_patch_par_de_horas_incompleto_retorna_400(self):
+        """Valida que PATCH no pueda dejar el par de horas incompleto."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"hora_inicio": "08:00:00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+
+    def test_patch_campos_ajenos_sobre_par_incompleto_legacy_ok(self):
+        """Valida que PATCH de campos ajenos (no horas) no falle sobre una fila legacy
+        con par de horas incompleto (solo hora_inicio): la regla both-or-none solo
+        aplica cuando el cliente toca las horas."""
+        recoleccion = self._crear_recoleccion(hora_inicio="07:00:00", hora_fin=None)
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"comentarios": "Recolección reprogramada"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.comentarios, "Recolección reprogramada")
+        self.assertEqual(recoleccion.hora_inicio.isoformat(), "07:00:00")
+        self.assertIsNone(recoleccion.hora_fin)
+
+    def test_patch_hora_inicio_null_explicito_retorna_400(self):
+        """Valida que PATCH con hora_inicio null explícito no deje un par incompleto
+        (bypass de la regla both-or-none): null enviado es una hora 'tocada'."""
+        recoleccion = self._crear_recoleccion(hora_inicio="08:00:00", hora_fin="11:00:00")
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"hora_inicio": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+        recoleccion.refresh_from_db()
+        # El par original no se alteró (el save nunca llegó a ejecutarse).
+        self.assertEqual(recoleccion.hora_inicio.isoformat(), "08:00:00")
+        self.assertEqual(recoleccion.hora_fin.isoformat(), "11:00:00")
+
+    def test_patch_hora_fin_null_explicito_retorna_400(self):
+        """Valida que PATCH con hora_fin null explícito no deje un par incompleto."""
+        recoleccion = self._crear_recoleccion(hora_inicio="08:00:00", hora_fin="11:00:00")
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"hora_fin": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.hora_inicio.isoformat(), "08:00:00")
+        self.assertEqual(recoleccion.hora_fin.isoformat(), "11:00:00")
 
     def test_fecha_pasada_retorna_400(self):
         """Valida que no se pueda programar una recolección en una fecha pasada."""
@@ -537,6 +651,16 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.data["message"], "La recolección ya estaba cancelada.")
         self.assertEqual(HistorialEstadoRecoleccion.objects.filter(fk_recoleccion=recoleccion).count(), 0)
 
+    def test_cambiar_estado_sobre_cancelada_estricto(self):
+        """Valida el contraste de contratos: /estado/ es estricto (400 si el estado ya es el pedido),
+        a diferencia de /cancelar/ que es idempotente (200)."""
+        recoleccion = self._crear_recoleccion(estado="cancelado")
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "cancelado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("non_field_errors", response.data)
+
     def test_cambiar_estado_rechaza_campos_extra(self):
         """Valida que /estado/ rechace campos adicionales al body."""
         recoleccion = self._crear_recoleccion()
@@ -571,6 +695,24 @@ class RecoleccionesTestCase(TestCase):
 
         response = self.client.get(f"/api/recolecciones/{recoleccion_ajena.pk}/", format="json")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_agricultor_filtro_agricultor_ajeno_retorna_400(self):
+        """Valida que un agricultor no pueda filtrar por otro agricultor: 400 y no [] silencioso."""
+        self._crear_recoleccion()
+        usuario_agricultor2 = self._crear_usuario(
+            "agricultor3", "agricultor3@rassa.com", "Agricultor3", "Rassa", self.rol_agricultor
+        )
+        self.client.force_authenticate(user=self.usuario_agricultor.fk_user)
+        response = self.client.get(
+            "/api/recolecciones/", {"fk_agricultor": usuario_agricultor2.id_usuario}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+        response = self.client.get(
+            "/api/recolecciones/", {"fk_agricultor": self.usuario_agricultor.id_usuario}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_fk_agricultor_filtro_fuera_de_rango_retorna_400(self):
         """Valida que un fk_agricultor fuera de rango en el filtro retorne 400 y no 500."""

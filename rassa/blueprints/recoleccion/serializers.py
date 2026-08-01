@@ -59,14 +59,19 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """Valida duplicados, orden de horas y fechas pasadas."""
-        hora_inicio = attrs.get("hora_inicio")
-        hora_fin = attrs.get("hora_fin")
-        if self.instance:
-            hora_inicio = hora_inicio or self.instance.hora_inicio
-            hora_fin = hora_fin or self.instance.hora_fin
-        if hora_inicio and hora_fin and hora_fin <= hora_inicio:
-            raise serializers.ValidationError({"hora_fin": "hora_fin debe ser posterior a hora_inicio."})
+        """Valida duplicados, orden de horas, pares de horas y fechas pasadas."""
+        # La regla both-or-none SOLO aplica cuando el cliente toca las horas en el
+        # request. Un PATCH de campos ajenos (p.ej. solo comentarios) sobre una fila
+        # legacy con par incompleto no debe fallar: el valor efectivo es el enviado
+        # (incluido null explícito) o el del instance solo si la clave no vino.
+        toca_horas = "hora_inicio" in attrs or "hora_fin" in attrs
+        if toca_horas:
+            hora_inicio = attrs.get("hora_inicio", self.instance.hora_inicio if self.instance else None)
+            hora_fin = attrs.get("hora_fin", self.instance.hora_fin if self.instance else None)
+            if bool(hora_inicio) != bool(hora_fin):
+                raise serializers.ValidationError({"hora_fin": "Deben indicarse ambas horas (inicio y fin) o ninguna."})
+            if hora_inicio and hora_fin and hora_fin <= hora_inicio:
+                raise serializers.ValidationError({"hora_fin": "hora_fin debe ser posterior a hora_inicio."})
 
         fecha = attrs.get("fecha_recoleccion")
         if fecha and fecha < timezone.localdate():
@@ -104,6 +109,16 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
         estado_nuevo = attrs.get("estado")
         if estado_nuevo == estado_actual:
             raise serializers.ValidationError("La recolección ya está en ese estado.")
+        # Completado tardío directo: un pendiente cuya fecha ya pasó puede marcarse
+        # directamente recolectado (la recolección sí ocurrió, aunque nunca pasó por
+        # en_ruta). Regla de negocio: pendiente vencido -> recolectado se permite;
+        # pendiente vencido -> en_ruta se bloquea (abajo).
+        if (
+            estado_actual == "pendiente"
+            and estado_nuevo == "recolectado"
+            and self.instance.fecha_recoleccion < timezone.localdate()
+        ):
+            return attrs
         if estado_nuevo not in TRANSICIONES_VALIDAS.get(estado_actual, []):
             raise serializers.ValidationError(f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'.")
         # Solo se bloquea pasar de pendiente -> en_ruta en una fecha pasada.
@@ -115,6 +130,10 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
             and self.instance.fecha_recoleccion < timezone.localdate()
         ):
             raise serializers.ValidationError(
-                {"fecha_recoleccion": "La fecha de la recolección ya pasó; solo se permite cancelarla."}
+                {
+                    "fecha_recoleccion": (
+                        "La fecha de la recolección ya pasó; solo se permite cancelarla o marcarla como recolectada."
+                    )
+                }
             )
         return attrs
