@@ -54,19 +54,11 @@ class SanitizarDocumentosCommandTest(TestCase):
         )
         self.assertEqual(self.safe.url_documento, "documentos/seguro_audio.mp3")
 
-        self.assertTrue(
-            (self.docs_dir / "abc_listen_20before_20i_20go.mp3").is_file()
-        )
-        self.assertTrue(
-            (self.docs_dir / "def_Green_A_-_Tragedia_de_amor.mp3").is_file()
-        )
+        self.assertTrue((self.docs_dir / "abc_listen_20before_20i_20go.mp3").is_file())
+        self.assertTrue((self.docs_dir / "def_Green_A_-_Tragedia_de_amor.mp3").is_file())
         self.assertTrue((self.docs_dir / "seguro_audio.mp3").is_file())
-        self.assertFalse(
-            (self.docs_dir / "abc_listen%20before%20i%20go.mp3").exists()
-        )
-        self.assertFalse(
-            (self.docs_dir / "def_Green A - Tragedia de amor.mp3").exists()
-        )
+        self.assertFalse((self.docs_dir / "abc_listen%20before%20i%20go.mp3").exists())
+        self.assertFalse((self.docs_dir / "def_Green A - Tragedia de amor.mp3").exists())
 
     def test_dry_run_does_not_rename(self):
         call_command("sanitizar_documentos", "--dry-run")
@@ -75,9 +67,7 @@ class SanitizarDocumentosCommandTest(TestCase):
             self.encoded.url_documento,
             "documentos/abc_listen%20before%20i%20go.mp3",
         )
-        self.assertTrue(
-            (self.docs_dir / "abc_listen%20before%20i%20go.mp3").is_file()
-        )
+        self.assertTrue((self.docs_dir / "abc_listen%20before%20i%20go.mp3").is_file())
 
     def test_missing_file_is_skipped_without_crashing(self):
         (self.docs_dir / "abc_listen%20before%20i%20go.mp3").unlink()
