@@ -1,13 +1,12 @@
 from unittest.mock import patch
 
-# Workaround for Python 3.14 incompatibility with Django 5.0.14's Context.__copy__
-# https://code.djangoproject.com/ticket/36079
-import django.template.context as _django_context
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+
+# Context.__copy__ patch is in conftest.py (Python 3.14 + Django 5.0 compat)
 
 from rassa.blueprints.producto_imagen.serializers import ProductoImagenSerializer
 from rassa.models import (
@@ -20,18 +19,6 @@ from rassa.models import (
     Rol,
     Usuario,
 )
-
-_original_context_copy = _django_context.Context.__copy__
-
-
-def _patched_context_copy(self):
-    cls = type(self)
-    duplicate = cls.__new__(cls)
-    duplicate.dicts = self.dicts[:]
-    return duplicate
-
-
-_django_context.Context.__copy__ = _patched_context_copy
 
 
 def _create_user_with_role(nombre_rol, username):

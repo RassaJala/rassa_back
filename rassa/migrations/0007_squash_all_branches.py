@@ -34,6 +34,7 @@ def backfill_unidad_nombre_abreviatura(apps, schema_editor):
             continue
         nombre = unidad.nombre or unidad.tipo
         if not nombre:
+            logger.warning("Backfill skipped Unidad pk=%s: no name or tipo", unidad.pk)
             continue
         unidad.nombre = nombre
         unidad.abreviatura = unidad.abreviatura or _expected_abreviatura(nombre)

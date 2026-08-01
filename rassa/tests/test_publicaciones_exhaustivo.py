@@ -1,6 +1,6 @@
 """Tests exhaustivos de seguridad, validación y edge cases para publicaciones."""
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -44,14 +44,36 @@ def _create_user_with_role(nombre_rol, username):
     return user
 
 
+def _make_date_counter(start_date=date(2026, 7, 27)):
+    """Genera fechas lunes incrementales para cada llamada a localdate().
+
+    Cada publicación hace 2 llamadas a timezone.localdate():
+    1. Verificación weekday() == 0
+    2. calcular_proximo_lunes()
+    """
+    current = start_date
+    call_count = 0
+
+    def next_date():
+        nonlocal current, call_count
+        call_count += 1
+        # Cada 2 llamadas, avanzar al siguiente lunes
+        if call_count > 2 and call_count % 2 == 1:
+            current += timedelta(days=7)
+        return current
+
+    return next_date
+
+
 class PublicacionBaseTestCase(APITestCase):
     """Setup compartido para tests de publicaciones."""
 
     def setUp(self):
-        # Mockear lunes para que POST /api/publicaciones/ no devuelva 403
-        self._patcher = patch("rassa.blueprints.publicacion.views.timezone")
-        mock_tz = self._patcher.start()
-        mock_tz.localdate.return_value = date(2026, 7, 27)  # lunes
+        # Mockear solo timezone.localdate (no el módulo entero) para que
+        # POST /api/publicaciones/ no devuelva 403 fuera de lunes
+        self._patcher = patch("django.utils.timezone.localdate")
+        self.mock_localdate = self._patcher.start()
+        self.mock_localdate.return_value = date(2026, 7, 27)  # lunes
 
         self.addCleanup(self._patcher.stop)
 
@@ -189,15 +211,14 @@ class MassAssignmentTests(PublicacionBaseTestCase):
         self.assertEqual(response.json()["data"]["estado"], "activo")
 
     def test_cannot_set_id_publicacion_on_patch(self):
-        """id_publicacion es read-only en PublicacionSerializer."""
+        """PATCH no existe en PublicacionViewSet (no tiene partial_update)."""
         pub = self._create_publicacion()
-        # No hay PATCH en publicaciones (se eliminó), así que verificamos que el endpoint no exista
         response = self.client.patch(
             reverse("publicacion-detail", args=[pub["id_publicacion"]]),
             {"semana": 99},
             format="json",
         )
-        # El endpoint no existe más (405 Method Not Allowed)
+        # ViewSet no tiene update/partial_update → 405
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
@@ -267,9 +288,9 @@ class OwnershipTests(PublicacionBaseTestCase):
 class PublishValidationTests(PublicacionBaseTestCase):
     """Validaciones al intentar publicar."""
 
-    def test_publish_fails_when_producto_estado_inactivo(self):
-        """Producto inactivo (fk_producto.estado=False) debe permitirse.
-        (No hay validación de esto actualmente — documentado como limitación)"""
+    def test_publish_permite_producto_estado_inactivo(self):
+        """Limitación conocida: producto inactivo (fk_producto.estado=False) se publica igual.
+        No hay validación de estado del catálogo en publish."""
         pub = self._create_publicacion()
         self._create_producto_semanal(pub["id_publicacion"])
         # Desactivar el producto del catálogo
@@ -368,30 +389,26 @@ class FilterPaginationTests(PublicacionBaseTestCase):
             self.assertEqual(item["estado"], "borrador")
 
     def test_pagination_structure(self):
-        """Verificar estructura de paginación completa."""
-        # Override setUp's return_value with side_effect for different weeks
+        """Verificar estructura de paginación completa con 3 publicaciones en semanas distintas."""
+        # Usar counter callable en vez de side_effect hardcodeado — no depende
+        # del número exacto de llamadas internas a localdate()
         self._patcher.stop()
-        self._patcher = patch("rassa.blueprints.publicacion.views.timezone")
-        mock_tz = self._patcher.start()
+        self._patcher = patch("django.utils.timezone.localdate")
+        self.mock_localdate = self._patcher.start()
         self.addCleanup(self._patcher.stop)
-        mock_tz.localdate.side_effect = [
-            date(2026, 7, 27),
-            date(2026, 7, 27),  # pub semana 31
-            date(2026, 8, 3),
-            date(2026, 8, 3),  # pub semana 32
-            date(2026, 8, 10),
-            date(2026, 8, 10),  # pub semana 33
-        ]
+        self.mock_localdate.side_effect = _make_date_counter(date(2026, 7, 27))
+
         for _ in range(3):
             self._create_publicacion()
 
         response = self.client.get(reverse("publicacion-list"))
         data = response.json()["data"]
-        self.assertIn("count", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertIn("results", data)
+        self.assertEqual(data["count"], 3)
         self.assertIsInstance(data["results"], list)
+        self.assertEqual(len(data["results"]), 3)
+        # Estructura de paginación estándar
+        for key in ("count", "next", "previous", "results"):
+            self.assertIn(key, data)
 
     def test_producto_list_paginated(self):
         """Verificar que productos también usan paginación."""
@@ -562,10 +579,11 @@ class UniquenessTests(PublicacionBaseTestCase):
     def test_mismo_agricultor_distinta_semana_ok(self):
         """Mismo agricultor puede tener publicaciones en distintas semanas."""
         pub = self._create_publicacion()
+        # Usar semana - 1 en vez de + 3 para no exceder 52 si el mock cambia
         PublicacionSemanal.objects.create(
             fk_agricultor=self.agricultor.usuario,
-            fecha_publicacion="2026-12-28",
-            semana=pub["semana"] + 3,
+            fecha_publicacion="2026-07-20",
+            semana=pub["semana"] - 1,
             estado="borrador",
         )
         # Si no lanza excepción, OK
