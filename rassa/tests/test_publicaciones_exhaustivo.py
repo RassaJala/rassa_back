@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.db import IntegrityError
 from django.urls import reverse
 from rest_framework import status
@@ -69,6 +70,9 @@ class PublicacionBaseTestCase(APITestCase):
     """Setup compartido para tests de publicaciones."""
 
     def setUp(self):
+        # Limpiar cache de throttling para que no se acumule entre tests
+        cache.clear()
+
         # Mockear solo timezone.localdate (no el módulo entero) para que
         # POST /api/publicaciones/ no devuelva 403 fuera de lunes
         self._patcher = patch("django.utils.timezone.localdate")
