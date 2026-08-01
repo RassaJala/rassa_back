@@ -6,8 +6,6 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-# Context.__copy__ patch is in conftest.py (Python 3.14 + Django 5.0 compat)
-
 from rassa.blueprints.producto_imagen.serializers import ProductoImagenSerializer
 from rassa.models import (
     CategoriaProducto,
