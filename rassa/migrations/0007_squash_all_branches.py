@@ -77,29 +77,6 @@ def reverse_backfill_unidad_nombre_abreviatura(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    replaces = [
-        ("rassa", "0007_add_producto_descripcion"),
-        ("rassa", "0007_unidad_abreviatura_unidad_nombre_alter_unidad_tipo"),
-        ("rassa", "0008_add_producto_precio_stock_unidad_imagen"),
-        ("rassa", "0008_backfill_unidad_nombre_abreviatura"),
-        ("rassa", "0009_alter_publicacionsemanal_estado"),
-        ("rassa", "0009_localidad_estado_municipio_estado"),
-        ("rassa", "0010_alter_productosemanal_fk_producto_and_more"),
-        ("rassa", "0011_merge_0009_localidad_estado_and_publicacion"),
-        ("rassa", "0012_alter_familiausuario_fk_usuario"),
-        ("rassa", "0012_mensaje_editado"),
-        ("rassa", "0012_alter_productoimagen_options_productoimagen_orden"),
-        ("rassa", "0012_merge_producto_and_main"),
-        ("rassa", "0013_add_productoimagen_archivo"),
-        ("rassa", "0013_alter_producto_fk_categoria"),
-        ("rassa", "0013_merge_20260718_1323"),
-        ("rassa", "0014_add_unique_es_principal_constraint"),
-        ("rassa", "0014_productoimagen_url_only"),
-        ("rassa", "0015_add_producto_imagen_drive_file_id"),
-        ("rassa", "0015_productoimagen_squash_and_drive_file_id"),
-        ("rassa", "0016_merge_20260719_1534"),
-        ("rassa", "0017_merge_20260722_1151"),
-    ]
 
     dependencies = [
         ("rassa", "0006_cascade_to_set_null_protect"),
