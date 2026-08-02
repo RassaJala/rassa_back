@@ -1,0 +1,15 @@
+meta {
+  name: Remover integrante de conversación
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{baseUrl}}/api/chat/conversaciones/19/integrantes/42/
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
