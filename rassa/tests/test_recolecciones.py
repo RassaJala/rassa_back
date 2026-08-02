@@ -15,9 +15,32 @@ from rassa.models import HistorialEstadoRecoleccion, Persona, Recoleccion, Rol, 
 
 # Fechas dinámicas relativas a hoy: evitan la "bomba de tiempo" del guard de
 # fechas pasadas (el CI se rompería cuando una fecha fija quedara atrás).
-FECHA_FUTURA = timezone.localdate() + timedelta(days=1)
-FECHA_FUTURA_2 = timezone.localdate() + timedelta(days=2)
-FECHA_PASADA = timezone.localdate() - timedelta(days=1)
+# Margen amplio (7/8 días) a propósito: estas constantes se calculan al importar
+# el módulo y una suite que corra en el mismo proceso cruzando 2+ medianoches
+# rompería con +1 día. Los tests solo necesitan "una fecha futura/pasada", no
+# "mañana/ayer" exactos; los que requieren hoy usan timezone.localdate() directo.
+FECHA_FUTURA = timezone.localdate() + timedelta(days=7)
+FECHA_FUTURA_2 = timezone.localdate() + timedelta(days=8)
+FECHA_PASADA = timezone.localdate() - timedelta(days=7)
+
+
+def _crear_usuario(username, correo, nombre, apellido, rol):
+    """Helper compartido: crea User + Persona + Usuario para los tests del módulo."""
+    user = User.objects.create_user(username=username, email=correo, password="password123")
+    persona = Persona.objects.create(
+        nombre=nombre,
+        apellido_paterno=apellido,
+        fecha_nacimiento="1990-01-01",
+        sexo="M",
+        domicilio="Calle de prueba 123",
+    )
+    return Usuario.objects.create(
+        fk_user=user,
+        fk_persona=persona,
+        telefono="1234567890",
+        correo=correo,
+        fk_rol=rol,
+    )
 
 
 class RecoleccionesTestCase(TestCase):
@@ -46,21 +69,7 @@ class RecoleccionesTestCase(TestCase):
         self.client.force_authenticate(user=self.usuario_admin.fk_user)
 
     def _crear_usuario(self, username, correo, nombre, apellido, rol):
-        user = User.objects.create_user(username=username, email=correo, password="password123")
-        persona = Persona.objects.create(
-            nombre=nombre,
-            apellido_paterno=apellido,
-            fecha_nacimiento="1990-01-01",
-            sexo="M",
-            domicilio="Calle de prueba 123",
-        )
-        return Usuario.objects.create(
-            fk_user=user,
-            fk_persona=persona,
-            telefono="1234567890",
-            correo=correo,
-            fk_rol=rol,
-        )
+        return _crear_usuario(username, correo, nombre, apellido, rol)
 
     def _payload(self, fecha=str(FECHA_FUTURA)):
         return {
@@ -285,7 +294,7 @@ class RecoleccionesTestCase(TestCase):
         recoleccion = self._crear_recoleccion(estado="recolectado")
         response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("non_field_errors", response.data)
+        self.assertIn("estado", response.data)
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "recolectado")
 
@@ -324,6 +333,25 @@ class RecoleccionesTestCase(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_listado_orden_estable_con_horas_null(self):
+        """Valida el tiebreaker de paginación: misma fecha y horas NULL ordenan por id.
+
+        Sin el orden secundario por id_recoleccion, dos filas con la misma clave
+        de orden primaria (fecha + hora NULL) dejarían un orden indeterminado
+        que salta/duplica filas entre páginas cuando el dataset cambia.
+        """
+        otros = [
+            self._crear_usuario(f"agri_tie_{i}", f"tie{i}@rassa.com", "Tie", "Rassa", self.rol_agricultor)
+            for i in range(3)
+        ]
+        r1 = self._crear_recoleccion(fk_agricultor=otros[0], fecha_recoleccion=str(FECHA_FUTURA))
+        r2 = self._crear_recoleccion(fk_agricultor=otros[1], fecha_recoleccion=str(FECHA_FUTURA))
+        r3 = self._crear_recoleccion(fk_agricultor=otros[2], fecha_recoleccion=str(FECHA_FUTURA))
+        response = self.client.get("/api/recolecciones/", {"fecha": str(FECHA_FUTURA)}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["id_recoleccion"] for item in response.data["data"]["results"]]
+        self.assertEqual(ids, sorted([r1.pk, r2.pk, r3.pk]))
 
     def test_filtro_estado_invalido_retorna_400(self):
         """Valida que un estado inválido retorne 400."""
@@ -667,11 +695,14 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_patch_hora_fin_tras_hora_inicio(self):
-        """Valida la validación de horas también en PATCH."""
+        """Valida la comparación de horas (hora_fin > hora_inicio) también en PATCH."""
         recoleccion = self._crear_recoleccion(hora_inicio="08:00:00")
+        # Enviar AMBAS claves a propósito: con solo "hora_fin" el serializer
+        # falla antes por el par incompleto (XOR de presencia) y el test no
+        # ejercitaría la comparación de valores que dice validar.
         response = self.client.patch(
             f"/api/recolecciones/{recoleccion.pk}/",
-            {"hora_fin": "07:00:00"},
+            {"hora_inicio": "08:00:00", "hora_fin": "07:00:00"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -925,21 +956,7 @@ class RecoleccionConcurrenciaTests(TransactionTestCase):
         )
 
     def _crear_usuario(self, username, correo, nombre, apellido, rol):
-        user = User.objects.create_user(username=username, email=correo, password="password123")
-        persona = Persona.objects.create(
-            nombre=nombre,
-            apellido_paterno=apellido,
-            fecha_nacimiento="1990-01-01",
-            sexo="M",
-            domicilio="Calle de prueba 123",
-        )
-        return Usuario.objects.create(
-            fk_user=user,
-            fk_persona=persona,
-            telefono="1234567890",
-            correo=correo,
-            fk_rol=rol,
-        )
+        return _crear_usuario(username, correo, nombre, apellido, rol)
 
     def test_create_concurrente_mismo_par_un_solo_201(self):
         NUM_THREADS = 2

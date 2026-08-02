@@ -9,8 +9,9 @@ from rassa.permissions.role_permissions import AGRICULTOR
 # Mensajes compartidos con las vistas del módulo (views.py los importa de aquí).
 # Se definen en serializers para evitar imports circulares: views importa
 # serializers, así que serializers NO puede importar de views.
-MSG_AGRICULTOR_NO_EXISTE = "El agricultor especificado no existe o está inactivo."
+MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO = "El agricultor especificado no existe o está inactivo."
 MSG_AGRICULTOR_SIN_ROL = "El agricultor especificado no tiene rol Agricultor."
+MSG_AGRICULTOR_DUPLICADO = "El agricultor ya tiene una recolección programada para esta fecha."
 
 TRANSICIONES_VALIDAS = {
     "pendiente": ["en_ruta", "cancelado"],
@@ -59,7 +60,7 @@ class RecoleccionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El agricultor es obligatorio.")
         usuario = Usuario.objects.filter(pk=value.pk).first()
         if usuario is None or not usuario.estado:
-            raise serializers.ValidationError(MSG_AGRICULTOR_NO_EXISTE)
+            raise serializers.ValidationError(MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO)
         if not usuario.tiene_rol(AGRICULTOR):
             raise serializers.ValidationError(MSG_AGRICULTOR_SIN_ROL)
         return value
@@ -110,9 +111,7 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         if self.instance:
             duplicados = duplicados.exclude(pk=self.instance.pk)
         if duplicados.exists():
-            raise serializers.ValidationError(
-                {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
-            )
+            raise serializers.ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO})
         return attrs
 
 
@@ -137,7 +136,9 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
         ):
             return attrs
         if estado_nuevo not in TRANSICIONES_VALIDAS.get(estado_actual, []):
-            raise serializers.ValidationError(f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'.")
+            raise serializers.ValidationError(
+                {"estado": f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'."}
+            )
         # Solo se bloquea pasar de pendiente -> en_ruta en una fecha pasada.
         # en_ruta -> recolectado SIEMPRE se permite (completado tardío) y cancelar
         # (pendiente/en_ruta -> cancelado) también, independientemente de la fecha.

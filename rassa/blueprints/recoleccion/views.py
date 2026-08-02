@@ -16,7 +16,8 @@ from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log, ok_response
 
 from .serializers import (
-    MSG_AGRICULTOR_NO_EXISTE,
+    MSG_AGRICULTOR_DUPLICADO,
+    MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
     MSG_AGRICULTOR_SIN_ROL,
     RecoleccionCambiarEstadoSerializer,
     RecoleccionSerializer,
@@ -30,8 +31,8 @@ ESTADOS_VALIDOS_STR = ", ".join(c[0] for c in Recoleccion.ESTADO_CHOICES)
 
 def _pk_entero_valido(raw):
     """True si raw es un entero válido para pk (0 < valor <= 2**31 - 1)."""
-    if raw is None:
-        return False
+    # raw=None -> str(None)="None" no pasa isdigit, así que no hace falta un
+    # check previo de None.
     texto = str(raw)
     # isascii() excluye dígitos Unicode (ej. '٥', '²'): isdigit() los acepta
     # pero int() lanza ValueError -> 500.
@@ -45,7 +46,7 @@ def _pk_entero_valido(raw):
         return False
 
 
-def _constraint_violada(exc):
+def _nombre_constraint_violada(exc):
     """Nombre del constraint violado en un IntegrityError, o None si no aplica.
 
     Cross-DB: psycopg2 expone el constraint en ``diag.constraint_name`` (no en
@@ -69,6 +70,20 @@ def _constraint_violada(exc):
     if getattr(causa, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE":
         return "uniq_recoleccion_activa_agricultor_fecha"
     return None
+
+
+def _manejar_integrity_error(exc):
+    """Traduce un IntegrityError de unicidad a 400, o lo re-lanza si es otro.
+
+    Solo el UniqueConstraint parcial de recolección se traduce a
+    ValidationError; cualquier otro IntegrityError (constraint inesperado)
+    se loguea como error real y se re-lanza (500, no enmascarar bugs).
+    """
+    if _nombre_constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
+        logger.exception("IntegrityError inesperado al guardar recolección:")
+        raise
+    logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
+    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO}) from None
 
 
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
@@ -113,6 +128,16 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."})
         queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona")
         if for_update:
+            # NOTA (R4): sin nowait=True a propósito, a diferencia del resto del
+            # repo (admin_views, pedido, producto_imagen). Allí el lock protege
+            # una operación puntual y un conflicto = "ya en progreso" -> fail
+            # fast. Aquí el lock es la BARRERA DE SERIALIZACIÓN deliberada para
+            # el par (fk_agricultor, fecha): dos writers concurrentes deben
+            # esperarse para que el segundo vea el resultado del primero y
+            # reciba 400-duplicado (no 500 por lock). Riesgo aceptado: una
+            # transacción externa estancada sobre esta fila bloquearía el
+            # endpoint indefinidamente; probabilidad baja (transacciones que
+            # tocan Recoleccion/Usuario son cortas y de escritura rápida).
             queryset = queryset.select_for_update()
         try:
             return queryset.get(pk=pk)
@@ -193,7 +218,11 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # Django, no un NULLS LAST nativo; en MySQL F(...).asc(nulls_last=True)
         # lanzaría NotSupportedError. Hoy el proyecto corre Postgres/SQLite donde
         # funciona; si algún día se migra a MySQL, revisar este orden.
-        return queryset.order_by("fecha_recoleccion", F("hora_inicio").asc(nulls_last=True))
+        # id_recoleccion como tiebreaker: varias filas con la misma fecha y la
+        # misma hora (o ambas NULL) son posibles; sin un orden secundario
+        # determinista, la paginación por offset se salta/duplica filas cuando
+        # el dataset cambia entre páginas.
+        return queryset.order_by("fecha_recoleccion", F("hora_inicio").asc(nulls_last=True), "id_recoleccion")
 
     def create(self, request, *args, **kwargs):
         if not isinstance(request.data, Mapping):
@@ -205,7 +234,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # (DataError) que DRF no convierte -> 500. Mismo guard que para query
         # params, aplicado ANTES de que el serializer toque la BD.
         if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
+            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         agricultor = serializer.validated_data["fk_agricultor"]
@@ -219,11 +248,14 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 # 3. UniqueConstraint parcial en BD (garantía final; IntegrityError
                 #    -> 400 discriminado por constraint name en el except de abajo).
                 try:
+                    # Lock bloqueante deliberado (ver NOTA R4 en _get_recoleccion):
+                    # serializa los creates del mismo par; un segundo writer
+                    # concurrente espera, ve el duplicado y recibe 400, no 500.
                     agricultor = Usuario.objects.select_related("fk_persona").select_for_update().get(pk=agricultor.pk)
                 except Usuario.DoesNotExist:
-                    raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE}) from None
+                    raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO}) from None
                 if not agricultor.estado:
-                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
+                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
                 if not agricultor.tiene_rol(AGRICULTOR):
                     raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
                 if (
@@ -233,9 +265,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                     .exclude(estado="cancelado")
                     .exists()
                 ):
-                    raise ValidationError(
-                        {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
-                    )
+                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO})
                 recoleccion = serializer.save()
                 # Evitar N+1 en la respuesta: serializer.data re-serializa serializer.instance
                 # (el objeto creado por save()), cuyo fk_agricultor es el pre-lock, sin
@@ -252,13 +282,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         except ValidationError:
             raise
         except IntegrityError as exc:
-            if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
-                logger.exception("IntegrityError inesperado al guardar recolección:")
-                raise
-            logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
-            raise ValidationError(
-                {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
-            ) from None
+            _manejar_integrity_error(exc)
         _log(
             request.user,
             f"crear_recoleccion agricultor={recoleccion.fk_agricultor_id} fecha={recoleccion.fecha_recoleccion}",
@@ -278,7 +302,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # Mismo guard de rango que en create: un fk_agricultor fuera de rango en
         # el body no debe llegar al get(pk=...) (DataError de Postgres -> 500).
         if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
+            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
         # Capas que protegen la unicidad en partial_update:
         # 1. Pre-check del serializer (UX, sin lock del agricultor).
         # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
@@ -307,9 +331,9 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                             .get(pk=serializer.validated_data["fk_agricultor"].pk)
                         )
                     except Usuario.DoesNotExist:
-                        raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE}) from None
+                        raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO}) from None
                     if not agricultor_nuevo.estado:
-                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
+                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
                     if not agricultor_nuevo.tiene_rol(AGRICULTOR):
                         raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
                     # Reemplazar la instancia pre-lock por la bloqueada: evita TOCTOU
@@ -331,13 +355,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         except ValidationError:
             raise
         except IntegrityError as exc:
-            if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
-                logger.exception("IntegrityError inesperado al guardar recolección:")
-                raise
-            logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
-            raise ValidationError(
-                {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
-            ) from None
+            _manejar_integrity_error(exc)
         _log(request.user, f"editar_recoleccion id={recoleccion.pk}", request)
         return ok_response(data=serializer.data, message="Recolección actualizada correctamente.")
 
