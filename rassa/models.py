@@ -863,6 +863,15 @@ class Liquidacion(models.Model):
     class Meta:
         db_table = "liquidacion"
         ordering = ["id_liquidacion"]
+        constraints = [
+            # Una sola liquidación activa (pendiente/parcial) por
+            # (agricultor, periodo). Permite re-cálculo si la anterior está pagada.
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "periodo_inicio", "periodo_fin"],
+                condition=models.Q(estado__in=["pendiente", "parcial"]),
+                name="unique_liquidacion_agricultor_periodo_activo",
+            ),
+        ]
 
     def __str__(self):
         return f"Liquidación #{self.id_liquidacion} — {str(self.fk_agricultor)}"
