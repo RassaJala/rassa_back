@@ -6,15 +6,9 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
+from rassa.blueprints.pagos.serializers import _nombre_completo
 from rassa.models import Liquidacion, Pago, PedidoCabecera, TipoPago, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
-
-
-def _nombre_completo(usuario):
-    if usuario and usuario.fk_persona:
-        p = usuario.fk_persona
-        return f"{p.nombre} {p.apellido_paterno}".strip()
-    return None
 
 
 class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
@@ -37,10 +31,13 @@ class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
         return _nombre_completo(obj.fk_cliente)
 
     def get_pago_folio(self, obj):
+        # Importante: NO usar `pagos.first()` aquí — Django emite una query
+        # nueva por cada `obj` (N+1), incluso con prefetch_related.
+        # `next(iter(...))` consume la cache del prefetch sin tocar la BD.
         pagos = getattr(obj, "pago_set", None)
         if pagos is None:
             return None
-        first = pagos.first()
+        first = next(iter(pagos.all()), None)
         return first.folio if first else None
 
 

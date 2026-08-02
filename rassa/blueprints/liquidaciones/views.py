@@ -4,22 +4,23 @@ import logging
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db import DatabaseError, connection, transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.blueprints.liquidaciones.constants import (
     ESTADO_PAGADA,
     ESTADO_PENDIENTE,
-    ESTADOS_ACTIVOS,
     MSG_LIQUIDACION_DUPLICADA,
 )
 from rassa.models import (
     DetallePedido,
     EstadoPedido,
     Liquidacion,
+    LiquidacionVenta,
     Pago,
     PedidoCabecera,
 )
@@ -67,6 +68,37 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
     )
 
 
+def _ventas_snapshot(liquidacion: Liquidacion) -> list[PedidoCabecera]:
+    """Retorna los pedidos del snapshot de la liquidación, en el orden del snapshot.
+
+    Cierra el riesgo de inconsistencia entre `monto_ventas` y las ventas
+    mostradas en el detalle (revisión 4R R3/R4 — ventas en vivo).
+    """
+    snapshot_ids = list(liquidacion.ventas.order_by("id_liquidacion_venta").values_list("fk_pedido_id", flat=True))
+    if not snapshot_ids:
+        return []
+    pedidos = (
+        PedidoCabecera.objects.filter(id_pedido__in=snapshot_ids)
+        .select_related("fk_cliente__fk_persona")
+        .prefetch_related("pago_set")
+    )
+    pedido_by_id = {p.id_pedido: p for p in pedidos}
+    return [pedido_by_id[pid] for pid in snapshot_ids if pid in pedido_by_id]
+
+
+def _build_detalle_output(liquidacion: Liquidacion, ventas):
+    """Serializa el detalle de una liquidación con sus ventas y pago.
+
+    Centraliza la construcción de la respuesta que se repetía en 3 lugares
+    (retrieve, calcular, marcar_pagada) — revisión 4R R2.
+    """
+    liquidacion_full = _reload_liquidacion(liquidacion.pk)
+    return LiquidacionDetalleSerializer(
+        liquidacion_full,
+        context={"ventas_queryset": ventas},
+    ).data
+
+
 def _reload_liquidacion(pk) -> Liquidacion:
     """Refetch a Liquidacion with its relations populated."""
     return Liquidacion.objects.select_related(
@@ -75,15 +107,18 @@ def _reload_liquidacion(pk) -> Liquidacion:
     ).get(pk=pk)
 
 
-def _buscar_liquidacion_activa(agricultor, inicio: date, fin: date) -> Liquidacion | None:
-    """Busca una liquidación activa (pendiente/parcial) para el mismo
-    (agricultor, periodo). Usada por las 3 capas de anti-duplicado."""
+def _buscar_liquidacion_existente(agricultor, inicio: date, fin: date) -> Liquidacion | None:
+    """Busca cualquier liquidación existente para el mismo (agricultor, periodo).
+
+    Cualquier estado (pendiente, parcial o pagada) cuenta como duplicado.
+    Una liquidación `pagada` es terminal: no se puede re-calcular el mismo
+    periodo. Esto cierra el hueco financiero de doble pago.
+    """
     return (
         Liquidacion.objects.filter(
             fk_agricultor=agricultor,
             periodo_inicio=inicio,
             periodo_fin=fin,
-            estado__in=ESTADOS_ACTIVOS,
         )
         .order_by("-creado_en")
         .first()
@@ -125,8 +160,10 @@ class LiquidacionViewSet(
     throttle_classes = [ScopedRateThrottle]
 
     def get_throttles(self):
-        if self.request.method == "POST":
-            self.throttle_scope = "liquidaciones_write"
+        if self.action == "calcular":
+            self.throttle_scope = "liquidaciones_calcular"
+        elif self.action == "marcar_pagada":
+            self.throttle_scope = "liquidaciones_pagada"
         else:
             self.throttle_scope = "liquidaciones_read"
         return super().get_throttles()
@@ -137,18 +174,24 @@ class LiquidacionViewSet(
             "fk_pago_liquidacion__fk_tipo",
         ).order_by("-creado_en")
         params = self.request.query_params
-        agricultor = params.get("agricultor")
-        if agricultor:
-            qs = qs.filter(fk_agricultor_id=agricultor)
-        estado = params.get("estado")
-        if estado:
-            qs = qs.filter(estado=estado)
-        periodo_inicio = params.get("periodo_inicio")
-        if periodo_inicio:
-            qs = qs.filter(periodo_inicio__gte=periodo_inicio)
-        periodo_fin = params.get("periodo_fin")
-        if periodo_fin:
-            qs = qs.filter(periodo_fin__lte=periodo_fin)
+        try:
+            agricultor = params.get("agricultor")
+            if agricultor:
+                # Validamos que sea int antes de pasar a .filter() para no
+                # terminar en un 500 por ValueError al castear (revisión 4R R1).
+                qs = qs.filter(fk_agricultor_id=int(agricultor))
+            estado = params.get("estado")
+            if estado:
+                qs = qs.filter(estado=estado)
+            periodo_inicio = params.get("periodo_inicio")
+            if periodo_inicio:
+                qs = qs.filter(periodo_inicio__gte=date.fromisoformat(periodo_inicio))
+            periodo_fin = params.get("periodo_fin")
+            if periodo_fin:
+                qs = qs.filter(periodo_fin__lte=date.fromisoformat(periodo_fin))
+        except (ValueError, TypeError) as exc:
+            # Parámetro mal formado: ?agricultor=abc o ?periodo_inicio=basura.
+            raise ValidationError(f"Parámetro de búsqueda inválido: {exc}") from exc
         return qs
 
     def get_serializer_class(self):
@@ -164,9 +207,7 @@ class LiquidacionViewSet(
         ctx = super().get_serializer_context()
         if self.action == "retrieve":
             instance = self.get_object()
-            ctx["ventas_queryset"] = _ventas_agricultor_en_rango(
-                instance.fk_agricultor_id, instance.periodo_inicio, instance.periodo_fin + timedelta(days=1)
-            )
+            ctx["ventas_queryset"] = _ventas_snapshot(instance)
         return ctx
 
     @action(detail=False, methods=["post"], url_path="calcular")
@@ -190,7 +231,7 @@ class LiquidacionViewSet(
         inicio, fin_exclusive = _rango_semana(anio, semana)
         fin = fin_exclusive - timedelta(days=1)
 
-        existing = _buscar_liquidacion_activa(agricultor, inicio, fin)
+        existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
         if existing:
             return _liquidacion_duplicada_response(existing)
 
@@ -206,7 +247,7 @@ class LiquidacionViewSet(
                 pedido_ids = [p.id_pedido for p in ventas]
                 list(PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk"))
 
-                existing = _buscar_liquidacion_activa(agricultor, inicio, fin)
+                existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
                 if existing:
                     return _liquidacion_duplicada_response(existing)
 
@@ -214,23 +255,29 @@ class LiquidacionViewSet(
                 comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
                 monto_liquidar = monto_ventas - comision
 
-                try:
-                    liquidacion = Liquidacion.objects.create(
-                        fk_agricultor=agricultor,
-                        periodo_inicio=inicio,
-                        periodo_fin=fin,
-                        monto_ventas=monto_ventas,
-                        comision=comision,
-                        monto_liquidar=monto_liquidar,
-                        estado=ESTADO_PENDIENTE,
-                    )
-                except IntegrityError:
-                    # El constraint unique_liquidacion_agricultor_periodo_activo
-                    # bloqueó una inserción concurrente. Devolvemos 409 con la existente.
-                    existing = _buscar_liquidacion_activa(agricultor, inicio, fin)
-                    if existing:
-                        return _liquidacion_duplicada_response(existing)
-                    raise
+                liquidacion = Liquidacion.objects.create(
+                    fk_agricultor=agricultor,
+                    periodo_inicio=inicio,
+                    periodo_fin=fin,
+                    monto_ventas=monto_ventas,
+                    comision=comision,
+                    monto_liquidar=monto_liquidar,
+                    estado=ESTADO_PENDIENTE,
+                )
+
+                # Snapshot de las ventas que aportaron a esta liquidación
+                # (item 4 de la revisión 4R — ver review R3/R4).
+                # bulk_create es 1 INSERT con N VALUES, no N INSERTs.
+                LiquidacionVenta.objects.bulk_create(
+                    [
+                        LiquidacionVenta(
+                            fk_liquidacion=liquidacion,
+                            fk_pedido=p,
+                            monto_aportado=p.total,
+                        )
+                        for p in ventas
+                    ]
+                )
         except DatabaseError as exc:
             if _is_deadlock(exc):
                 logger.warning(
@@ -245,10 +292,7 @@ class LiquidacionViewSet(
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
-        output = LiquidacionDetalleSerializer(
-            liquidacion,
-            context={"ventas_queryset": ventas},
-        ).data
+        output = _build_detalle_output(liquidacion, ventas)
 
         _log(
             request.user,
@@ -348,12 +392,8 @@ class LiquidacionViewSet(
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
-        ventas = _ventas_agricultor_en_rango(
-            liquidacion.fk_agricultor_id,
-            liquidacion.periodo_inicio,
-            liquidacion.periodo_fin + timedelta(days=1),
-        )
-        output = LiquidacionDetalleSerializer(liquidacion, context={"ventas_queryset": ventas}).data
+        ventas = _ventas_snapshot(liquidacion)
+        output = _build_detalle_output(liquidacion, ventas)
 
         _log(
             request.user,

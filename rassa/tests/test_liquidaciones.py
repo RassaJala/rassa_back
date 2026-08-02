@@ -1,10 +1,13 @@
 """Pruebas para el módulo de Liquidaciones."""
 
 import threading
+import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.db import OperationalError, connection
 from django.test import TransactionTestCase
 from django.utils import timezone as dj_timezone
 from rest_framework import status
@@ -831,9 +834,12 @@ class MarcarPagadaEdgeCasesTest(LiquidacionesTestBase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["estado"], "pagada")
 
-    def test_re_calcular_despues_de_pagada_es_valido(self):
-        """Si la liquidación previa está 'pagada', se puede crear una nueva
-        para el mismo (agricultor, periodo). Coincide con el constraint de BD."""
+    def test_no_se_puede_recalcular_despues_de_pagada(self):
+        """Una liquidación `pagada` es terminal: re-calcular el mismo
+        periodo retorna 409 con el id de la existente.
+
+        Cierra el riesgo de doble pago (revisión 4R R1).
+        """
         # Marcar pagada la existente
         self.client.post(
             f"/api/liquidaciones/{self.liquidacion_id}/marcar-pagada/",
@@ -842,7 +848,7 @@ class MarcarPagadaEdgeCasesTest(LiquidacionesTestBase):
         )
         self.assertEqual(Liquidacion.objects.get(pk=self.liquidacion_id).estado, "pagada")
 
-        # Re-calcular para el mismo periodo
+        # Re-calcular el mismo periodo
         resp = self.client.post(
             "/api/liquidaciones/calcular/",
             {
@@ -852,18 +858,19 @@ class MarcarPagadaEdgeCasesTest(LiquidacionesTestBase):
             },
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        new_id = resp.json()["data"]["id_liquidacion"]
-        self.assertNotEqual(new_id, self.liquidacion_id, "Debe ser una liquidación nueva")
-        self.assertEqual(resp.json()["data"]["estado"], "pendiente")
-        # Ahora hay 2 liquidaciones: la pagada y la nueva pendiente
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            resp.json()["data"]["id_liquidacion_existente"],
+            self.liquidacion_id,
+        )
+        # Sigue habiendo solo 1 liquidación
         self.assertEqual(
             Liquidacion.objects.filter(
                 fk_agricultor=self.usuario_agricultor,
                 periodo_inicio=date(2026, 7, 20),
                 periodo_fin=date(2026, 7, 26),
             ).count(),
-            2,
+            1,
         )
 
 
@@ -941,6 +948,39 @@ class LiquidacionPaginationTest(LiquidacionesTestBase):
         self.assertEqual(data["count"], 3)
         self.assertEqual(len(data["results"]), 3)
 
+    def test_paginacion_con_mas_de_20_items_retorna_count_y_next(self):
+        """CatalogPagination tiene page_size=20. Con >20 items debe
+        devolver count exacto y URL de next page (revisión 4R R3)."""
+        # 22 liquidaciones en 22 semanas distintas de 2026.
+        # Usamos miércoles (weekday 3) de cada semana para asegurar que
+        # la fecha cae en la semana ISO correcta (algunas semanas ISO
+        # cruzan año, e.g. semana 1 de 2026 arranca el 2025-12-29).
+        for semana in range(1, 23):
+            fecha_miercoles = date.fromisocalendar(2026, semana, 3)
+            self._crear_pedido_entregado(
+                total=Decimal("100.00"),
+                creado_en=_aware(fecha_miercoles.year, fecha_miercoles.month, fecha_miercoles.day),
+            )
+            self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": semana,
+                    "anio": 2026,
+                },
+                format="json",
+            )
+
+        resp = self.client.get("/api/liquidaciones/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertEqual(data["count"], 22)
+        self.assertEqual(len(data["results"]), 20)
+        self.assertIsNotNone(data["next"])
+        # Página 2 tiene los 2 restantes
+        resp2 = self.client.get("/api/liquidaciones/?page=2")
+        self.assertEqual(len(resp2.json()["data"]["results"]), 2)
+
 
 class CalcularYearBoundaryTest(LiquidacionesTestBase):
     """Bordes de año: la ISO week 53 de 2026 cruza al 2027 (28 dic → 3 ene)."""
@@ -978,12 +1018,40 @@ class CalcularYearBoundaryTest(LiquidacionesTestBase):
         # Solo cuenta el pedido del 2026-12-28 (100.00), no el del 27 (999.00)
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
         self.assertEqual(len(data["ventas"]), 1)
+
+    def test_semana_53_de_2026_excluye_lunes_2027_01_04(self):
+        """El lunes 2027-01-04 pertenece a la SEMANA 1 de 2027, no a la
+        semana 53 de 2026. El filtro del view usa `<` exclusivo sobre el
+        lunes siguiente, por lo que el 04 NO cuenta (revisión 4R R3
+        SUGGESTION — borde lejano del año)."""
+        self._crear_pedido_entregado(
+            total=Decimal("100.00"),
+            creado_en=_aware(2027, 1, 4, hour=10),  # lunes de la semana 1 de 2027
+        )
+        # El lunes previo 2026-12-28 sí cuenta
+        self._crear_pedido_entregado(
+            total=Decimal("200.00"),
+            creado_en=_aware(2026, 12, 28),
+        )
+
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 53,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.json())
         data = resp.json()["data"]
-        self.assertEqual(data["periodo_inicio"], "2026-12-28")
-        self.assertEqual(data["periodo_fin"], "2027-01-03")
-        # Solo cuenta el pedido del 2026-12-28 (100.00)
-        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
+        # Solo cuenta el 2026-12-28, NO el 2027-01-04 (que es semana 1 de 2027)
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("200.00"))
         self.assertEqual(len(data["ventas"]), 1)
+        self.assertEqual(
+            data["ventas"][0]["creado_en"][:10],  # YYYY-MM-DD
+            "2026-12-28",
+        )
 
 
 class CalcularConcurrencyTest(TransactionTestCase):
@@ -1078,6 +1146,11 @@ class CalcularConcurrencyTest(TransactionTestCase):
             importe=Decimal("100.00"),
         )
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql",
+        "El test depende del comportamiento real de select_for_update en PostgreSQL "
+        "(advisory locks de Pago.save, sqlstate 40P01). En SQLite las locks son no-op.",
+    )
     def test_calcular_bajo_concurrencia_solo_una_se_crea(self):
         NUM_THREADS = 5
         results: list[tuple[int, dict]] = []
@@ -1128,3 +1201,275 @@ class CalcularConcurrencyTest(TransactionTestCase):
             ).count(),
             1,
         )
+
+    @unittest.skipUnless(
+        connection.vendor == "postgresql",
+        "El test depende del comportamiento real de select_for_update en PostgreSQL.",
+    )
+    def test_calcular_bajo_concurrencia_con_pedidos_disjuntos(self):
+        """Versión más estricta del test anterior: cada thread usa un
+        pedido DIFERENTE, así el lock de PedidoCabecera no los serializa.
+        El único serializador real es la combinación de:
+        - outer check (read no-lock)
+        - inner check (read bajo lock del pedido)
+        - eventual constraint de BD
+        - advisory lock de Postgres (si está implementado)
+
+        Sin advisory lock ni constraint, varios threads pueden crear
+        liquidaciones duplicadas — el test expone esa race. Si el test
+        pasa, significa que el view tiene la serialización correcta.
+        """
+        NUM_THREADS = 5
+
+        # Crear NUM_THREADS pedidos disjuntos del mismo agricultor
+        from rassa.models import DetallePedido, PublicacionSemanal
+
+        pedidos = []
+        publicacion = PublicacionSemanal.objects.first()
+        ps = publicacion.productosemanal_set.first()
+        for _ in range(NUM_THREADS):
+            p = PedidoCabecera.objects.create(
+                fk_cliente=self.user_admin.usuario,
+                fk_estado=self.estado_entregado,
+                subtotal=Decimal("100.00"),
+                iva=Decimal("0.00"),
+                total=Decimal("100.00"),
+            )
+            PedidoCabecera.objects.filter(pk=p.pk).update(creado_en=_aware(2026, 7, 21))
+            DetallePedido.objects.create(
+                fk_pedido=p,
+                fk_producto_semanal=ps,
+                nombre_producto="Tomate",
+                precio_unitario=Decimal("25.00"),
+                cantidad=4,
+                importe=Decimal("100.00"),
+            )
+            pedidos.append(p)
+
+        results: list[tuple[int, dict]] = []
+        barrier = threading.Barrier(NUM_THREADS)
+
+        def calcular():
+            client = APIClient()
+            client.force_authenticate(user=self.user_admin)
+            barrier.wait()
+            resp = client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                },
+                format="json",
+            )
+            results.append((resp.status_code, resp.json()))
+
+        threads = [threading.Thread(target=calcular) for _ in range(NUM_THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        codes = [r[0] for r in results]
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, codes)
+        # Con pedidos disjuntos, el lock de PedidoCabecera NO serializa.
+        # El view debe tener OTRO mecanismo (advisory lock, constraint)
+        # que evite crear más de una liquidación.
+        successes = sum(1 for c in codes if c == status.HTTP_201_CREATED)
+        duplicates = sum(1 for c in codes if c == status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            successes + duplicates,
+            NUM_THREADS,
+            f"Esperaba solo 201+409, recibí {codes}",
+        )
+        self.assertGreater(
+            duplicates,
+            0,
+            "Sin serialización real, todos los threads crearían liquidaciones "
+            "duplicadas (race condition). El view debe serializar via "
+            "advisory lock u otro mecanismo.",
+        )
+        # En la BD: solo 1 liquidación activa
+        self.assertEqual(
+            Liquidacion.objects.filter(
+                fk_agricultor=self.usuario_agricultor,
+                periodo_inicio=date(2026, 7, 20),
+                periodo_fin=date(2026, 7, 26),
+            ).count(),
+            1,
+        )
+
+
+class MarcarPagadaMockedTest(LiquidacionesTestBase):
+    """Tests de resilience con mocks para errores de BD en Pago.save
+    (revisión 4R R3 R4 SUGGESTIONS sobre casos de error no cubiertos)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(user=self.user_admin)
+        self._crear_pedido_entregado(total=Decimal("500.00"), creado_en=_aware(2026, 7, 21))
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+    def test_marcar_pagada_pago_save_falla_con_500(self):
+        """Si Pago.save() lanza un DatabaseError no-deadlock, el view
+        retorna 500 con mensaje claro (no 409 deadlock ni 200 falso)."""
+        with patch("rassa.blueprints.liquidaciones.views.Pago.save") as mock_save:
+            mock_save.side_effect = OperationalError("connection lost")
+            resp = self.client.post(
+                f"/api/liquidaciones/{self.liquidacion_id}/marcar-pagada/",
+                {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+                format="json",
+            )
+        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn("procesar el pago", resp.json()["message"])
+
+    def test_marcar_pagada_deadlock_en_pago_save_retorna_409(self):
+        """Si Pago.save() lanza un deadlock PostgreSQL (sqlstate 40P01),
+        el view lo detecta y retorna 409 con mensaje de reintento."""
+        # Construir un OperationalError con sqlstate=40P01. El
+        # __cause__ debe ser BaseException; usamos una excepción real.
+        cause = OperationalError("underlying")
+        cause.sqlstate = "40P01"
+        err = OperationalError("deadlock detected")
+        err.__cause__ = cause
+
+        with patch("rassa.blueprints.liquidaciones.views.Pago.save") as mock_save:
+            mock_save.side_effect = err
+            resp = self.client.post(
+                f"/api/liquidaciones/{self.liquidacion_id}/marcar-pagada/",
+                {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+                format="json",
+            )
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("Reintente", resp.json()["message"])
+
+
+class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
+    """Casos borde adicionales (revisión 4R R3)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(user=self.user_admin)
+
+    def test_retrieve_404_si_no_existe(self):
+        resp = self.client.get("/api/liquidaciones/99999/")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_calcular_agricultor_inactivo_via_view_retorna_400(self):
+        """Si el serializer no bloquea al agricultor inactivo (defensa en
+        profundidad en el view), el view debe hacerlo."""
+        self.usuario_agricultor.estado = False
+        self.usuario_agricultor.save()
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_calcular_semana_cero_retorna_400(self):
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 0,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_calcular_anio_fuera_de_rango_retorna_400(self):
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 1999,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2101,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_marcar_pagada_referencia_muy_larga_retorna_400(self):
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        # referencia de 101 caracteres (max_length=100)
+        resp = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "referencia": "X" * 101,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_query_param_agricultor_invalido_retorna_400(self):
+        resp = self.client.get("/api/liquidaciones/?agricultor=abc")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_query_param_periodo_invalido_retorna_400(self):
+        resp = self.client.get("/api/liquidaciones/?periodo_inicio=basura")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_detalle_usa_snapshot_inmutable(self):
+        """Crea liquidación, luego cambia el estado del pedido. El detalle
+        debe seguir mostrando el pedido (snapshot), no el estado en vivo."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        # Cambiar el estado del pedido fuera de la liquidación
+        from rassa.models import PedidoCabecera
+
+        pedido = PedidoCabecera.objects.get(creado_en__date=date(2026, 7, 21))
+        pedido.fk_estado = self.estado_listo
+        pedido.save()
+
+        # El detalle sigue mostrando el pedido en sus ventas (snapshot)
+        resp = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.json()["data"]["ventas"]), 1)

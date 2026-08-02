@@ -4,6 +4,7 @@ import threading
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -808,3 +809,36 @@ class PagoConstraintRegresionTest(TestCase):
                 referencia=f"REF-{i}",
             )
         self.assertEqual(Pago.objects.filter(fk_pedido__isnull=True).count(), 3)
+
+    def test_un_pago_por_pedido_NO_NULL_sigue_intacto(self):
+        """Crea 2 Pagos con el mismo fk_pedido NO NULL. El segundo debe
+        fallar con IntegrityError — el constraint sigue garantizando
+        "un pago por pedido" cuando fk_pedido IS NOT NULL (revisión 4R
+        R3 SUGGESTION sobre la regresión 0018)."""
+
+        # Setup mínimo: un pedido en estado "listo_para_retirar"
+        estado_listo = EstadoPedido.objects.create(tipo_estado="listo_para_retirar", descripcion="Listo")
+        pedido = PedidoCabecera.objects.create(
+            fk_estado=estado_listo,
+            subtotal=Decimal("100.00"),
+            iva=Decimal("0.00"),
+            total=Decimal("100.00"),
+        )
+
+        # Primer pago: OK (atomic bloquea la transacción de TestCase para
+        # que el IntegrityError del 2do no la aborte).
+        with transaction.atomic():
+            Pago.objects.create(fk_pedido=pedido, fk_tipo=self.tipo, monto=Decimal("100.00"))
+
+            # Segundo pago con el mismo pedido: debe violar el constraint.
+            # Savepoint interno para que el catch limpie el error sin afectar
+            # la transacción externa.
+            with self.assertRaises(IntegrityError):
+                with transaction.atomic():
+                    Pago.objects.create(fk_pedido=pedido, fk_tipo=self.tipo, monto=Decimal("100.00"))
+
+        # Coexisten: 1 con fk_pedido + 1 con fk_pedido=None
+        Pago.objects.create(fk_pedido=None, fk_tipo=self.tipo, monto=Decimal("50.00"))
+        self.assertEqual(Pago.objects.count(), 2)
+        self.assertEqual(Pago.objects.filter(fk_pedido__isnull=True).count(), 1)
+        self.assertEqual(Pago.objects.filter(fk_pedido__isnull=False).count(), 1)

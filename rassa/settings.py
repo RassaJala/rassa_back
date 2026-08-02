@@ -163,7 +163,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "pagos_read": "60/minute",
     "pagos_write": "20/hour",
     "liquidaciones_read": "60/minute",
-    "liquidaciones_write": "30/hour",
+    "liquidaciones_calcular": "30/hour",
+    "liquidaciones_pagada": "60/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===

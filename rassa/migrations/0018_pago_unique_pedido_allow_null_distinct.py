@@ -1,6 +1,10 @@
 # Permite múltiples Pago con fk_pedido IS NULL (pagos de liquidación RASSA→agricultor).
 # Antes: nulls_distinct=False bloqueaba el segundo pago de liquidación con IntegrityError.
 # La unicidad real del constraint ("un pago por pedido") se mantiene cuando fk_pedido IS NOT NULL.
+#
+# IMPORTANTE: Requiere PostgreSQL >= 15. La sintaxis `UNIQUE NULLS DISTINCT` se
+# introdujo en PG 15. En PG<15 la migración falla con `syntax error at or near
+# "DISTINCT"`. Validar la versión del servidor antes de desplegar.
 
 from django.db import migrations, models
 
