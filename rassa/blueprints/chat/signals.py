@@ -5,6 +5,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from rassa.models import Familia
+
 from .services import chat_sync
 
 

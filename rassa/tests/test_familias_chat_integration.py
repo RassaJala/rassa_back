@@ -217,6 +217,8 @@ class FamiliaChatIntegrationTests(APITestCase):
         # Desactivar manualmente la conv
         conv = Conversacion.objects.get(fk_familia=familia, estado=True)
         chat_sync.deactivate_family_chat(familia.id_familia)
+        conv.refresh_from_db()
+        self.assertFalse(conv.estado)
 
         url = reverse("chat-conversaciones-familia-sincronizar", args=[familia.id_familia])
         response = self.client.post(url)

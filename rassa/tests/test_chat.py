@@ -1078,11 +1078,11 @@ class ChatFamiliaSyncTests(APITestCase):
 
     # 5. Constraint unique_active_family_conversation.
     def test_unique_active_family_conversation(self):
-        from django.db import transaction
+        from django.db import IntegrityError, transaction
 
         familia = self._crear_familia()
         Conversacion.objects.create(tipo=True, fk_familia=familia, estado=True)
-        with self.assertRaises(Exception):
+        with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 Conversacion.objects.create(tipo=True, fk_familia=familia, estado=True)
         # Una segunda inactiva con misma familia sí está permitida.

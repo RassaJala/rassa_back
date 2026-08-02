@@ -18,8 +18,6 @@ from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, 
 from rassa.permissions.role_permissions import ADMIN, HasRole
 from rassa.views import _ok
 
-from .services import chat_sync
-
 from .serializers import (
     MensajeCreateSerializer,
     MensajeDocumentoCreateSerializer,
@@ -27,6 +25,7 @@ from .serializers import (
     MensajeUpdateSerializer,
     UsuarioBuscarSerializer,
 )
+from .services import chat_sync
 
 
 def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
@@ -396,7 +395,8 @@ class ConversacionRenombrarView(APIView):
 
         if conv.fk_familia_id is not None and not conv.nombre_override:
             return _error(
-                "El nombre del grupo familiar se gestiona desde la familia. Un admin puede desacoplarlo mediante override."
+                "El nombre del grupo familiar se gestiona desde la familia."
+                " Un admin puede desacoplarlo mediante override."
             )
 
         conv.nombre = nombre.strip()

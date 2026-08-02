@@ -6,11 +6,10 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
+from rassa.blueprints.chat.services import chat_sync
 from rassa.models import Familia, FamiliaUsuario, Usuario
 from rassa.permissions.role_permissions import HasRole
 from rassa.views import _log, ok_response
-
-from rassa.blueprints.chat.services import chat_sync
 
 from .serializers import (
     FamiliaMiembroSerializer,
@@ -237,7 +236,10 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
             except Exception as err:  # noqa: BLE001
                 _log(
                     self.request.user,
-                    f"chat_sync remove_family_member error familia={familia.id_familia} usuario={instance.fk_usuario_id}: {err}",
+                    (
+                        f"chat_sync remove_family_member error familia={familia.id_familia}"
+                        f" usuario={instance.fk_usuario_id}: {err}"
+                    ),
                     self.request,
                 )
             if era_jefe:
