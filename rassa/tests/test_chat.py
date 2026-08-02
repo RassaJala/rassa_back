@@ -21,7 +21,18 @@ from rest_framework.test import APITestCase
 
 from rassa.blueprints.chat import views
 from rassa.blueprints.chat.services import chat_sync
-from rassa.models import Conversacion, Documento, Familia, FamiliaUsuario, Integrante, Mensaje, Persona, Rol, Usuario
+from rassa.models import (
+    Conversacion,
+    Documento,
+    Familia,
+    FamiliaUsuario,
+    Integrante,
+    Mensaje,
+    MensajeDocumento,
+    Persona,
+    Rol,
+    Usuario,
+)
 
 User = get_user_model()
 
@@ -929,6 +940,43 @@ class ChatTests(APITestCase):
         familia.save(update_fields=["estado"])
         body = self.client.get(url).json()
         self.assertFalse(body["data"][0]["es_familia"])
+
+    def test_listar_mensajes_muestra_tipo_y_url_documento(self):
+        conv = self._crear_conversacion_privada()
+        mensaje = Mensaje.objects.create(
+            fk_emisor=self.usuario1,
+            fk_conversacion=conv,
+            contenido="Con imagen",
+        )
+        documento = Documento.objects.create(
+            fk_usuario=self.usuario1,
+            nombre_documento="foto.jpg",
+            url_documento="documentos/abc_foto.jpg",
+            tipo_documento="imagen",
+        )
+        MensajeDocumento.objects.create(fk_mensaje=mensaje, fk_documento=documento)
+
+        url = reverse("chat-mensajes", args=[conv.id_conversacion])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()["data"]["results"]
+        msg = next(m for m in results if m["id_mensaje"] == mensaje.id_mensaje)
+        self.assertEqual(msg["tipo"], "imagen")
+        self.assertEqual(msg["url_documento"], "documentos/abc_foto.jpg")
+
+    def test_listar_mensajes_texto_tipo_texto_y_url_nulo(self):
+        conv = self._crear_conversacion_privada()
+        Mensaje.objects.create(fk_emisor=self.usuario1, fk_conversacion=conv, contenido="Solo texto")
+
+        url = reverse("chat-mensajes", args=[conv.id_conversacion])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()["data"]["results"]
+        msg = next(m for m in results if m["contenido"] == "Solo texto")
+        self.assertEqual(msg["tipo"], "texto")
+        self.assertIsNone(msg["url_documento"])
 
 
 @override_settings(

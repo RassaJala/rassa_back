@@ -8,6 +8,8 @@ Endpoints disponibles:
 
 import logging
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework import status
@@ -164,3 +166,6 @@ urlpatterns = [
     path("", include(pagos_urls)),
     path("", include(waste_urls)),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static("/documentos/", document_root=settings.MEDIA_ROOT / "documentos")
