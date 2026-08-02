@@ -122,13 +122,9 @@ class AgricultorSerializer(serializers.ModelSerializer):
     id_usuario = serializers.IntegerField(read_only=True)
     nombre = serializers.CharField(source="fk_persona.nombre", read_only=True)
     apellido_paterno = serializers.CharField(source="fk_persona.apellido_paterno", read_only=True)
-    apellido_materno = serializers.CharField(
-        source="fk_persona.apellido_materno", read_only=True, allow_null=True
-    )
+    apellido_materno = serializers.CharField(source="fk_persona.apellido_materno", read_only=True, allow_null=True)
     role = serializers.SerializerMethodField()
-    localidad = serializers.IntegerField(
-        source="fk_persona.fk_localidad.id_localidad", read_only=True, allow_null=True
-    )
+    localidad = serializers.IntegerField(source="fk_persona.fk_localidad.id_localidad", read_only=True, allow_null=True)
     localidad_nombre = serializers.SerializerMethodField()
     municipio = serializers.IntegerField(
         source="fk_persona.fk_localidad.fk_municipio.id_municipio", read_only=True, allow_null=True
