@@ -84,6 +84,13 @@ class MensajeListView(generics.ListAPIView):
         return (
             Mensaje.objects.filter(fk_conversacion_id=conversacion_id, estado=True)
             .select_related("fk_emisor__fk_persona")
+            .prefetch_related(
+                Prefetch(
+                    "mensajedocumento_set",
+                    queryset=MensajeDocumento.objects.filter(estado=True).select_related("fk_documento"),
+                    to_attr="mensaje_documento",
+                )
+            )
             .order_by("-creado_en")
         )
 

@@ -50,13 +50,13 @@ class MensajeCreateSerializer(serializers.Serializer):
 
 ALLOWED_EXTENSIONS = {
     "imagen": (".jpg", ".jpeg", ".png", ".gif", ".webp"),
-    "audio": (".mp3", ".wav", ".ogg", ".m4a"),
+    "audio": (".mp3", ".wav", ".ogg", ".m4a", ".webm"),
     "video": (".mp4", ".webm", ".avi", ".mov"),
 }
 
 ALLOWED_MIMES = {
     "imagen": ("image/jpeg", "image/png", "image/gif", "image/webp"),
-    "audio": ("audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"),
+    "audio": ("audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/webm"),
     "video": ("video/mp4", "video/webm", "video/x-msvideo", "video/quicktime"),
 }
 
@@ -124,6 +124,20 @@ class MensajeUpdateSerializer(serializers.Serializer):
 
 class MensajeSerializer(serializers.ModelSerializer):
     emisor = EmisorSerializer(source="fk_emisor", read_only=True)
+    tipo = serializers.SerializerMethodField()
+    url_documento = serializers.SerializerMethodField()
+
+    def _documento(self, obj):
+        docs = getattr(obj, "mensaje_documento", [])
+        return docs[0].fk_documento if docs else None
+
+    def get_tipo(self, obj):
+        doc = self._documento(obj)
+        return doc.tipo_documento if doc else "texto"
+
+    def get_url_documento(self, obj):
+        doc = self._documento(obj)
+        return doc.url_documento if doc else None
 
     class Meta:
         model = Mensaje
@@ -134,6 +148,8 @@ class MensajeSerializer(serializers.ModelSerializer):
             "leido",
             "editado",
             "creado_en",
+            "tipo",
+            "url_documento",
         ]
 
 
