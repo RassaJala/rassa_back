@@ -20,7 +20,8 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from rassa.blueprints.chat import views
-from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, Persona, Rol, Usuario
+from rassa.blueprints.chat.services import chat_sync
+from rassa.models import Conversacion, Documento, Familia, FamiliaUsuario, Integrante, Mensaje, Persona, Rol, Usuario
 
 User = get_user_model()
 
@@ -76,8 +77,8 @@ class ChatTests(APITestCase):
 
     def _crear_conversacion_grupal(self):
         conv = Conversacion.objects.create(tipo=True, nombre="Grupo test")
-        Integrante.objects.create(fk_usuario=self.usuario1, fk_conversacion=conv)
-        Integrante.objects.create(fk_usuario=self.usuario2, fk_conversacion=conv)
+        Integrante.objects.create(fk_usuario=self.usuario1, fk_conversacion=conv, rol="admin")
+        Integrante.objects.create(fk_usuario=self.usuario2, fk_conversacion=conv, rol="miembro")
         return conv
 
     def test_listar_conversaciones_incluye_no_leidos_y_es_familia(self):
@@ -832,3 +833,265 @@ class ChatTests(APITestCase):
         url = reverse("chat-mensajes", args=[99999])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # --- Admin-only mutations and family-chat guards ---
+
+    def test_solo_admin_puede_toggle_override(self):
+        familia = Familia.objects.create(nombre_familia="Fam override", estado=True)
+        familia.fk_jefe_familia = self.usuario1
+        familia.save(update_fields=["fk_jefe_familia"])
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario1, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario2, fk_familia=familia, estado=True)
+        conv = chat_sync.ensure_family_chat(familia.id_familia)
+
+        url = reverse("chat-conversaciones-override-nombre", args=[conv.id_conversacion])
+        # user2 es miembro pero no admin
+        self.client.force_authenticate(self.user2)
+        response = self.client.patch(url, {"nombre_override": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(response.json()["ok"])
+
+        # user1 es el jefe/admin
+        self.client.force_authenticate(self.user1)
+        response = self.client.patch(url, {"nombre_override": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_solo_admin_puede_renombrar_grupo(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+
+        self.client.force_authenticate(self.user2)
+        response = self.client.patch(url, {"nombre": "Hackeo"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(response.json()["ok"])
+
+        self.client.force_authenticate(self.user1)
+        response = self.client.patch(url, {"nombre": "Nuevo nombre"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_no_admin_no_puede_agregar_integrante(self):
+        conv = self._crear_conversacion_grupal()
+        self.client.force_authenticate(self.user2)
+        url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
+        response = self.client.post(url, {"usuario_id": self.usuario3.id_usuario})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(response.json()["ok"])
+
+    def test_no_admin_no_puede_remover_integrante(self):
+        conv = self._crear_conversacion_grupal()
+        self.client.force_authenticate(self.user2)
+        url = reverse("chat-conversaciones-remover-integrante", args=[conv.id_conversacion, self.usuario1.id_usuario])
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(response.json()["ok"])
+
+    def test_agregar_integrante_a_chat_familiar_rechazado(self):
+        familia = Familia.objects.create(nombre_familia="Fam add", estado=True)
+        familia.fk_jefe_familia = self.usuario1
+        familia.save(update_fields=["fk_jefe_familia"])
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario1, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario2, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario3, fk_familia=familia, estado=True)
+        conv = chat_sync.ensure_family_chat(familia.id_familia)
+
+        url = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
+        response = self.client.post(url, {"usuario_id": self.usuario3.id_usuario})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("familia", response.json()["message"].lower())
+
+    def test_remover_integrante_de_chat_familiar_rechazado(self):
+        familia = Familia.objects.create(nombre_familia="Fam rm", estado=True)
+        familia.fk_jefe_familia = self.usuario1
+        familia.save(update_fields=["fk_jefe_familia"])
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario1, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario2, fk_familia=familia, estado=True)
+        conv = chat_sync.ensure_family_chat(familia.id_familia)
+
+        url = reverse("chat-conversaciones-remover-integrante", args=[conv.id_conversacion, self.usuario2.id_usuario])
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("familia", response.json()["message"].lower())
+        # El integrante sigue activo porque la operación se rechaza.
+        miembro = Integrante.objects.get(fk_usuario=self.usuario2, fk_conversacion=conv)
+        self.assertTrue(miembro.estado)
+
+    def test_es_familia_solo_familias_activas(self):
+        conv = self._crear_conversacion_grupal()
+        familia = Familia.objects.create(nombre_familia="Fam activa", estado=True)
+        conv.fk_familia = familia
+        conv.save(update_fields=["fk_familia"])
+
+        url = reverse("chat-conversaciones")
+        body = self.client.get(url).json()
+        self.assertTrue(body["data"][0]["es_familia"])
+
+        familia.estado = False
+        familia.save(update_fields=["estado"])
+        body = self.client.get(url).json()
+        self.assertFalse(body["data"][0]["es_familia"])
+
+
+@override_settings(
+    REST_FRAMEWORK={
+        "DEFAULT_THROTTLE_CLASSES": [],
+        "DEFAULT_THROTTLE_RATES": {},
+        "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
+        "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+        "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+        "PAGE_SIZE": 20,
+        "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    }
+)
+class ChatFamiliaSyncTests(APITestCase):
+    def setUp(self):
+        self.user1, self.usuario1 = _crear_usuario("fsync1")
+        self.user2, self.usuario2 = _crear_usuario("fsync2")
+        self.user3, self.usuario3 = _crear_usuario("fsync3")
+        self.client.force_authenticate(self.user1)
+
+    def _crear_conversacion_grupal(self):
+        conv = Conversacion.objects.create(tipo=True, nombre="Grupo fsync")
+        Integrante.objects.create(fk_usuario=self.usuario1, fk_conversacion=conv, rol="admin")
+        Integrante.objects.create(fk_usuario=self.usuario2, fk_conversacion=conv, rol="miembro")
+        return conv
+
+    def _crear_familia(self, jefe=None, miembros=None):
+        familia = Familia.objects.create(nombre_familia="Fam test", estado=True)
+        if jefe is not None:
+            familia.fk_jefe_familia = jefe
+            familia.save(update_fields=["fk_jefe_familia"])
+        usuarios = miembros if miembros is not None else [self.usuario1, self.usuario2, self.usuario3]
+        for u in usuarios:
+            FamiliaUsuario.objects.get_or_create(fk_usuario=u, fk_familia=familia, defaults={"estado": True})
+        return familia
+
+    # 1. Remover integrante (endpoint) hace soft-delete idempotente.
+    def test_remover_integrante_endpoints_soft_deletes(self):
+        from rassa.blueprints.chat.services.chat_sync import ensure_family_chat  # noqa: F401 (import smoke)
+
+        conv = self._crear_conversacion_grupal()
+        url_add = reverse("chat-conversaciones-agregar-integrante", args=[conv.id_conversacion])
+        self.client.post(url_add, {"usuario_id": self.usuario3.id_usuario})
+
+        url_rm = reverse(
+            "chat-conversaciones-remover-integrante", args=[conv.id_conversacion, self.usuario2.id_usuario]
+        )
+        response = self.client.delete(url_rm)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertFalse(Integrante.objects.get(fk_usuario=self.usuario2, fk_conversacion=conv).estado)
+        self.assertEqual(Integrante.objects.filter(fk_conversacion=conv).count(), 3)
+
+        # Idempotente: segunda eliminación -> 200.
+        response2 = self.client.delete(url_rm)
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+
+        # GET integrantes -> quedan 2 activos.
+        url_int = reverse("chat-conversaciones-integrantes", args=[conv.id_conversacion])
+        body = self.client.get(url_int).json()
+        self.assertEqual(len(body["data"]), 2)
+
+    # 2. Remover no-miembro -> 404.
+    def test_remover_integrante_no_miembro_404(self):
+        conv = self._crear_conversacion_grupal()
+        url = reverse("chat-conversaciones-remover-integrante", args=[conv.id_conversacion, self.usuario3.id_usuario])
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # 3. Renombrar chat familiar bloqueado sin override; permitido con override.
+    def test_renombrar_chat_familiar_bloqueado_sin_override(self):
+        conv = self._crear_conversacion_grupal()
+        familia = self._crear_familia(jefe=self.usuario1)
+        # Vincular la conversación existente a la familia y sincronizar roles.
+        conv.fk_familia = familia
+        conv.nombre_override = False
+        conv.save(update_fields=["fk_familia", "nombre_override"])
+        chat_sync.sync_family_roles(familia.id_familia)
+
+        url = reverse("chat-conversaciones-renombrar", args=[conv.id_conversacion])
+        response = self.client.patch(url, {"nombre": "Hack familiar"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("desacoplarlo mediante override", response.json()["message"])
+
+        conv.nombre_override = True
+        conv.save(update_fields=["nombre_override"])
+        response2 = self.client.patch(url, {"nombre": "Nombre custom"})
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+
+    # 4. Crear grupal rechaza fk_familia manual.
+    def test_crear_grupal_rechaza_fk_familia_manual(self):
+        familia = self._crear_familia()
+        url = reverse("chat-conversaciones-crear-grupal")
+        response = self.client.post(
+            url, {"nombre": "X", "fk_usuarios": [self.usuario2.id_usuario], "fk_familia": familia.id_familia}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["message"], "No se puede vincular una conversación a una familia manualmente.")
+
+    # 5. Constraint unique_active_family_conversation.
+    def test_unique_active_family_conversation(self):
+        from django.db import transaction
+
+        familia = self._crear_familia()
+        Conversacion.objects.create(tipo=True, fk_familia=familia, estado=True)
+        with self.assertRaises(Exception):
+            with transaction.atomic():
+                Conversacion.objects.create(tipo=True, fk_familia=familia, estado=True)
+        # Una segunda inactiva con misma familia sí está permitida.
+        Conversacion.objects.create(tipo=True, fk_familia=familia, estado=False)
+
+    # 6. Integrante por defecto rol=miembro.
+    def test_integrante_rol_default_miembro(self):
+        conv = Conversacion.objects.create(tipo=True)
+        integrante = Integrante.objects.create(fk_usuario=self.usuario1, fk_conversacion=conv)
+        self.assertEqual(integrante.rol, "miembro")
+
+    # 7. ensure_family_chat idempotente; jefe admin.
+    def test_chat_sync_ensure_family_chat_idempotente(self):
+        from rassa.blueprints.chat.services.chat_sync import ensure_family_chat
+
+        familia = self._crear_familia(jefe=self.usuario1, miembros=[self.usuario1, self.usuario2])
+        conv1 = ensure_family_chat(familia.id_familia)
+        conv2 = ensure_family_chat(familia.id_familia)
+        self.assertEqual(conv1.pk, conv2.pk)
+        self.assertEqual(Integrante.objects.filter(fk_conversacion=conv1).count(), 2)
+        jefe_int = Integrante.objects.get(fk_usuario=self.usuario1, fk_conversacion=conv1)
+        self.assertEqual(jefe_int.rol, "admin")
+        Integrante.objects.get(fk_usuario=self.usuario2, fk_conversacion=conv1)
+
+    # 8. remove_family_member idempotente.
+    def test_chat_sync_remove_member_idempotente(self):
+        from rassa.blueprints.chat.services.chat_sync import add_family_member, ensure_family_chat, remove_family_member
+
+        familia = self._crear_familia(miembros=[self.usuario1])
+        ensure_family_chat(familia.id_familia)
+        add_family_member(familia.id_familia, self.usuario2.id_usuario)
+        remove_family_member(familia.id_familia, self.usuario2.id_usuario)
+        remove_family_member(familia.id_familia, self.usuario2.id_usuario)  # no error
+        integrante = Integrante.objects.get(fk_usuario=self.usuario2, fk_conversacion__fk_familia=familia)
+        self.assertFalse(integrante.estado)
+
+    # 9. deactivate + restore idempotente.
+    def test_chat_sync_deactivate_and_restore(self):
+        from rassa.blueprints.chat.services.chat_sync import (
+            deactivate_family_chat,
+            ensure_family_chat,
+            restore_family_chat,
+        )
+
+        familia = self._crear_familia(jefe=self.usuario1, miembros=[self.usuario1, self.usuario2])
+        conv = ensure_family_chat(familia.id_familia)
+
+        self.assertTrue(deactivate_family_chat(familia.id_familia))
+        conv.refresh_from_db()
+        self.assertFalse(conv.estado)
+        self.assertFalse(Integrante.objects.filter(fk_conversacion=conv, estado=True).exists())
+
+        restore_family_chat(familia.id_familia)
+        conv.refresh_from_db()
+        self.assertTrue(conv.estado)
+        self.assertEqual(Integrante.objects.filter(fk_conversacion=conv, estado=True).count(), 2)
+
+        # Idempotente: restore de nuevo no duplica.
+        restore_family_chat(familia.id_familia)
+        self.assertEqual(Integrante.objects.filter(fk_conversacion=conv, estado=True).count(), 2)
