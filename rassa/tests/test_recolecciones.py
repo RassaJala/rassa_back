@@ -356,6 +356,68 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
 
+    def test_crear_fk_agricultor_fuera_de_rango_retorna_400(self):
+        """Valida que un fk_agricultor fuera de rango en el body retorne 400 y no 500.
+
+        La pre-validación de la vista (_pk_entero_valido) corre ANTES de que el
+        serializer toque la BD: en Postgres, sin el guard, Usuario.objects.get(pk=<gigante>)
+        lanza NumericValueOutOfRange (DataError) que DRF no convierte -> 500. SQLite
+        no valida rangos, por eso la suite no lo detectaba antes del fix.
+        """
+        payload = self._payload()
+        payload["fk_agricultor"] = 99999999999999999999
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+        self.assertIn("no existe o está inactivo", str(response.data))
+
+    def test_crear_fk_agricultor_digito_unicode_retorna_400(self):
+        """Valida que un dígito Unicode (ej. '٥') en fk_agricultor no cause 500.
+
+        str('٥').isdigit() es True pero int('٥') lanza ValueError; el guard usa
+        isascii() para excluirlo y devolver 400.
+        """
+        payload = self._payload()
+        payload["fk_agricultor"] = "٥"
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+    def test_crear_body_lista_retorna_400(self):
+        """Valida que un body JSON array en create no cause 500 por .get() sobre lista."""
+        response = self.client.post("/api/recolecciones/", ["fk_agricultor"], format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_body_lista_retorna_400(self):
+        """Valida que un body JSON array en partial_update no cause 500 (mismo guard que create)."""
+        response = self.client.patch("/api/recolecciones/1/", ["fk_agricultor"], format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_crear_fk_agricultor_digitos_excesivos_retorna_400(self):
+        """Valida que un fk_agricultor de >4300 dígitos no cause 500.
+
+        Python 3.12 limita la conversión int<->str a 4300 dígitos
+        (sys.set_int_max_str_digits); sin el try/except, int('9'*5001) lanza
+        ValueError no capturado -> 500. El guard lo devuelve como 400.
+        """
+        payload = self._payload()
+        payload["fk_agricultor"] = "9" * 5001
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+    def test_patch_fk_agricultor_fuera_de_rango_retorna_400(self):
+        """Valida que un fk_agricultor fuera de rango en PATCH retorne 400 y no 500."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"fk_agricultor": 99999999999999999999},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+        self.assertIn("no existe o está inactivo", str(response.data))
+
     def test_patch_duplicado_misma_fecha(self):
         """Valida que no se pueda mover una recolección a una fecha con recolección activa."""
         self._crear_recoleccion()
@@ -671,6 +733,40 @@ class RecoleccionesTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("estado", response.data)
+
+    def test_estado_body_no_dict_retorna_400(self):
+        """Valida que /estado/ rechace un body que no sea objeto JSON (lista) con 400 y no 500."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/",
+            ["en_ruta"],
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", response.data)
+
+    def test_crear_dataerror_no_se_convierte_en_500(self):
+        """Valida que un fk_agricultor fuera de rango no llegue nunca al get(pk=...).
+
+        El guard de la vista (_pk_entero_valido) rechaza el valor ANTES de que el
+        serializer toque la BD, en ambos motores: en Postgres un get(pk=<gigante>)
+        lanzaría NumericValueOutOfRange (DataError) que DRF no convierte -> 500;
+        en SQLite pasa por does_not_exist. El fix cubre ambos por igual.
+        """
+        payload = self._payload()
+        payload["fk_agricultor"] = 2**31  # justo fuera del rango de AutoField
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+        self.assertIn("no existe o está inactivo", str(response.data))
+
+    def test_listar_autenticado_sin_perfil_usuario_retorna_403(self):
+        """Valida que un User sin perfil Usuario reciba 403 explícito al listar (no 200 vacío)."""
+        user_huertano = User.objects.create_user(username="huertano", password="password123")
+        self.client.force_authenticate(user=user_huertano)
+        response = self.client.get("/api/recolecciones/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("perfil", str(response.data))
 
     def test_agricultor_puede_listar_sus_recolecciones(self):
         """Valida que un agricultor liste y vea solo sus propias recolecciones."""

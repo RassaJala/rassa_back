@@ -6,7 +6,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from rassa.models import HistorialEstadoRecoleccion, Recoleccion, Usuario
@@ -23,9 +23,19 @@ ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
 
 def _pk_entero_valido(raw):
     """True si raw es un entero válido para pk (0 < valor <= 2**31 - 1)."""
-    if raw is None or not str(raw).isdigit():
+    if raw is None:
         return False
-    return 0 < int(raw) <= 2**31 - 1
+    texto = str(raw)
+    # isascii() excluye dígitos Unicode (ej. '٥', '²'): isdigit() los acepta
+    # pero int() lanza ValueError -> 500.
+    if not texto.isascii() or not texto.isdigit():
+        return False
+    try:
+        # int() también lanza ValueError para strings ASCII de >4300 dígitos
+        # (sys.set_int_max_str_digits, Python 3.12) -> 500.
+        return 0 < int(texto) <= 2**31 - 1
+    except ValueError:
+        return False
 
 
 def _constraint_violada(exc):
@@ -35,9 +45,12 @@ def _constraint_violada(exc):
     ``exc.constraint``), por eso se recorre la cadena de ``__cause__``. En
     SQLite el ``IntegrityError`` envuelve ``sqlite3.IntegrityError`` sin nombre
     de constraint; se detecta el código UNIQUE (``SQLITE_CONSTRAINT_UNIQUE``).
-    En create/partial_update el único write unique de este módulo es el
-    constraint parcial de recolección, así que un UNIQUE sin nombre se asume
-    como ese constraint.
+    HEURÍSTICA: en create/partial_update el único write unique de este módulo es
+    el constraint parcial de recolección, así que un UNIQUE sin nombre se asume
+    como ese constraint. Válido SOLO mientras este módulo tenga un único
+    constraint unique en ese path; si mañana se agrega otro (un campo único en
+    HistorialEstadoRecoleccion, un log único, etc.), un UNIQUE de SQLite se
+    enmascararía como "ya tiene una recolección" y hay que revisar esta función.
     """
     causa = getattr(exc, "__cause__", None) or exc
     diag = getattr(causa, "diag", None)
@@ -103,12 +116,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona__fk_localidad__fk_municipio")
         params = self.request.query_params
         # Lectura restringida: solo Admin/Vendedor (dataset completo) y Agricultor (solo
-        # sus recolecciones). Un autenticado sin perfil Usuario o con otro rol no debe
-        # ver el dataset completo: no ve nada.
+        # sus recolecciones). Un autenticado sin perfil Usuario no puede leer nada:
+        # 403 explícito (evita el 200 con lista vacía silencioso para un User huérfano).
+        # Un rol legítimo sin permiso de lectura (Cliente) ve lista vacía a propósito.
         usuario = getattr(self.request.user, "usuario", None)
-        if usuario is None or not (
-            usuario.tiene_rol(ADMIN) or usuario.tiene_rol(AGRICULTOR) or usuario.tiene_rol(VENDEDOR)
-        ):
+        if usuario is None:
+            raise PermissionDenied({"detalle": "El usuario no tiene un perfil válido para consultar recolecciones."})
+        if not (usuario.tiene_rol(ADMIN) or usuario.tiene_rol(AGRICULTOR) or usuario.tiene_rol(VENDEDOR)):
             return queryset.none()
         if usuario.tiene_rol(AGRICULTOR):
             queryset = queryset.filter(fk_agricultor=usuario)
@@ -158,21 +172,35 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(fecha_recoleccion__lte=fecha_hasta)
         if fecha_desde and fecha_hasta and fecha_desde > fecha_hasta:
             raise ValidationError("fecha_desde no puede ser mayor a fecha_hasta.")
-        # nulls_last explícito: Postgres ordena NULLs last en ASC, pero MySQL los
-        # pone primero; fijar el orden para que el comportamiento sea consistente.
+        # nulls_last explícito para el orden de horas. Ojo: es un emulado por
+        # Django, no un NULLS LAST nativo; en MySQL F(...).asc(nulls_last=True)
+        # lanzaría NotSupportedError. Hoy el proyecto corre Postgres/SQLite donde
+        # funciona; si algún día se migra a MySQL, revisar este orden.
         return queryset.order_by("fecha_recoleccion", F("hora_inicio").asc(nulls_last=True))
 
     def create(self, request, *args, **kwargs):
+        if not isinstance(request.data, dict):
+            raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
+        # Un fk_agricultor fuera de rango en el body (ej. 99999999999999999999) no
+        # debe llegar al get(pk=...): en Postgres lanza NumericValueOutOfRange
+        # (DataError) que DRF no convierte -> 500. Mismo guard que para query
+        # params, aplicado ANTES de que el serializer toque la BD.
+        if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
+            raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         agricultor = serializer.validated_data["fk_agricultor"]
         try:
             with transaction.atomic():
-                # Capa 1: el serializer ya validó el agricultor (capa UX).
-                # El lock sobre el agricultor serializa recolecciones concurrentes del mismo
-                # agricultor; el UniqueConstraint parcial es la última barrera.
+                # Capas que protegen la unicidad en create:
+                # 1. Pre-check del serializer (UX, sin lock; redundante con la 2,
+                #    pero devuelve el mensaje con la key fk_agricultor antes de la BD).
+                # 2. Re-check bajo el lock del agricultor (evita TOCTOU entre el
+                #    validate y el save en creaciones concurrentes del mismo par).
+                # 3. UniqueConstraint parcial en BD (garantía final; IntegrityError
+                #    -> 400 discriminado por constraint name en el except de abajo).
                 try:
                     agricultor = Usuario.objects.select_related("fk_persona").select_for_update().get(pk=agricultor.pk)
                 except Usuario.DoesNotExist:
@@ -225,8 +253,14 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         )
 
     def partial_update(self, request, *args, **kwargs):
+        if not isinstance(request.data, dict):
+            raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
+        # Mismo guard de rango que en create: un fk_agricultor fuera de rango en
+        # el body no debe llegar al get(pk=...) (DataError de Postgres -> 500).
+        if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
+            raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
         # Capas que protegen la unicidad en partial_update:
         # 1. Pre-check del serializer (UX, sin lock del agricultor).
         # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
@@ -290,6 +324,8 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         cancelado), este endpoint es una máquina de estados explícita y rechaza
         cambios sin transición.
         """
+        if not isinstance(request.data, dict):
+            raise ValidationError({"estado": "El body debe ser un objeto JSON."})
         if set(request.data.keys()) - {"estado"}:
             raise ValidationError({"estado": "Solo se permite el campo 'estado'."})
         with transaction.atomic():

@@ -55,10 +55,12 @@ class HasRole(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        try:
-            return request.user.usuario.fk_rol.nombre_rol in self.role_names
-        except AttributeError:
+        usuario = getattr(request.user, "usuario", None)
+        if usuario is None:
             return False
+        # Delegar en tiene_rol() (el mismo método que usan las vistas del módulo)
+        # en lugar de leer fk_rol.nombre_rol directo: una sola fuente de verdad.
+        return any(usuario.tiene_rol(rol) for rol in self.role_names)
 
 
 class IsOwnerOrAdmin(permissions.BasePermission):

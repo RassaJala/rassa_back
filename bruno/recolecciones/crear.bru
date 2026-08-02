@@ -18,11 +18,15 @@ headers {
 
 body:json {
   {
-    "fk_agricultor": 2,
+    "fk_agricultor": {{fk_agricultor}},
     // Fecha futura fija (evita la bomba de tiempo del guard de fecha pasada)
     "fecha_recoleccion": "2099-01-01",
     "hora_inicio": "08:00:00",
     "hora_fin": "11:00:00",
     "comentarios": "Recolección semanal de hortalizas"
   }
+}
+
+vars:pre-request {
+  fk_agricultor: 2
 }
