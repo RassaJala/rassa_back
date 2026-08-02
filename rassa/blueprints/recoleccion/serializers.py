@@ -3,6 +3,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from rassa.auth_serializers import ROLE_REVERSE_MAPPING
 from rassa.models import Recoleccion, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
 
@@ -113,6 +114,56 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         if duplicados.exists():
             raise serializers.ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO})
         return attrs
+
+
+class AgricultorSerializer(serializers.ModelSerializer):
+    """Serializer de agricultor para el selector de recolecciones (Admin/Vendedor)."""
+
+    id_usuario = serializers.IntegerField(read_only=True)
+    nombre = serializers.CharField(source="fk_persona.nombre", read_only=True)
+    apellido_paterno = serializers.CharField(source="fk_persona.apellido_paterno", read_only=True)
+    apellido_materno = serializers.CharField(
+        source="fk_persona.apellido_materno", read_only=True, allow_null=True
+    )
+    role = serializers.SerializerMethodField()
+    localidad = serializers.IntegerField(
+        source="fk_persona.fk_localidad.id_localidad", read_only=True, allow_null=True
+    )
+    localidad_nombre = serializers.SerializerMethodField()
+    municipio = serializers.IntegerField(
+        source="fk_persona.fk_localidad.fk_municipio.id_municipio", read_only=True, allow_null=True
+    )
+    municipio_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Usuario
+        fields = [
+            "id_usuario",
+            "nombre",
+            "apellido_paterno",
+            "apellido_materno",
+            "role",
+            "localidad",
+            "localidad_nombre",
+            "municipio",
+            "municipio_nombre",
+        ]
+
+    def get_role(self, obj):
+        if not obj.fk_rol:
+            return None
+        return ROLE_REVERSE_MAPPING.get(obj.fk_rol.nombre_rol, obj.fk_rol.nombre_rol)
+
+    def get_localidad_nombre(self, obj):
+        if obj.fk_persona and obj.fk_persona.fk_localidad:
+            return obj.fk_persona.fk_localidad.nombre
+        return None
+
+    def get_municipio_nombre(self, obj):
+        localidad = obj.fk_persona.fk_localidad if obj.fk_persona else None
+        if localidad and localidad.fk_municipio:
+            return localidad.fk_municipio.nombre
+        return None
 
 
 class RecoleccionCambiarEstadoSerializer(serializers.Serializer):

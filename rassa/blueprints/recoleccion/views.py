@@ -9,6 +9,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from rassa.models import HistorialEstadoRecoleccion, Recoleccion, Usuario
 from rassa.permissions.role_permissions import ADMIN, AGRICULTOR, VENDEDOR, HasRole
@@ -19,6 +20,7 @@ from .serializers import (
     MSG_AGRICULTOR_DUPLICADO,
     MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
     MSG_AGRICULTOR_SIN_ROL,
+    AgricultorSerializer,
     RecoleccionCambiarEstadoSerializer,
     RecoleccionSerializer,
 )
@@ -84,6 +86,28 @@ def _manejar_integrity_error(exc):
         raise
     logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
     raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO}) from None
+
+
+class AgricultorListView(APIView):
+    """Lista agricultores activos para el selector de recolecciones (Admin/Vendedor).
+
+    Respuesta paginada con el mismo contrato que el resto del catálogo:
+    ``{count, next, previous, results}`` dentro del envelope ``data``.
+    """
+
+    permission_classes = [IsAuthenticated, HasRole(ADMIN, VENDEDOR)]
+    pagination_class = CatalogPagination
+
+    def get(self, request):
+        queryset = (
+            Usuario.objects.filter(estado=True, fk_rol__nombre_rol=AGRICULTOR)
+            .select_related("fk_persona__fk_localidad__fk_municipio", "fk_rol")
+            .order_by("fk_persona__nombre", "fk_persona__apellido_paterno")
+        )
+        paginator = CatalogPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = AgricultorSerializer(page, many=True)
+        return ok_response(data=paginator.get_paginated_response(serializer.data).data)
 
 
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
