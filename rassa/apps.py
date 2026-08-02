@@ -22,3 +22,4 @@ class RassaConfig(AppConfig):
 
     def ready(self):
         import rassa.signals  # noqa: F401 — registra signals de historial de estados
+        import rassa.blueprints.chat.signals  # noqa: F401 — registra signal rename familia→chat

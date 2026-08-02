@@ -10,6 +10,8 @@ from rassa.models import Familia, FamiliaUsuario, Usuario
 from rassa.permissions.role_permissions import HasRole
 from rassa.views import _log, ok_response
 
+from rassa.blueprints.chat.services import chat_sync
+
 from .serializers import (
     FamiliaMiembroSerializer,
     FamiliaSerializer,
@@ -29,6 +31,11 @@ class FamiliaViewSet(viewsets.ModelViewSet):
             return Familia.objects.filter(estado=False)
         return Familia.objects.filter(estado=True)
 
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            instance = serializer.save()
+            chat_sync.ensure_family_chat(instance.id_familia)
+
     def perform_destroy(self, instance):
         """Realiza un borrado lógico (soft-delete) de la familia."""
         if not instance.estado:
@@ -38,6 +45,14 @@ class FamiliaViewSet(viewsets.ModelViewSet):
             instance.save(update_fields=["estado"])
             # Desactivar también los miembros de la familia
             FamiliaUsuario.objects.filter(fk_familia=instance).update(estado=False)
+            try:
+                chat_sync.deactivate_family_chat(instance.id_familia)
+            except Exception as err:  # noqa: BLE001
+                _log(
+                    self.request.user,
+                    f"chat_sync deactivate_family_chat error familia={instance.id_familia}: {err}",
+                    self.request,
+                )
         _log(
             self.request.user,
             f"soft_delete familia id={instance.id_familia} nombre={instance.nombre_familia}",
@@ -88,6 +103,10 @@ class FamiliaViewSet(viewsets.ModelViewSet):
                 fk_familia=familia,
                 defaults={"estado": True},
             )
+            try:
+                chat_sync.restore_family_chat(familia.id_familia)
+            except Exception as err:  # noqa: BLE001
+                _log(request.user, f"chat_sync restore_family_chat error familia={familia.id_familia}: {err}", request)
 
         _log(
             request.user,
@@ -109,6 +128,11 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         nombre = familia.nombre_familia
         pk_val = familia.pk
         with transaction.atomic():
+            # Archivar el chat familiar mientras la FK sigue viva (antes del delete).
+            try:
+                chat_sync.deactivate_family_chat(familia.pk)
+            except Exception as err:  # noqa: BLE001
+                _log(request.user, f"chat_sync deactivate_family_chat error familia={familia.pk}: {err}", request)
             # Eliminar físicamente a los miembros asociados primero para evitar errores de llave foránea
             FamiliaUsuario.objects.filter(fk_familia=familia).delete()
             # Eliminar la familia físicamente
@@ -148,6 +172,10 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             familia.fk_jefe_familia = nuevo_jefe
             familia.save()
+            try:
+                chat_sync.sync_family_roles(familia.id_familia)
+            except Exception as err:  # noqa: BLE001
+                _log(request.user, f"chat_sync sync_family_roles error familia={familia.id_familia}: {err}", request)
             _log(
                 request.user,
                 f"asignar_jefe familia={familia.nombre_familia} jefe={nuevo_jefe.correo}",
@@ -167,6 +195,12 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
     serializer_class = FamiliaMiembroSerializer
     permission_classes = [IsAuthenticated, HasRole("Admin")]
     http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            instance = serializer.save()
+            jefe = instance.fk_familia.fk_jefe_familia_id == instance.fk_usuario_id
+            chat_sync.add_family_member(instance.fk_familia_id, instance.fk_usuario_id, jefe=jefe)
 
     def get_queryset(self):
         queryset = FamiliaUsuario.objects.filter(estado=True)
@@ -189,7 +223,8 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
             return
         with transaction.atomic():
             familia = instance.fk_familia
-            if familia.fk_jefe_familia == instance.fk_usuario:
+            era_jefe = familia.fk_jefe_familia == instance.fk_usuario
+            if era_jefe:
                 familia.fk_jefe_familia = None
                 familia.save(update_fields=["fk_jefe_familia"])
 
@@ -197,6 +232,23 @@ class FamiliaMiembroViewSet(viewsets.ModelViewSet):
             nombre = familia.nombre_familia
             instance.estado = False
             instance.save(update_fields=["estado"])
+            try:
+                chat_sync.remove_family_member(familia.id_familia, instance.fk_usuario_id)
+            except Exception as err:  # noqa: BLE001
+                _log(
+                    self.request.user,
+                    f"chat_sync remove_family_member error familia={familia.id_familia} usuario={instance.fk_usuario_id}: {err}",
+                    self.request,
+                )
+            if era_jefe:
+                try:
+                    chat_sync.sync_family_roles(familia.id_familia)
+                except Exception as err:  # noqa: BLE001
+                    _log(
+                        self.request.user,
+                        f"chat_sync sync_family_roles error familia={familia.id_familia}: {err}",
+                        self.request,
+                    )
         _log(
             self.request.user,
             f"remover_miembro usuario={correo} familia={nombre}",
