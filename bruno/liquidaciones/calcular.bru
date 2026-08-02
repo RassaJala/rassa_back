@@ -1,0 +1,26 @@
+meta {
+  name: Calcular Liquidación
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/liquidaciones/calcular/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "agricultor": 1,
+    "semana": 30,
+    "anio": 2026,
+    "tasa_comision": 0.10
+  }
+}

@@ -492,7 +492,7 @@ class Pago(models.Model):
         db_table = "pago"
         ordering = ["id_pago"]
         constraints = [
-            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=False),
+            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=True),
         ]
 
     def __str__(self):
