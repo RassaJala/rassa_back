@@ -31,15 +31,24 @@ def _pk_entero_valido(raw):
 def _constraint_violada(exc):
     """Nombre del constraint violado en un IntegrityError, o None si no aplica.
 
-    Django envuelve el error de psycopg2 (que expone el constraint en
-    ``diag.constraint_name``, no en ``exc.constraint``), por eso se recorre la
-    cadena de ``__cause__``.
+    Cross-DB: psycopg2 expone el constraint en ``diag.constraint_name`` (no en
+    ``exc.constraint``), por eso se recorre la cadena de ``__cause__``. En
+    SQLite el ``IntegrityError`` envuelve ``sqlite3.IntegrityError`` sin nombre
+    de constraint; se detecta el código UNIQUE (``SQLITE_CONSTRAINT_UNIQUE``).
+    En create/partial_update el único write unique de este módulo es el
+    constraint parcial de recolección, así que un UNIQUE sin nombre se asume
+    como ese constraint.
     """
     causa = getattr(exc, "__cause__", None) or exc
     diag = getattr(causa, "diag", None)
     if diag is not None:
         return getattr(diag, "constraint_name", None)
-    return getattr(causa, "constraint", None)
+    nombre = getattr(causa, "constraint", None)
+    if nombre:
+        return nombre
+    if getattr(causa, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE":
+        return "uniq_recoleccion_activa_agricultor_fecha"
+    return None
 
 
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
@@ -96,16 +105,26 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # Lectura restringida: solo Admin/Vendedor (dataset completo) y Agricultor (solo
         # sus recolecciones). Un autenticado sin perfil Usuario o con otro rol no debe
         # ver el dataset completo: no ve nada.
-        roles_lectura = (ADMIN, AGRICULTOR, VENDEDOR)
         usuario = getattr(self.request.user, "usuario", None)
-        if usuario is None or usuario.fk_rol.nombre_rol not in roles_lectura:
+        if usuario is None or not (
+            usuario.tiene_rol(ADMIN) or usuario.tiene_rol(AGRICULTOR) or usuario.tiene_rol(VENDEDOR)
+        ):
             return queryset.none()
-        if usuario.fk_rol.nombre_rol == AGRICULTOR:
+        if usuario.tiene_rol(AGRICULTOR):
             queryset = queryset.filter(fk_agricultor=usuario)
-            if params.get("fk_agricultor") and str(usuario.id_usuario) != params.get("fk_agricultor"):
-                raise ValidationError(
-                    {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
-                )
+            fk_param = params.get("fk_agricultor")
+            if fk_param:
+                # Precedencia: primero validar que sea entero (un valor fuera de
+                # rango debe dar "entero válido", no el mensaje de propiedad) y
+                # luego comparar por valor numérico ("007" == 7 es el propio).
+                if not _pk_entero_valido(fk_param):
+                    raise ValidationError(
+                        {"fk_agricultor": "El parámetro 'fk_agricultor' debe ser un número entero válido."}
+                    )
+                if int(fk_param) != usuario.id_usuario:
+                    raise ValidationError(
+                        {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
+                    )
         estado = params.get("estado")
         fk_agricultor = params.get("fk_agricultor")
         fecha = params.get("fecha")

@@ -68,7 +68,7 @@ def cancelar_duplicados_legacy(apps, schema_editor):
             .values_list("id_recoleccion", flat=True)
         )
         # conservar la fila activa más antigua (primer id), cancelar el resto de las activas
-        # ponytail: migración one-shot, list() aceptable
+        # list() materializa los ids restantes: migración one-shot, volumen legacy acotado
         total_canceladas += Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(
             estado="cancelado"
         )

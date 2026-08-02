@@ -138,6 +138,11 @@ class Migration0015Tests(TransactionTestCase):
     El estado previo (0014) permitía fk_agricultor NULL; la migración 0015 lo
     vuelve NOT NULL, por lo que debe eliminar (o abortar) cualquier fila
     huérfana antes de aplicar el AlterField.
+
+    IMPORTANTE: este test migra el esquema compartido de la BD de test en vivo
+    (0016 -> 0014 -> 0015 -> 0016). Solo es seguro corriendo de forma
+    secuencial: NO usar pytest-xdist (paraleliza workers sobre la misma BD y
+    rompería el esquema a mitad de migración).
     """
 
     def test_0015_elimina_huerfanas_y_aplica_not_null(self):

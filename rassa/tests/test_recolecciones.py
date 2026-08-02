@@ -720,6 +720,23 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
 
+    def test_agricultor_filtro_propio_con_padding_retorna_200(self):
+        """Valida que '007' con id 7 se trate como el propio (comparación numérica, no string)."""
+        self._crear_recoleccion()
+        self.client.force_authenticate(user=self.usuario_agricultor.fk_user)
+        fk_con_padding = str(self.usuario_agricultor.id_usuario).zfill(3)
+        response = self.client.get("/api/recolecciones/", {"fk_agricultor": fk_con_padding}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_agricultor_filtro_fuera_de_rango_prioriza_entero_valido(self):
+        """Valida que un agricultor con fk_agricultor fuera de rango reciba 'entero válido', no 'solo las suyas'."""
+        self._crear_recoleccion()
+        self.client.force_authenticate(user=self.usuario_agricultor.fk_user)
+        response = self.client.get("/api/recolecciones/", {"fk_agricultor": "99999999999999999999"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+        self.assertIn("número entero válido", str(response.data))
+
     def test_pk_fuera_de_rango_retorna_404(self):
         """Valida que un pk fuera de rango retorne 404 y no 500."""
         response = self.client.get("/api/recolecciones/99999999999999999999/", format="json")
