@@ -1,9 +1,12 @@
 """Pruebas unitarias para el módulo de Recolecciones."""
 
+import threading
 from datetime import timedelta
+from unittest import skipUnless
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -497,6 +500,33 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_create_hora_inicio_null_sin_hora_fin_retorna_400(self):
+        """Valida el contrato both-or-none por PRESENCIA de claves (XOR).
+
+        POST {"hora_inicio": null} sin hora_fin es un par 'tocado' -> 400.
+        Antes se validaba por bool() y un null explícito se aceptaba en silencio
+        (bool(None) == bool(None)), asimétrico con el PATCH que sí daba 400.
+        """
+        payload = self._payload()
+        payload["hora_inicio"] = None
+        del payload["hora_fin"]
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+
+    def test_create_hora_fin_null_con_hora_inicio_valida_retorna_400(self):
+        """Valida el hueco del XOR: ambas claves presentes pero una null.
+
+        POST {"hora_inicio": "08:00:00", "hora_fin": null} pasa el XOR de presencia
+        (ambas claves presentes) pero deja el par efectivo incompleto; el chequeo de
+        valores (bool) lo rechaza -> 400 y no persiste un par incompleto en BD.
+        """
+        payload = self._payload()
+        payload["hora_fin"] = None
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_fin", response.data)
+
     def test_patch_par_de_horas_incompleto_retorna_400(self):
         """Valida que PATCH no pueda dejar el par de horas incompleto."""
         recoleccion = self._crear_recoleccion()
@@ -586,6 +616,32 @@ class RecoleccionesTestCase(TestCase):
     def test_cancelar_desde_en_ruta(self):
         """Valida que una recolección en ruta pueda cancelarse."""
         recoleccion = self._crear_recoleccion(estado="en_ruta")
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "cancelado")
+
+    def test_pendiente_fecha_hoy_puede_pasar_a_en_ruta(self):
+        """Valida que una recolección programada para HOY pueda pasar a en_ruta.
+
+        El guard de fecha pasada usa < (estrictamente anterior), no <=: una cita
+        de hoy está dentro de la ventana permitida para iniciar el traslado.
+        """
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()))
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "en_ruta")
+
+    def test_en_ruta_fecha_pasada_puede_cancelar(self):
+        """Valida que una recolección en ruta con fecha pasada pueda cancelarse.
+
+        Cancelar desde en_ruta está permitido por diseño independientemente de la
+        fecha (el guard de fecha pasada solo bloquea pendiente -> en_ruta).
+        """
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(FECHA_PASADA), estado="en_ruta")
         response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         recoleccion.refresh_from_db()
@@ -721,7 +777,7 @@ class RecoleccionesTestCase(TestCase):
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "cancelado"}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("non_field_errors", response.data)
+        self.assertIn("estado", response.data)
 
     def test_cambiar_estado_rechaza_campos_extra(self):
         """Valida que /estado/ rechace campos adicionales al body."""
@@ -842,3 +898,75 @@ class RecoleccionesTestCase(TestCase):
             "/api/recolecciones/99999999999999999999/estado/", {"estado": "en_ruta"}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+@skipUnless(connection.vendor == "postgresql", "Lock real solo en Postgres")
+class RecoleccionConcurrenciaTests(TransactionTestCase):
+    """Concurrencia de creates del MISMO par (fk_agricultor, fecha_recoleccion).
+
+    Best-effort: con un barrier los dos threads suelen solaparse, pero si el
+    runner los serializa el resultado sigue siendo válido. Lo que NUNCA debe
+    pasar es que ambos devuelvan 201: el lock del agricultor en create (re-check
+    bajo select_for_update) + el UniqueConstraint parcial lo impiden en Postgres.
+    select_for_update() es no-op en SQLite, por eso esta clase se salta ahí.
+
+    NOTA: TransactionTestCase (no TestCase) porque necesita transacciones reales
+    concurrentes; select_for_update() dentro de una transacción de TestCase
+    (abierta y no commiteada) haría que el segundo thread vea la BD sin los
+    cambios del primero y ambos podrían crear.
+    """
+
+    def setUp(self):
+        self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Administrador")
+        self.rol_agricultor = Rol.objects.create(nombre_rol="Agricultor", descripcion="Agricultor")
+        self.usuario_admin = self._crear_usuario("admin_conc", "admin_conc@rassa.com", "Admin", "Conc", self.rol_admin)
+        self.usuario_agricultor = self._crear_usuario(
+            "agri_conc", "agri_conc@rassa.com", "Agricultor", "Conc", self.rol_agricultor
+        )
+
+    def _crear_usuario(self, username, correo, nombre, apellido, rol):
+        user = User.objects.create_user(username=username, email=correo, password="password123")
+        persona = Persona.objects.create(
+            nombre=nombre,
+            apellido_paterno=apellido,
+            fecha_nacimiento="1990-01-01",
+            sexo="M",
+            domicilio="Calle de prueba 123",
+        )
+        return Usuario.objects.create(
+            fk_user=user,
+            fk_persona=persona,
+            telefono="1234567890",
+            correo=correo,
+            fk_rol=rol,
+        )
+
+    def test_create_concurrente_mismo_par_un_solo_201(self):
+        NUM_THREADS = 2
+        results = []
+        barrier = threading.Barrier(NUM_THREADS)
+        payload = {
+            "fk_agricultor": self.usuario_agricultor.id_usuario,
+            "fecha_recoleccion": str(FECHA_FUTURA),
+            "hora_inicio": "08:00:00",
+            "hora_fin": "11:00:00",
+        }
+
+        def crear():
+            client = APIClient()
+            client.force_authenticate(user=self.usuario_admin.fk_user)
+            barrier.wait()
+            resp = client.post("/api/recolecciones/", payload, format="json")
+            results.append(resp.status_code)
+
+        threads = [threading.Thread(target=crear) for _ in range(NUM_THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        # Exactamente UNO crea; el otro recibe 400 (duplicado). Dos 201 = regresión.
+        self.assertEqual(sum(1 for r in results if r == status.HTTP_201_CREATED), 1)
+        self.assertEqual(sum(1 for r in results if r == status.HTTP_400_BAD_REQUEST), 1)
+        self.assertEqual(Recoleccion.objects.count(), 1)

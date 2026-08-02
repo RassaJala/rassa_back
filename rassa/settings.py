@@ -162,9 +162,10 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones_current": "60/minute",
     "pagos_read": "60/minute",
     "pagos_write": "20/hour",
-    # 60/min compartido para lectura (calendario) y escritura; separar scopes si el
-    # calendario del agricultor necesita más.
-    "recolecciones": "60/minute",
+    # Scopes separados: lectura del calendario del agricultor (frecuente) y
+    # escrituras del vendedor, para no compartir budget.
+    "recolecciones_read": "60/minute",
+    "recolecciones_write": "20/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===

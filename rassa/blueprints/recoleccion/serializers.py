@@ -6,6 +6,12 @@ from rest_framework import serializers
 from rassa.models import Recoleccion, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
 
+# Mensajes compartidos con las vistas del módulo (views.py los importa de aquí).
+# Se definen en serializers para evitar imports circulares: views importa
+# serializers, así que serializers NO puede importar de views.
+MSG_AGRICULTOR_NO_EXISTE = "El agricultor especificado no existe o está inactivo."
+MSG_AGRICULTOR_SIN_ROL = "El agricultor especificado no tiene rol Agricultor."
+
 TRANSICIONES_VALIDAS = {
     "pendiente": ["en_ruta", "cancelado"],
     "en_ruta": ["recolectado", "cancelado"],
@@ -53,9 +59,9 @@ class RecoleccionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El agricultor es obligatorio.")
         usuario = Usuario.objects.filter(pk=value.pk).first()
         if usuario is None or not usuario.estado:
-            raise serializers.ValidationError("El agricultor especificado no existe o está inactivo.")
+            raise serializers.ValidationError(MSG_AGRICULTOR_NO_EXISTE)
         if not usuario.tiene_rol(AGRICULTOR):
-            raise serializers.ValidationError("El agricultor especificado no tiene rol Agricultor.")
+            raise serializers.ValidationError(MSG_AGRICULTOR_SIN_ROL)
         return value
 
     def validate(self, attrs):
@@ -66,8 +72,19 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         # (incluido null explícito) o el del instance solo si la clave no vino.
         toca_horas = "hora_inicio" in attrs or "hora_fin" in attrs
         if toca_horas:
+            # both-or-none por PRESENCIA de claves (XOR), no por truthiness del
+            # valor: {"hora_inicio": null} sin hora_fin es un par tocado -> 400,
+            # mientras que {"hora_inicio": null, "hora_fin": null} limpia el par
+            # explícitamente (válido). Antes se validaba con bool(), y un null
+            # explícito en POST se aceptaba silenciosamente, asimétrico con PATCH.
+            if ("hora_inicio" in attrs) != ("hora_fin" in attrs):
+                raise serializers.ValidationError({"hora_fin": "Deben indicarse ambas horas (inicio y fin) o ninguna."})
             hora_inicio = attrs.get("hora_inicio", self.instance.hora_inicio if self.instance else None)
             hora_fin = attrs.get("hora_fin", self.instance.hora_fin if self.instance else None)
+            # Chequeo de VALORES además del XOR de presencia: con ambas claves
+            # presentes pero una null ({"hora_inicio": "08:00:00", "hora_fin": null})
+            # el par efectivo queda incompleto y el XOR no lo detecta -> 400.
+            # Un par null+null explícito sigue siendo válido (limpia el par).
             if bool(hora_inicio) != bool(hora_fin):
                 raise serializers.ValidationError({"hora_fin": "Deben indicarse ambas horas (inicio y fin) o ninguna."})
             if hora_inicio and hora_fin and hora_fin <= hora_inicio:
@@ -108,7 +125,7 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
         estado_actual = self.instance.estado
         estado_nuevo = attrs.get("estado")
         if estado_nuevo == estado_actual:
-            raise serializers.ValidationError("La recolección ya está en ese estado.")
+            raise serializers.ValidationError({"estado": "La recolección ya está en ese estado."})
         # Completado tardío directo: un pendiente cuya fecha ya pasó puede marcarse
         # directamente recolectado (la recolección sí ocurrió, aunque nunca pasó por
         # en_ruta). Regla de negocio: pendiente vencido -> recolectado se permite;

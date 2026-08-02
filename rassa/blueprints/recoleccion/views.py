@@ -1,6 +1,7 @@
 """Vistas del módulo de Recolecciones."""
 
 import logging
+from collections.abc import Mapping
 
 from django.db import IntegrityError, transaction
 from django.db.models import F
@@ -14,11 +15,17 @@ from rassa.permissions.role_permissions import ADMIN, AGRICULTOR, VENDEDOR, HasR
 from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log, ok_response
 
-from .serializers import RecoleccionCambiarEstadoSerializer, RecoleccionSerializer
+from .serializers import (
+    MSG_AGRICULTOR_NO_EXISTE,
+    MSG_AGRICULTOR_SIN_ROL,
+    RecoleccionCambiarEstadoSerializer,
+    RecoleccionSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
 ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
+ESTADOS_VALIDOS_STR = ", ".join(c[0] for c in Recoleccion.ESTADO_CHOICES)
 
 
 def _pk_entero_valido(raw):
@@ -82,7 +89,6 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     serializer_class = RecoleccionSerializer
     pagination_class = CatalogPagination
     permission_classes = [IsAuthenticated]
-    throttle_scope = "recolecciones"
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_permissions(self):
@@ -93,15 +99,28 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return [IsAuthenticated(), HasRole(ADMIN, VENDEDOR)]
 
-    def _get_recoleccion_locked(self, pk):
+    def get_throttles(self):
+        # Scopes separados de lectura y escritura para no compartir budget: el
+        # calendario del agricultor (list/retrieve) es lectura frecuente; las
+        # escrituras del vendedor usan su propio scope (ver settings).
+        self.throttle_scope = "recolecciones_read" if self.action in ("list", "retrieve") else "recolecciones_write"
+        return super().get_throttles()
+
+    def _get_recoleccion(self, pk, for_update=False):
         # pk fuera de rango (ej. 99999999999999999999) o no numérico -> 404 en
         # lugar de un 500 por DataError en Postgres.
         if not _pk_entero_valido(pk):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."})
+        queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona")
+        if for_update:
+            queryset = queryset.select_for_update()
         try:
-            return Recoleccion.objects.select_related("fk_agricultor__fk_persona").select_for_update().get(pk=pk)
+            return queryset.get(pk=pk)
         except (Recoleccion.DoesNotExist, ValueError):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."}) from None
+
+    def _get_recoleccion_locked(self, pk):
+        return self._get_recoleccion(pk, for_update=True)
 
     def get_object(self):
         if not _pk_entero_valido(self.kwargs.get("pk")):
@@ -139,6 +158,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                     raise ValidationError(
                         {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
                     )
+        return self._aplicar_filtros(queryset, params)
+
+    def _aplicar_filtros(self, queryset, params):
+        """Aplica los filtros por query params (estado, fk_agricultor, fecha, rango)."""
         estado = params.get("estado")
         fk_agricultor = params.get("fk_agricultor")
         fecha = params.get("fecha")
@@ -146,13 +169,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         fecha_hasta = params.get("fecha_hasta")
         if estado:
             if estado not in ESTADOS_VALIDOS:
-                raise ValidationError(
-                    {
-                        "estado": (
-                            f"Estado inválido. Valores válidos: {', '.join(c[0] for c in Recoleccion.ESTADO_CHOICES)}."
-                        )
-                    }
-                )
+                raise ValidationError({"estado": f"Estado inválido. Valores válidos: {ESTADOS_VALIDOS_STR}."})
             queryset = queryset.filter(estado=estado)
         if fk_agricultor:
             # Entero fuera de rango -> 400 (no 500 por DataError).
@@ -171,7 +188,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             fecha_hasta = parse_date_param(fecha_hasta, "fecha_hasta")
             queryset = queryset.filter(fecha_recoleccion__lte=fecha_hasta)
         if fecha_desde and fecha_hasta and fecha_desde > fecha_hasta:
-            raise ValidationError("fecha_desde no puede ser mayor a fecha_hasta.")
+            raise ValidationError({"fecha_desde": "fecha_desde no puede ser mayor a fecha_hasta."})
         # nulls_last explícito para el orden de horas. Ojo: es un emulado por
         # Django, no un NULLS LAST nativo; en MySQL F(...).asc(nulls_last=True)
         # lanzaría NotSupportedError. Hoy el proyecto corre Postgres/SQLite donde
@@ -179,7 +196,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         return queryset.order_by("fecha_recoleccion", F("hora_inicio").asc(nulls_last=True))
 
     def create(self, request, *args, **kwargs):
-        if not isinstance(request.data, dict):
+        if not isinstance(request.data, Mapping):
             raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
@@ -188,7 +205,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # (DataError) que DRF no convierte -> 500. Mismo guard que para query
         # params, aplicado ANTES de que el serializer toque la BD.
         if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
+            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         agricultor = serializer.validated_data["fk_agricultor"]
@@ -204,11 +221,11 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 try:
                     agricultor = Usuario.objects.select_related("fk_persona").select_for_update().get(pk=agricultor.pk)
                 except Usuario.DoesNotExist:
-                    raise NotFound({"fk_agricultor": "El agricultor especificado no existe o está inactivo."}) from None
+                    raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE}) from None
                 if not agricultor.estado:
-                    raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
+                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
                 if not agricultor.tiene_rol(AGRICULTOR):
-                    raise ValidationError({"fk_agricultor": "El agricultor especificado no tiene rol Agricultor."})
+                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
                 if (
                     Recoleccion.objects.filter(
                         fk_agricultor=agricultor, fecha_recoleccion=serializer.validated_data["fecha_recoleccion"]
@@ -235,9 +252,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         except ValidationError:
             raise
         except IntegrityError as exc:
-            logger.exception("IntegrityError al guardar recolección (detalle):")
             if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
+                logger.exception("IntegrityError inesperado al guardar recolección:")
                 raise
+            logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
             raise ValidationError(
                 {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
             ) from None
@@ -253,29 +271,29 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         )
 
     def partial_update(self, request, *args, **kwargs):
-        if not isinstance(request.data, dict):
+        if not isinstance(request.data, Mapping):
             raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
         # Mismo guard de rango que en create: un fk_agricultor fuera de rango en
         # el body no debe llegar al get(pk=...) (DataError de Postgres -> 500).
         if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": "El agricultor especificado no existe o está inactivo."})
+            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
         # Capas que protegen la unicidad en partial_update:
         # 1. Pre-check del serializer (UX, sin lock del agricultor).
         # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
         #    discriminado por constraint name).
-        # A diferencia de create, aquí NO hay lock del agricultor porque el
-        # constraint cubre la unicidad; el lock de la fila (select_for_update)
-        # serializa PATCH concurrentes sobre la misma recolección.
+        # ORDEN FIJO DE LOCKS (usuario -> recolección): si el PATCH reasigna
+        # agricultor, el lock del Usuario se adquiere ANTES que el lock de la
+        # Recolección, el mismo orden que create (usuario primero, luego el INSERT
+        # de la recolección). Dos writers concurrentes del mismo par
+        # agricultor+fecha con orden invertido de locks (uno creando y otro
+        # reasignando) podrían interbloquearse y terminar en 500.
         try:
             with transaction.atomic():
-                recoleccion = self._get_recoleccion_locked(self.kwargs.get("pk"))
-                # Re-check bajo el lock: evita TOCTOU entre get_object y save.
-                if recoleccion.estado in ("en_ruta", "recolectado", "cancelado"):
-                    raise ValidationError(
-                        {"estado": f"No se puede editar una recolección en estado '{recoleccion.estado}'."}
-                    )
+                # Lectura SIN lock solo para validar el serializer: la fila puede
+                # cambiar antes del save; se re-chequea bajo el lock más abajo.
+                recoleccion = self._get_recoleccion(self.kwargs.get("pk"))
                 serializer = self.get_serializer(recoleccion, data=request.data, partial=True)
                 serializer.is_valid(raise_exception=True)
                 if "fk_agricultor" in serializer.validated_data:
@@ -289,26 +307,34 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                             .get(pk=serializer.validated_data["fk_agricultor"].pk)
                         )
                     except Usuario.DoesNotExist:
-                        raise NotFound(
-                            {"fk_agricultor": "El agricultor especificado no existe o está inactivo."}
-                        ) from None
+                        raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE}) from None
                     if not agricultor_nuevo.estado:
-                        raise ValidationError(
-                            {"fk_agricultor": "El agricultor especificado no existe o está inactivo."}
-                        )
+                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE})
                     if not agricultor_nuevo.tiene_rol(AGRICULTOR):
-                        raise ValidationError({"fk_agricultor": "El agricultor especificado no tiene rol Agricultor."})
+                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
                     # Reemplazar la instancia pre-lock por la bloqueada: evita TOCTOU
                     # y cachea fk_persona (select_related) para no disparar N+1 al
                     # re-serializar la respuesta.
                     serializer.validated_data["fk_agricultor"] = agricultor_nuevo
+                # Lock de la fila + re-check de estado bajo el lock: evita el TOCTOU
+                # entre la lectura sin lock (arriba) y el save.
+                recoleccion = self._get_recoleccion_locked(self.kwargs.get("pk"))
+                if recoleccion.estado in ("en_ruta", "recolectado", "cancelado"):
+                    raise ValidationError(
+                        {"estado": f"No se puede editar una recolección en estado '{recoleccion.estado}'."}
+                    )
+                # La instancia bloqueada puede diferir de la leída (otro writer pudo
+                # modificarla): reasignarla antes de guardar para que save() use la
+                # fila correcta y su fk_persona cacheada (sin N+1 al re-serializar).
+                serializer.instance = recoleccion
                 serializer.save()
         except ValidationError:
             raise
         except IntegrityError as exc:
-            logger.exception("IntegrityError al guardar recolección (detalle):")
             if _constraint_violada(exc) != "uniq_recoleccion_activa_agricultor_fecha":
+                logger.exception("IntegrityError inesperado al guardar recolección:")
                 raise
+            logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
             raise ValidationError(
                 {"fk_agricultor": "El agricultor ya tiene una recolección programada para esta fecha."}
             ) from None
@@ -324,7 +350,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         cancelado), este endpoint es una máquina de estados explícita y rechaza
         cambios sin transición.
         """
-        if not isinstance(request.data, dict):
+        if not isinstance(request.data, Mapping):
             raise ValidationError({"estado": "El body debe ser un objeto JSON."})
         if set(request.data.keys()) - {"estado"}:
             raise ValidationError({"estado": "Solo se permite el campo 'estado'."})

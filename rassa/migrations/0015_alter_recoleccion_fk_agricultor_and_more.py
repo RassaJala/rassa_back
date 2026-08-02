@@ -41,12 +41,17 @@ def cancelar_duplicados_legacy(apps, schema_editor):
 
     El modelo previo no tenía el UniqueConstraint parcial; si quedan filas
     activas con el mismo par (fk_agricultor, fecha_recoleccion), el
-    AddConstraint fallaría en migrate. Se conserva la fila ACTIVA más antigua
-    (menor id_recoleccion entre las no canceladas) y se cancelan el resto de
-    las activas: "cancelado" queda fuera del constraint parcial y no se pierde
+    AddConstraint fallaría en migrate.
+
+    CRITERIO DE SUPERVIVENCIA: se prioriza el ESTADO NO-TERMINAL antes que el
+    id. Dentro de cada par sobrevive la fila no cancelada de menor id entre las
+    "pendiente"/"en_ruta" (la programada real); las "recolectado" (terminales,
+    ya completadas) se cancelan solo si hay una no-terminal en el par. Si TODO
+    el par es terminal (solo recolectado), sobrevive la más antigua (menor id)
+    como antes. "cancelado" queda fuera del constraint parcial y no se pierde
     ningún registro activo.
     """
-    from django.db.models import Count
+    from django.db.models import Case, Count, When
 
     Recoleccion = apps.get_model("rassa", "Recoleccion")
     estados_activos = ["pendiente", "en_ruta", "recolectado"]
@@ -64,10 +69,16 @@ def cancelar_duplicados_legacy(apps, schema_editor):
                 fecha_recoleccion=dup["fecha_recoleccion"],
                 estado__in=estados_activos,
             )
-            .order_by("id_recoleccion")
+            .order_by(
+                # Primero las no-terminales (pendiente/en_ruta) y dentro de cada
+                # grupo por id: sobrevive la cita real (no-terminal) aunque tenga
+                # un id mayor que una fila vieja ya completada.
+                Case(When(estado__in=["pendiente", "en_ruta"], then=0), default=1),
+                "id_recoleccion",
+            )
             .values_list("id_recoleccion", flat=True)
         )
-        # conservar la fila activa más antigua (primer id), cancelar el resto de las activas
+        # conservar la primera (no-terminal preferida), cancelar el resto de las activas
         # list() materializa los ids restantes: migración one-shot, volumen legacy acotado
         total_canceladas += Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(
             estado="cancelado"
