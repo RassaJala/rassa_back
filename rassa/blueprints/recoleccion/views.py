@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Mapping
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import F
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -17,6 +17,7 @@ from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log, ok_response
 
 from .serializers import (
+    ESTADOS_VALIDOS_STR,
     MSG_AGRICULTOR_DUPLICADO,
     MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
     MSG_AGRICULTOR_SIN_ROL,
@@ -28,7 +29,25 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
-ESTADOS_VALIDOS_STR = ", ".join(c[0] for c in Recoleccion.ESTADO_CHOICES)
+
+# Mensaje unificado del guard de rango: mismo texto para query params (filtros)
+# y para el body (create/partial_update). Un entero fuera de rango o no numérico
+# es un id inválido, no un usuario inactivo: "no existe o está inactivo" era
+# engañoso en el body.
+MSG_FK_AGRICULTOR_ENTERO_INVALIDO = "El parámetro 'fk_agricultor' debe ser un número entero válido."
+
+
+def _acotar_espera_lock():
+    """Acota la espera de locks de fila a 30s (Postgres), mitigación R4.
+
+    SET LOCAL: solo aplica a la transacción actual y se revierte al cerrarla.
+    El riesgo aceptado de la NOTA R4 (una transacción externa estancada que
+    bloquee la fila indefinidamente) queda acotado en el tiempo. SQLite no lo
+    necesita (select_for_update es no-op) y no soporta el comando.
+    """
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL statement_timeout = '30s'")
 
 
 def _pk_entero_valido(raw):
@@ -86,6 +105,30 @@ def _manejar_integrity_error(exc):
         raise
     logger.warning("Recolección duplicada (constraint uniq_recoleccion_activa_agricultor_fecha).")
     raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_DUPLICADO}) from None
+
+
+def _lockear_y_validar_agricultor(pk):
+    """Lock del Usuario agricultor y valida activo/rol, cacheando fk_persona.
+
+    Barrera de serialización del par (fk_agricultor, fecha): lock bloqueante del
+    Usuario ANTES del INSERT/UPDATE de la recolección (orden fijo usuario ->
+    recolección, el mismo en create y partial_update) para evitar deadlocks entre
+    writers concurrentes del mismo par. fk_persona llega cacheada (select_related)
+    para que el re-serialize de la respuesta no dispare N+1.
+
+    Capa de la vista (locks + reglas activo/rol); la garantía final de unicidad
+    sigue siendo el UniqueConstraint parcial en BD (IntegrityError -> 400).
+    """
+    _acotar_espera_lock()
+    try:
+        agricultor = Usuario.objects.select_related("fk_persona").select_for_update().get(pk=pk)
+    except Usuario.DoesNotExist:
+        raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO}) from None
+    if not agricultor.estado:
+        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
+    if not agricultor.tiene_rol(AGRICULTOR):
+        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
+    return agricultor
 
 
 class AgricultorListView(APIView):
@@ -158,10 +201,12 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             # fast. Aquí el lock es la BARRERA DE SERIALIZACIÓN deliberada para
             # el par (fk_agricultor, fecha): dos writers concurrentes deben
             # esperarse para que el segundo vea el resultado del primero y
-            # reciba 400-duplicado (no 500 por lock). Riesgo aceptado: una
-            # transacción externa estancada sobre esta fila bloquearía el
-            # endpoint indefinidamente; probabilidad baja (transacciones que
-            # tocan Recoleccion/Usuario son cortas y de escritura rápida).
+            # reciba 400-duplicado (no 500 por lock).
+            # Mitigación del riesgo residual (transacción externa estancada que
+            # bloquee la fila indefinidamente): statement_timeout acotado a 30s,
+            # solo aplica a la transacción actual (SET LOCAL) y solo en Postgres
+            # (SQLite no tiene el concepto; los locks ahí son no-op).
+            _acotar_espera_lock()
             queryset = queryset.select_for_update()
         try:
             return queryset.get(pk=pk)
@@ -180,7 +225,12 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."}) from None
 
     def get_queryset(self):
-        """Retorna las recolecciones con filtros opcionales por query params."""
+        """Retorna las recolecciones con filtros opcionales por query params.
+
+        Los filtros (estado, fk_agricultor, fecha, rango) SOLO aplican al listado
+        (list): el detalle (retrieve) no debe verse afectado por query params, o un
+        GET /{id}/?estado=zzz o ?fecha=invalida rompería un detalle válido.
+        """
         queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona__fk_localidad__fk_municipio")
         params = self.request.query_params
         # Lectura restringida: solo Admin/Vendedor (dataset completo) y Agricultor (solo
@@ -194,19 +244,21 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             return queryset.none()
         if usuario.tiene_rol(AGRICULTOR):
             queryset = queryset.filter(fk_agricultor=usuario)
+            if self.action != "list":
+                return queryset
             fk_param = params.get("fk_agricultor")
             if fk_param:
                 # Precedencia: primero validar que sea entero (un valor fuera de
                 # rango debe dar "entero válido", no el mensaje de propiedad) y
                 # luego comparar por valor numérico ("007" == 7 es el propio).
                 if not _pk_entero_valido(fk_param):
-                    raise ValidationError(
-                        {"fk_agricultor": "El parámetro 'fk_agricultor' debe ser un número entero válido."}
-                    )
+                    raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
                 if int(fk_param) != usuario.id_usuario:
                     raise ValidationError(
                         {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
                     )
+        if self.action != "list":
+            return queryset
         return self._aplicar_filtros(queryset, params)
 
     def _aplicar_filtros(self, queryset, params):
@@ -223,9 +275,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         if fk_agricultor:
             # Entero fuera de rango -> 400 (no 500 por DataError).
             if not _pk_entero_valido(fk_agricultor):
-                raise ValidationError(
-                    {"fk_agricultor": "El parámetro 'fk_agricultor' debe ser un número entero válido."}
-                )
+                raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
             queryset = queryset.filter(fk_agricultor_id=fk_agricultor)
         if fecha:
             fecha = parse_date_param(fecha, "fecha")
@@ -256,9 +306,11 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # Un fk_agricultor fuera de rango en el body (ej. 99999999999999999999) no
         # debe llegar al get(pk=...): en Postgres lanza NumericValueOutOfRange
         # (DataError) que DRF no convierte -> 500. Mismo guard que para query
-        # params, aplicado ANTES de que el serializer toque la BD.
-        if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
+        # params, aplicado ANTES de que el serializer toque la BD. El null se deja
+        # pasar: lo rechaza el serializer con "El agricultor es obligatorio.".
+        fk_agricultor = request.data.get("fk_agricultor")
+        if "fk_agricultor" in request.data and fk_agricultor is not None and not _pk_entero_valido(fk_agricultor):
+            raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         agricultor = serializer.validated_data["fk_agricultor"]
@@ -271,17 +323,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 #    validate y el save en creaciones concurrentes del mismo par).
                 # 3. UniqueConstraint parcial en BD (garantía final; IntegrityError
                 #    -> 400 discriminado por constraint name en el except de abajo).
-                try:
-                    # Lock bloqueante deliberado (ver NOTA R4 en _get_recoleccion):
-                    # serializa los creates del mismo par; un segundo writer
-                    # concurrente espera, ve el duplicado y recibe 400, no 500.
-                    agricultor = Usuario.objects.select_related("fk_persona").select_for_update().get(pk=agricultor.pk)
-                except Usuario.DoesNotExist:
-                    raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO}) from None
-                if not agricultor.estado:
-                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
-                if not agricultor.tiene_rol(AGRICULTOR):
-                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
+                # Lock bloqueante deliberado (ver NOTA R4 en _get_recoleccion):
+                # serializa los creates del mismo par; un segundo writer
+                # concurrente espera, ve el duplicado y recibe 400, no 500.
+                agricultor = _lockear_y_validar_agricultor(agricultor.pk)
                 if (
                     Recoleccion.objects.filter(
                         fk_agricultor=agricultor, fecha_recoleccion=serializer.validated_data["fecha_recoleccion"]
@@ -325,8 +370,11 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
         # Mismo guard de rango que en create: un fk_agricultor fuera de rango en
         # el body no debe llegar al get(pk=...) (DataError de Postgres -> 500).
-        if "fk_agricultor" in request.data and not _pk_entero_valido(request.data.get("fk_agricultor")):
-            raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
+        # El null se deja pasar: lo rechaza el serializer con "El agricultor es
+        # obligatorio.".
+        fk_agricultor = request.data.get("fk_agricultor")
+        if "fk_agricultor" in request.data and fk_agricultor is not None and not _pk_entero_valido(fk_agricultor):
+            raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
         # Capas que protegen la unicidad en partial_update:
         # 1. Pre-check del serializer (UX, sin lock del agricultor).
         # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
@@ -348,22 +396,12 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                     # Re-validar el agricultor bajo el lock (mismo patrón que create):
                     # entre el validate del serializer y el save podría haberse
                     # desactivado o cambiado de rol. Mismos mensajes que create.
-                    try:
-                        agricultor_nuevo = (
-                            Usuario.objects.select_related("fk_persona")
-                            .select_for_update()
-                            .get(pk=serializer.validated_data["fk_agricultor"].pk)
-                        )
-                    except Usuario.DoesNotExist:
-                        raise NotFound({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO}) from None
-                    if not agricultor_nuevo.estado:
-                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO})
-                    if not agricultor_nuevo.tiene_rol(AGRICULTOR):
-                        raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SIN_ROL})
-                    # Reemplazar la instancia pre-lock por la bloqueada: evita TOCTOU
+                    # La instancia pre-lock se reemplaza por la bloqueada: evita TOCTOU
                     # y cachea fk_persona (select_related) para no disparar N+1 al
                     # re-serializar la respuesta.
-                    serializer.validated_data["fk_agricultor"] = agricultor_nuevo
+                    serializer.validated_data["fk_agricultor"] = _lockear_y_validar_agricultor(
+                        serializer.validated_data["fk_agricultor"].pk
+                    )
                 # Lock de la fila + re-check de estado bajo el lock: evita el TOCTOU
                 # entre la lectura sin lock (arriba) y el save.
                 recoleccion = self._get_recoleccion_locked(self.kwargs.get("pk"))

@@ -210,8 +210,19 @@ class Usuario(models.Model):
         return f"{str(self.correo)} ({str(self.fk_rol)})"
 
     def tiene_rol(self, nombre_rol: str) -> bool:
-        """Verifica si el usuario tiene el rol indicado."""
-        return self.fk_rol.nombre_rol == nombre_rol
+        """Verifica si el usuario tiene el rol indicado.
+
+        Null-safe: un perfil sin rol (fk_rol=None, p.ej. legacy o mock) se
+        deniega con False en lugar de explotar (500) en los permisos que delegan
+        aquí (HasRole, get_queryset). fk_rol es NOT NULL en BD, así que un None
+        solo existe en instancias detachadas/mock: Django lanza
+        RelatedObjectDoesNotExist (subclase de AttributeError) al acceder en vez
+        de devolver None, por eso el guard no es solo `is not None`.
+        """
+        try:
+            return self.fk_rol is not None and self.fk_rol.nombre_rol == nombre_rol
+        except AttributeError:
+            return False
 
 
 # ============================================================

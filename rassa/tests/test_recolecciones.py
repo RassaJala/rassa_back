@@ -11,6 +11,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from rassa.blueprints.recoleccion.serializers import MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO
 from rassa.models import HistorialEstadoRecoleccion, Persona, Recoleccion, Rol, Usuario
 
 # Fechas dinámicas relativas a hoy: evitan la "bomba de tiempo" del guard de
@@ -145,7 +146,9 @@ class RecoleccionesTestCase(TestCase):
     def test_slot_ocupado_tras_recolectar(self):
         """Fija la regla de negocio: una recolección recolectada SIGUE ocupando el slot
         agricultor+fecha; no se puede programar otra activa ese mismo día."""
-        recoleccion = self._crear_recoleccion()
+        # Fecha = hoy a propósito: en_ruta -> recolectado solo se permite a partir
+        # del día de la cita (regla de completado anticipado).
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()))
         response_en_ruta = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
         )
@@ -156,7 +159,9 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response_recolectado.status_code, status.HTTP_200_OK)
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "recolectado")
-        response = self.client.post("/api/recolecciones/", self._payload(), format="json")
+        response = self.client.post(
+            "/api/recolecciones/", self._payload(fecha=str(timezone.localdate())), format="json"
+        )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
 
@@ -213,6 +218,25 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["data"]["agricultor_nombre"], "Agricultor Rassa")
 
+    def test_detalle_ignora_filtros_invalidos(self):
+        """Valida que los query params de filtro NO afecten el detalle (retrieve).
+
+        Antes, get_queryset corría _aplicar_filtros en retrieve: ?estado=zzz daba
+        400 y ?fecha=invalida rompía un detalle que existe. Los filtros solo
+        aplican al listado (list).
+        """
+        recoleccion = self._crear_recoleccion()
+        response = self.client.get(f"/api/recolecciones/{recoleccion.pk}/?estado=zzz", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.get(f"/api/recolecciones/{recoleccion.pk}/?fecha=2026-13-99", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.get(
+            f"/api/recolecciones/{recoleccion.pk}/?fk_agricultor=99999999999999999999", format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
     def test_editar_comentarios(self):
         """Valida la edición parcial de los comentarios de una recolección."""
         recoleccion = self._crear_recoleccion()
@@ -238,7 +262,8 @@ class RecoleccionesTestCase(TestCase):
 
     def test_cambiar_estado_transicion_valida(self):
         """Valida las transiciones pendiente -> en_ruta -> recolectado."""
-        recoleccion = self._crear_recoleccion()
+        # Fecha = hoy: en_ruta -> recolectado antes de la fecha programada se bloquea.
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()))
         response1 = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
         )
@@ -262,6 +287,16 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "pendiente")
+
+    def test_cambiar_estado_pendiente_a_cancelado(self):
+        """Valida la transición pendiente -> cancelado vía /estado/ (solo /cancelar/ estaba cubierto)."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "cancelado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "cancelado")
 
     def test_pendiente_vencido_puede_recolectarse_directo(self):
         """Valida el completado tardío directo: un pendiente vencido puede marcarse recolectado."""
@@ -379,6 +414,30 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_crear_agricultor_nulo_mensaje_espanol(self):
+        """Contrato Spanish: fk_agricultor null -> "El agricultor es obligatorio." y no inglés."""
+        payload = self._payload()
+        payload["fk_agricultor"] = None
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["fk_agricultor"][0], "El agricultor es obligatorio.")
+
+    def test_crear_agricultor_inexistente_mensaje_espanol(self):
+        """Contrato Spanish: pk válida inexistente -> MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO y no inglés."""
+        payload = self._payload()
+        payload["fk_agricultor"] = 99999
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["fk_agricultor"][0], MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO)
+
+    def test_estado_invalido_en_estado_mensaje_espanol(self):
+        """Contrato Spanish: /estado/ con estado inválido -> mensaje con los valores válidos, no inglés."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "zzz"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Estado inválido", str(response.data["estado"][0]))
+        self.assertIn("pendiente", str(response.data["estado"][0]))
+
     def test_crear_con_agricultor_sin_rol(self):
         """Valida que falle la creación con un usuario que no tiene rol Agricultor."""
         payload = self._payload()
@@ -400,7 +459,7 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
-        self.assertIn("no existe o está inactivo", str(response.data))
+        self.assertIn("número entero válido", str(response.data))
 
     def test_crear_fk_agricultor_digito_unicode_retorna_400(self):
         """Valida que un dígito Unicode (ej. '٥') en fk_agricultor no cause 500.
@@ -447,7 +506,7 @@ class RecoleccionesTestCase(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
-        self.assertIn("no existe o está inactivo", str(response.data))
+        self.assertIn("número entero válido", str(response.data))
 
     def test_patch_duplicado_misma_fecha(self):
         """Valida que no se pueda mover una recolección a una fecha con recolección activa."""
@@ -694,6 +753,21 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/cancelar/", format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_usuario_con_fk_rol_none_recibe_403_no_500(self):
+        """Valida que un perfil Usuario sin rol (fk_rol=None) reciba 403 y no 500.
+
+        Reproduce el perfil legacy/roto: HasRole delegaba en tiene_rol() que
+        accedía a fk_rol.nombre_rol y explotaba con AttributeError -> 500 en TODO
+        endpoint protegido. Con el fix null-safe se deniega limpio (403).
+        """
+        # Perfil con fk_rol=None en memoria (la columna es NOT NULL en BD; el
+        # escenario se reproduce con el perfil "detachado" que cachea el request).
+        self.usuario_vendedor.fk_rol = None
+        self.usuario_vendedor.fk_user.usuario = self.usuario_vendedor
+        self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
+        response = self.client.post("/api/recolecciones/", self._payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_patch_hora_fin_tras_hora_inicio(self):
         """Valida la comparación de horas (hora_fin > hora_inicio) también en PATCH."""
         recoleccion = self._crear_recoleccion(hora_inicio="08:00:00")
@@ -773,6 +847,29 @@ class RecoleccionesTestCase(TestCase):
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "recolectado")
 
+    def test_en_ruta_fecha_futura_no_puede_recolectarse(self):
+        """Regla de negocio (pendiente de confirmación): un en_ruta no puede marcarse
+        recolectado ANTES de su fecha programada (una cita futura no se completa hoy)."""
+        recoleccion = self._crear_recoleccion(estado="en_ruta")  # fecha FECHA_FUTURA
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fecha_recoleccion", response.data)
+        self.assertIn("antes de su fecha programada", str(response.data["fecha_recoleccion"]))
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "en_ruta")
+
+    def test_en_ruta_fecha_hoy_puede_recolectarse(self):
+        """Regla de negocio: a partir del día de la cita (fecha <= hoy) se permite completar."""
+        recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()), estado="en_ruta")
+        response = self.client.post(
+            f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(recoleccion.estado, "recolectado")
+
     def test_historial_estado_se_registra(self):
         """Valida que cada cambio de estado (estado/cancelar) registre historial."""
         recoleccion = self._crear_recoleccion()
@@ -845,7 +942,7 @@ class RecoleccionesTestCase(TestCase):
         response = self.client.post("/api/recolecciones/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
-        self.assertIn("no existe o está inactivo", str(response.data))
+        self.assertIn("número entero válido", str(response.data))
 
     def test_listar_autenticado_sin_perfil_usuario_retorna_403(self):
         """Valida que un User sin perfil Usuario reciba 403 explícito al listar (no 200 vacío)."""

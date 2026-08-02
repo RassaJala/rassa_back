@@ -14,6 +14,10 @@ MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO = "El agricultor especificado no existe o es
 MSG_AGRICULTOR_SIN_ROL = "El agricultor especificado no tiene rol Agricultor."
 MSG_AGRICULTOR_DUPLICADO = "El agricultor ya tiene una recolección programada para esta fecha."
 
+# Misma derivación que views.ESTADOS_VALIDOS_STR pero acá: evita que el
+# error_messages del ChoiceField de estado dependa de views (import circular).
+ESTADOS_VALIDOS_STR = ", ".join(c[0] for c in Recoleccion.ESTADO_CHOICES)
+
 TRANSICIONES_VALIDAS = {
     "pendiente": ["en_ruta", "cancelado"],
     "en_ruta": ["recolectado", "cancelado"],
@@ -26,6 +30,21 @@ class RecoleccionSerializer(serializers.ModelSerializer):
     """Serializer de Recolección con nombre legible del agricultor."""
 
     agricultor_nombre = serializers.SerializerMethodField()
+
+    # Campo declarado explícitamente con error_messages: el autogenerado por el
+    # ModelSerializer devuelve mensajes en inglés ("This field may not be null.",
+    # 'Invalid pk "99999" - object does not exist.'). Nota: pk_field con
+    # validators NO funciona en DRF 3.15.2 (descubierto en una ronda anterior);
+    # error_messages sí. La existencia y el null los resuelve el propio campo;
+    # validate_fk_agricultor solo valida las reglas de negocio posteriores.
+    fk_agricultor = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.all(),
+        error_messages={
+            "null": "El agricultor es obligatorio.",
+            "does_not_exist": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
+            "incorrect_type": "El agricultor debe ser un número entero válido.",
+        },
+    )
 
     class Meta:
         model = Recoleccion
@@ -56,13 +75,17 @@ class RecoleccionSerializer(serializers.ModelSerializer):
         return f"{persona.nombre} {persona.apellido_paterno}".strip()
 
     def validate_fk_agricultor(self, value):
-        """Valida que el agricultor exista, esté activo y tenga rol Agricultor."""
-        if value is None:
-            raise serializers.ValidationError("El agricultor es obligatorio.")
-        usuario = Usuario.objects.filter(pk=value.pk).first()
-        if usuario is None or not usuario.estado:
+        """Valida que el agricultor esté activo y tenga rol Agricultor.
+
+        El "es obligatorio" (null) y el "no existe" (does_not_exist) los resuelve
+        el propio campo vía error_messages, ANTES de llegar aquí: las ramas de
+        None y de usuario inexistente eran código muerto (el PrimaryKeyRelatedField
+        rechaza ambos primero). Acá solo quedan las reglas que dependen de que el
+        usuario exista.
+        """
+        if not value.estado:
             raise serializers.ValidationError(MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO)
-        if not usuario.tiene_rol(AGRICULTOR):
+        if not value.tiene_rol(AGRICULTOR):
             raise serializers.ValidationError(MSG_AGRICULTOR_SIN_ROL)
         return value
 
@@ -165,7 +188,10 @@ class AgricultorSerializer(serializers.ModelSerializer):
 class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
     """Serializer para validar los cambios de estado de una recolección."""
 
-    estado = serializers.ChoiceField(choices=Recoleccion.ESTADO_CHOICES)
+    estado = serializers.ChoiceField(
+        choices=Recoleccion.ESTADO_CHOICES,
+        error_messages={"invalid_choice": f"Estado inválido. Valores válidos: {ESTADOS_VALIDOS_STR}."},
+    )
 
     def validate(self, attrs):
         estado_actual = self.instance.estado
@@ -187,8 +213,9 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
                 {"estado": f"No se puede cambiar de '{estado_actual}' a '{estado_nuevo}'."}
             )
         # Solo se bloquea pasar de pendiente -> en_ruta en una fecha pasada.
-        # en_ruta -> recolectado SIEMPRE se permite (completado tardío) y cancelar
-        # (pendiente/en_ruta -> cancelado) también, independientemente de la fecha.
+        # Cancelar (pendiente/en_ruta -> cancelado) se permite siempre,
+        # independientemente de la fecha. El completado en_ruta -> recolectado
+        # tiene su propio guard de fecha futura más abajo.
         if (
             estado_actual == "pendiente"
             and estado_nuevo == "en_ruta"
@@ -198,6 +225,25 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
                 {
                     "fecha_recoleccion": (
                         "La fecha de la recolección ya pasó; solo se permite cancelarla o marcarla como recolectada."
+                    )
+                }
+            )
+        # Regla de negocio (pendiente de confirmación): no se puede completar
+        # (en_ruta -> recolectado) ANTES de la fecha programada. El guard de
+        # "completado tardío" solo protegía fechas PASADAS, dejando que una cita
+        # FUTURA se marcara recolectada el mismo día que se agenda. Solo a partir
+        # del día de la cita (fecha <= hoy) se permite completar.
+        # ponytail: regla conservadora pendiente de confirmación de negocio; el
+        # upgrade path si se confirma lo contrario es eliminar este bloque.
+        if (
+            estado_actual == "en_ruta"
+            and estado_nuevo == "recolectado"
+            and self.instance.fecha_recoleccion > timezone.localdate()
+        ):
+            raise serializers.ValidationError(
+                {
+                    "fecha_recoleccion": (
+                        "No se puede marcar como recolectada una recolección antes de su fecha programada."
                     )
                 }
             )

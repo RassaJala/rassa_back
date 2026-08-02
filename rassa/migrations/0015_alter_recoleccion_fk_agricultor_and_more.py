@@ -80,9 +80,17 @@ def cancelar_duplicados_legacy(apps, schema_editor):
         )
         # conservar la primera (no-terminal preferida), cancelar el resto de las activas
         # list() materializa los ids restantes: migración one-shot, volumen legacy acotado
-        total_canceladas += Recoleccion.objects.filter(id_recoleccion__in=list(ids_activos[1:])).update(
-            estado="cancelado"
-        )
+        ids_a_cancelar = list(ids_activos[1:])
+        if ids_a_cancelar:
+            total_canceladas += Recoleccion.objects.filter(id_recoleccion__in=ids_a_cancelar).update(
+                estado="cancelado"
+            )
+            # Auditoría por par: dejar registro de QUÉ filas se cancelaron, no solo
+            # el conteo agregado (una revisión manual necesita los ids exactos).
+            print(
+                f"  [0015] par (agri={dup['fk_agricultor']}, fecha={dup['fecha_recoleccion']}): "
+                f"canceladas {ids_a_cancelar}"
+            )
     if total_canceladas:
         print(f"  [0015] canceladas {total_canceladas} recolecciones duplicadas legacy")
 
