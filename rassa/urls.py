@@ -20,6 +20,7 @@ from rassa.admin_views import AdminUsuarioViewSet
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.chat.urls import urlpatterns as chat_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
+from rassa.blueprints.liquidaciones.urls import urlpatterns as liquidaciones_urls
 from rassa.blueprints.pagos.urls import urlpatterns as pagos_urls
 from rassa.blueprints.pedido.urls import urlpatterns as pedido_urls
 from rassa.blueprints.producto_imagen.urls import urlpatterns as producto_imagen_urls
@@ -162,5 +163,6 @@ urlpatterns = [
     path("", include(familias_urls)),
     path("", include(pedido_urls)),
     path("", include(pagos_urls)),
+    path("", include(liquidaciones_urls)),
     path("", include(waste_urls)),
 ]

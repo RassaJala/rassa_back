@@ -1,0 +1,24 @@
+meta {
+  name: Marcar Liquidación como Pagada
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/liquidaciones/{{liquidacionId}}/marcar-pagada/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "tipo_pago": 1,
+    "referencia": "TRANSF-001"
+  }
+}
