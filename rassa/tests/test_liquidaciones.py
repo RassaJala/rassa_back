@@ -1302,9 +1302,9 @@ class CalcularConcurrencyTest(TransactionTestCase):
         self.assertEqual(len(results), NUM_THREADS)
         codes = [r[0] for r in results]
         self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, codes)
-        # Con pedidos disjuntos, el lock de PedidoCabecera NO serializa.
-        # El view debe tener OTRO mecanismo (advisory lock, constraint)
-        # que evite crear más de una liquidación.
+        # Dado que todos los threads operan sobre la misma semana del agricultor,
+        # el bloqueo select_for_update sobre los pedidos y la restricción de unicidad
+        # evitan la creación de liquidaciones duplicadas.
         successes = sum(1 for c in codes if c == status.HTTP_201_CREATED)
         duplicates = sum(1 for c in codes if c in (status.HTTP_409_CONFLICT, status.HTTP_400_BAD_REQUEST))
         self.assertEqual(
@@ -1315,9 +1315,7 @@ class CalcularConcurrencyTest(TransactionTestCase):
         self.assertGreater(
             duplicates,
             0,
-            "Sin serialización real, todos los threads crearían liquidaciones "
-            "duplicadas (race condition). El view debe serializar via "
-            "advisory lock, constraint u otro mecanismo.",
+            "Se esperaba que las peticiones concurrentes fueran serializadas/bloqueadas por el view.",
         )
         # En la BD: solo 1 liquidación activa
         self.assertEqual(
