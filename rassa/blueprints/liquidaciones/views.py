@@ -146,12 +146,13 @@ def _ventas_snapshot(liquidacion: Liquidacion):
     )
 
 
-def _build_detalle_output(liquidacion: Liquidacion, ventas):
+def _build_detalle_output(liquidacion: Liquidacion, ventas=None):
     """Serializa el detalle de una liquidación con sus ventas y pago.
 
-    Centraliza la construcción de la respuesta que se repetía en 3 lugares
-    (retrieve, calcular, marcar_pagada) — revisión 4R R2.
+    Si no se pasa `ventas`, consulta automáticamente `_ventas_snapshot(liquidacion)`.
     """
+    if ventas is None:
+        ventas = _ventas_snapshot(liquidacion)
     return LiquidacionDetalleSerializer(
         liquidacion,
         context={"ventas_queryset": ventas},
@@ -381,8 +382,7 @@ class LiquidacionViewSet(
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
-        ventas_snapshot = _ventas_snapshot(liquidacion)
-        output = _build_detalle_output(liquidacion, ventas_snapshot)
+        output = _build_detalle_output(liquidacion)
 
         _log(
             request.user,
@@ -458,8 +458,7 @@ class LiquidacionViewSet(
                             )
 
                     # Idempotencia: si se re-envía la misma petición, devolvemos el detalle con 200 OK.
-                    ventas = _ventas_snapshot(liquidacion)
-                    output = _build_detalle_output(liquidacion, ventas)
+                    output = _build_detalle_output(liquidacion)
                     folio = pago_existente.folio if pago_existente else None
                     return _ok(
                         data=output,
@@ -487,8 +486,7 @@ class LiquidacionViewSet(
             )
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
-        ventas = _ventas_snapshot(liquidacion)
-        output = _build_detalle_output(liquidacion, ventas)
+        output = _build_detalle_output(liquidacion)
 
         _log(
             request.user,

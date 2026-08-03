@@ -5,8 +5,9 @@ from decimal import Decimal
 COMISION_RASSA = Decimal("0.10")
 
 ESTADO_PENDIENTE = "pendiente"
+ESTADO_PARCIAL = "parcial"
 ESTADO_PAGADA = "pagada"
-ESTADOS_ACTIVOS = ["pendiente", "parcial"]
+ESTADOS_ACTIVOS = (ESTADO_PENDIENTE, ESTADO_PARCIAL)
 ESTADO_PEDIDO_ENTREGADO = "entregado"
 
 # Estado `parcial` está en ESTADO_CHOICES del modelo (Liquidacion) pero
