@@ -453,12 +453,7 @@ class LiquidacionViewSet(
         except DatabaseError as exc:
             if _is_transient_error(exc):
                 logger.warning("Error transitorio (deadlock/timeout) en marcar_pagada liquidacion=%s", pk)
-                response = _ok(
-                    message="Conflicto de concurrencia. Reintente.",
-                    status_code=status.HTTP_409_CONFLICT,
-                )
-                response["Retry-After"] = "5"
-                return response
+                return _deadlock_response()
             logger.error("Error al registrar pago de liquidación %s: %s", pk, exc)
             return _ok(
                 message="Error al procesar el pago de la liquidación. Intente de nuevo.",
