@@ -63,6 +63,26 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
         .values_list("fk_pedido_id", flat=True)
         .distinct()
     )
+    # Auditoría/Monitoreo: registrar pedidos entregados en el rango que ya fueron liquidados previamente.
+    ya_liquidados = list(
+        PedidoCabecera.objects.filter(
+            id_pedido__in=pedido_ids,
+            fk_estado=estado_entregado,
+            creado_en__date__gte=inicio,
+            creado_en__date__lt=fin_exclusive,
+            liquidaciones__isnull=False,
+        ).values_list("id_pedido", flat=True)
+    )
+    if ya_liquidados:
+        logger.info(
+            "Monitoreo liquidaciones: Excluidos %s pedidos ya liquidados para agricultor=%s en rango %s a %s: %s",
+            len(ya_liquidados),
+            agricultor_id,
+            inicio,
+            fin_exclusive,
+            ya_liquidados,
+        )
+
     return (
         PedidoCabecera.objects.filter(
             id_pedido__in=pedido_ids,
