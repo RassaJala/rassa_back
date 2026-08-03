@@ -9,6 +9,9 @@ Uso:
     python manage.py test rassa.tests.test_admin_user_protection
 """
 
+from copy import deepcopy
+
+from django.conf import settings as dj_settings
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
@@ -20,11 +23,10 @@ from rassa.models import Localidad, Log, Municipio, Persona, Rol, Usuario
 
 User = get_user_model()
 
-
-@override_settings(
-    REST_FRAMEWORK={
+_TEST_REST_FRAMEWORK = deepcopy(dj_settings.REST_FRAMEWORK)
+_TEST_REST_FRAMEWORK.update(
+    {
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {},
         "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
         "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -32,6 +34,9 @@ User = get_user_model()
         "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
     }
 )
+
+
+@override_settings(REST_FRAMEWORK=_TEST_REST_FRAMEWORK)
 class AdminUserProtectionTest(APITestCase):
     """Tests para protecciones de integridad del usuario admin."""
 

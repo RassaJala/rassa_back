@@ -9,8 +9,10 @@ Cubre los endpoints cuyos contratos fueron ajustados para el frontend:
 - Paginación de mensajes
 """
 
+from copy import deepcopy
 from datetime import timedelta
 
+from django.conf import settings as dj_settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -60,10 +62,10 @@ def _crear_usuario(username, rol_nombre="Cliente"):
     return user, usuario
 
 
-@override_settings(
-    REST_FRAMEWORK={
+_TEST_REST_FRAMEWORK = deepcopy(dj_settings.REST_FRAMEWORK)
+_TEST_REST_FRAMEWORK.update(
+    {
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {},
         "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
         "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -71,6 +73,9 @@ def _crear_usuario(username, rol_nombre="Cliente"):
         "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     }
 )
+
+
+@override_settings(REST_FRAMEWORK=_TEST_REST_FRAMEWORK)
 class ChatTests(APITestCase):
     def setUp(self):
         self.user1, self.usuario1 = _crear_usuario("user1")
