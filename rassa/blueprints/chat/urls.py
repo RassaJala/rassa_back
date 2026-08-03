@@ -3,10 +3,13 @@ from django.urls import path
 from .views import (
     ConversacionAgregarIntegranteView,
     ConversacionDetalleView,
+    ConversacionFamiliaSyncView,
     ConversacionGrupalCreateView,
+    ConversacionIntegranteRemoveView,
     ConversacionIntegrantesListView,
     ConversacionLeerView,
     ConversacionListView,
+    ConversacionOverrideNombreView,
     ConversacionPrivadaCreateView,
     ConversacionRenombrarView,
     MensajeCreateView,
@@ -37,6 +40,11 @@ urlpatterns = [
         "api/chat/conversaciones/<int:conversacion_id>/agregar-integrante/",
         ConversacionAgregarIntegranteView.as_view(),
         name="chat-conversaciones-agregar-integrante",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/integrantes/<int:usuario_id>/",
+        ConversacionIntegranteRemoveView.as_view(),
+        name="chat-conversaciones-remover-integrante",
     ),
     path(
         "api/chat/conversaciones/<int:conversacion_id>/integrantes/",
@@ -87,5 +95,15 @@ urlpatterns = [
         "api/chat/usuarios/buscar/",
         UsuarioBuscarView.as_view(),
         name="chat-usuarios-buscar",
+    ),
+    path(
+        "api/chat/conversaciones/familia/<int:familia_id>/sincronizar/",
+        ConversacionFamiliaSyncView.as_view(),
+        name="chat-conversaciones-familia-sincronizar",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/override-nombre/",
+        ConversacionOverrideNombreView.as_view(),
+        name="chat-conversaciones-override-nombre",
     ),
 ]
