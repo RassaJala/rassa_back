@@ -25,6 +25,7 @@ from rassa.models import (
     LiquidacionVenta,
     Pago,
     PedidoCabecera,
+    Usuario,
 )
 from rassa.permissions.role_permissions import ADMIN, AGRICULTOR, HasRole
 from rassa.views import CatalogPagination, OkResponseMixin, _log, _ok
@@ -88,6 +89,52 @@ def _map_montos_agricultor_pedidos(pedido_ids: list[int], agricultor_id: int) ->
         .annotate(total_agricultor=Sum("importe"))
     )
     return {item["fk_pedido_id"]: Decimal(str(item["total_agricultor"] or "0.00")) for item in lineas}
+
+
+def _calcular_montos(ventas: list[PedidoCabecera], agricultor_id: int, tasa: Decimal):
+    """Calcula monto_ventas, comision y monto_liquidar basándose en las líneas del agricultor."""
+    pedido_ids = [p.id_pedido for p in ventas]
+    montos_map = _map_montos_agricultor_pedidos(pedido_ids, agricultor_id)
+    monto_ventas = sum((montos_map.get(pid, Decimal("0.00")) for pid in pedido_ids), Decimal("0.00"))
+    comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
+    monto_liquidar = monto_ventas - comision
+    return montos_map, monto_ventas, comision, monto_liquidar
+
+
+def _crear_liquidacion_con_snapshot(
+    agricultor: Usuario,
+    inicio: date,
+    fin: date,
+    monto_ventas: Decimal,
+    tasa: Decimal,
+    comision: Decimal,
+    monto_liquidar: Decimal,
+    ventas: list[PedidoCabecera],
+    montos_map: dict[int, Decimal],
+) -> Liquidacion:
+    """Crea la liquidación y persiste el snapshot de ventas en LiquidacionVenta."""
+    with transaction.atomic():
+        liquidacion = Liquidacion.objects.create(
+            fk_agricultor=agricultor,
+            periodo_inicio=inicio,
+            periodo_fin=fin,
+            monto_ventas=monto_ventas,
+            tasa_comision=tasa,
+            comision=comision,
+            monto_liquidar=monto_liquidar,
+            estado=ESTADO_PENDIENTE,
+        )
+    LiquidacionVenta.objects.bulk_create(
+        [
+            LiquidacionVenta(
+                fk_liquidacion=liquidacion,
+                fk_pedido=p,
+                monto_aportado=montos_map.get(p.id_pedido, Decimal("0.00")),
+            )
+            for p in ventas
+        ]
+    )
+    return liquidacion
 
 
 def _ventas_snapshot(liquidacion: Liquidacion):
@@ -308,42 +355,19 @@ class LiquidacionViewSet(
                 if existing:
                     return _liquidacion_duplicada_response(existing)
 
-                montos_map = _map_montos_agricultor_pedidos(pedido_ids, agricultor.id_usuario)
-                monto_ventas = sum((montos_map.get(pid, Decimal("0.00")) for pid in pedido_ids), Decimal("0.00"))
-                comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
-                monto_liquidar = monto_ventas - comision
+                montos_map, monto_ventas, comision, monto_liquidar = _calcular_montos(
+                    ventas, agricultor.id_usuario, tasa
+                )
 
                 try:
-                    with transaction.atomic():
-                        liquidacion = Liquidacion.objects.create(
-                            fk_agricultor=agricultor,
-                            periodo_inicio=inicio,
-                            periodo_fin=fin,
-                            monto_ventas=monto_ventas,
-                            tasa_comision=tasa,
-                            comision=comision,
-                            monto_liquidar=monto_liquidar,
-                            estado=ESTADO_PENDIENTE,
-                        )
+                    liquidacion = _crear_liquidacion_con_snapshot(
+                        agricultor, inicio, fin, monto_ventas, tasa, comision, monto_liquidar, ventas, montos_map
+                    )
                 except IntegrityError as exc:
                     existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
                     if existing:
                         return _liquidacion_duplicada_response(existing)
                     raise exc
-
-                # Snapshot de las ventas que aportaron a esta liquidación
-                # (item 4 de la revisión 4R — ver review R3/R4).
-                # bulk_create es 1 INSERT con N VALUES, no N INSERTs.
-                LiquidacionVenta.objects.bulk_create(
-                    [
-                        LiquidacionVenta(
-                            fk_liquidacion=liquidacion,
-                            fk_pedido=p,
-                            monto_aportado=montos_map.get(p.id_pedido, Decimal("0.00")),
-                        )
-                        for p in ventas
-                    ]
-                )
         except DatabaseError as exc:
             if _is_transient_error(exc):
                 logger.warning(
