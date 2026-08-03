@@ -1,0 +1,15 @@
+meta {
+  name: Listar agricultores
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/recolecciones/agricultores/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

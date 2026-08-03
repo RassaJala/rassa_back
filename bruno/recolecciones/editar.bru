@@ -1,0 +1,23 @@
+meta {
+  name: Editar recolección
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/recolecciones/{{recoleccionId}}/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "comentarios": "Ajustar hora de llegada"
+  }
+}
