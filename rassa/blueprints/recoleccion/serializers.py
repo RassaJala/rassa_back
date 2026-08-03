@@ -7,16 +7,12 @@ from rassa.auth_serializers import ROLE_REVERSE_MAPPING
 from rassa.models import Recoleccion, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
 
-# Mensajes compartidos con las vistas del módulo (views.py los importa de aquí).
-# Se definen en serializers para evitar imports circulares: views importa
-# serializers, así que serializers NO puede importar de views.
-MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO = "El agricultor especificado no existe o está inactivo."
-MSG_AGRICULTOR_SIN_ROL = "El agricultor especificado no tiene rol Agricultor."
-MSG_AGRICULTOR_DUPLICADO = "El agricultor ya tiene una recolección programada para esta fecha."
-
-# Misma derivación que views.ESTADOS_VALIDOS_STR pero acá: evita que el
-# error_messages del ChoiceField de estado dependa de views (import circular).
-ESTADOS_VALIDOS_STR = ", ".join(c[0] for c in Recoleccion.ESTADO_CHOICES)
+from .constants import (
+    ESTADOS_VALIDOS_STR,
+    MSG_AGRICULTOR_DUPLICADO,
+    MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
+    MSG_AGRICULTOR_SIN_ROL,
+)
 
 TRANSICIONES_VALIDAS = {
     "pendiente": ["en_ruta", "cancelado"],
@@ -44,6 +40,23 @@ class RecoleccionSerializer(serializers.ModelSerializer):
             "does_not_exist": MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
             "incorrect_type": "El agricultor debe ser un número entero válido.",
         },
+    )
+
+    # Campos de fecha/hora declarados explícitamente para fijar los mensajes de
+    # formato inválido en español (los autogenerados por el ModelSerializer
+    # devuelven "Date has wrong format..." / "Datetime has wrong format...").
+    fecha_recoleccion = serializers.DateField(
+        error_messages={"invalid": "El campo 'fecha_recoleccion' debe ser una fecha válida (AAAA-MM-DD)."}
+    )
+    hora_inicio = serializers.TimeField(
+        required=False,
+        allow_null=True,
+        error_messages={"invalid": "El campo 'hora_inicio' debe ser una hora válida (HH:MM:SS)."},
+    )
+    hora_fin = serializers.TimeField(
+        required=False,
+        allow_null=True,
+        error_messages={"invalid": "El campo 'hora_fin' debe ser una hora válida (HH:MM:SS)."},
     )
 
     class Meta:
@@ -117,7 +130,14 @@ class RecoleccionSerializer(serializers.ModelSerializer):
 
         fecha = attrs.get("fecha_recoleccion")
         if fecha and fecha < timezone.localdate():
-            raise serializers.ValidationError({"fecha_recoleccion": "La fecha no puede ser anterior a hoy."})
+            # POST agenda hacia adelante (una cita no puede programarse en el
+            # pasado). PATCH permite retroceder la fecha (backdating B3): el
+            # recolector puede editar la fecha y marcar el mismo día o antes
+            # (decisión de negocio de @Phyton06). La vista ya restringe el PATCH
+            # a filas pendientes (bloquea en_ruta/recolectado/cancelado), así que
+            # el guard solo aplica en create.
+            if self.instance is None:
+                raise serializers.ValidationError({"fecha_recoleccion": "La fecha no puede ser anterior a hoy."})
 
         agricultor = attrs.get("fk_agricultor")
         fecha = attrs.get("fecha_recoleccion")
@@ -190,7 +210,10 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
 
     estado = serializers.ChoiceField(
         choices=Recoleccion.ESTADO_CHOICES,
-        error_messages={"invalid_choice": f"Estado inválido. Valores válidos: {ESTADOS_VALIDOS_STR}."},
+        error_messages={
+            "required": "El campo 'estado' es obligatorio.",
+            "invalid_choice": f"Estado inválido. Valores válidos: {ESTADOS_VALIDOS_STR}.",
+        },
     )
 
     def validate(self, attrs):
@@ -202,6 +225,11 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
         # directamente recolectado (la recolección sí ocurrió, aunque nunca pasó por
         # en_ruta). Regla de negocio: pendiente vencido -> recolectado se permite;
         # pendiente vencido -> en_ruta se bloquea (abajo).
+        # ASIMETRÍA INTENCIONAL (B3, ronda 8): un pendiente con fecha FUTURA no
+        # salta directo a recolectado — el flujo del recolector pasa por en_ruta,
+        # o bien se retrocede la fecha vía PATCH (backdating) y luego se completa
+        # directo. Confirmado con negocio; fijado por
+        # test_cambiar_estado_transicion_invalida.
         if (
             estado_actual == "pendiente"
             and estado_nuevo == "recolectado"

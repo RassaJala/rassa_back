@@ -9,18 +9,22 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
 
 from rassa.models import HistorialEstadoRecoleccion, Recoleccion, Usuario
 from rassa.permissions.role_permissions import ADMIN, AGRICULTOR, VENDEDOR, HasRole
 from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log, ok_response
 
-from .serializers import (
+from .constants import (
     ESTADOS_VALIDOS_STR,
     MSG_AGRICULTOR_DUPLICADO,
     MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO,
     MSG_AGRICULTOR_SIN_ROL,
+    MSG_AGRICULTOR_SOLO_PROPIAS,
+    MSG_ESTADO_VIA_ENDPOINT,
+    MSG_FK_AGRICULTOR_ENTERO_INVALIDO,
+)
+from .serializers import (
     AgricultorSerializer,
     RecoleccionCambiarEstadoSerializer,
     RecoleccionSerializer,
@@ -28,18 +32,16 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
-ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
-
-# Mensaje unificado del guard de rango: mismo texto para query params (filtros)
-# y para el body (create/partial_update). Un entero fuera de rango o no numérico
-# es un id inválido, no un usuario inactivo: "no existe o está inactivo" era
-# engañoso en el body.
-MSG_FK_AGRICULTOR_ENTERO_INVALIDO = "El campo 'fk_agricultor' debe ser un número entero válido."
+# Derivado de ESTADOS_VALIDOS_STR (constants.py): una sola fuente de verdad con
+# el mensaje de error del serializer. Agregar un estado = tocar ESTADO_CHOICES.
+ESTADOS_VALIDOS = set(ESTADOS_VALIDOS_STR.split(", "))
 
 
 def _acotar_espera_lock():
     """Acota la espera de locks de fila a 30s (Postgres), mitigación R4.
 
+    Requiere transacción activa: llamar solo dentro de transaction.atomic()
+    (SET LOCAL fuera de una transacción lanza ProgrammingError en Postgres).
     SET LOCAL: solo aplica a la transacción actual y se revierte al cerrarla.
     El riesgo aceptado de la NOTA R4 (una transacción externa estancada que
     bloquee la fila indefinidamente) queda acotado en el tiempo. SQLite no lo
@@ -131,31 +133,6 @@ def _lockear_y_validar_agricultor(pk):
     return agricultor
 
 
-class AgricultorListView(APIView):
-    """Lista agricultores activos para el selector de recolecciones (Admin/Vendedor).
-
-    Respuesta paginada con el mismo contrato que el resto del catálogo:
-    ``{count, next, previous, results}`` dentro del envelope ``data``.
-    """
-
-    permission_classes = [IsAuthenticated, HasRole(ADMIN, VENDEDOR)]
-    pagination_class = CatalogPagination
-    # Mismo scope de lectura que list/retrieve del ViewSet: es un selector de
-    # lectura, no comparte budget con recolecciones_write.
-    throttle_scope = "recolecciones_read"
-
-    def get(self, request):
-        queryset = (
-            Usuario.objects.filter(estado=True, fk_rol__nombre_rol=AGRICULTOR)
-            .select_related("fk_persona__fk_localidad__fk_municipio", "fk_rol")
-            .order_by("fk_persona__nombre", "fk_persona__apellido_paterno")
-        )
-        paginator = CatalogPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
-        serializer = AgricultorSerializer(page, many=True)
-        return ok_response(data=paginator.get_paginated_response(serializer.data).data)
-
-
 class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     """ViewSet de recolecciones con filtros y transiciones de estado.
 
@@ -175,6 +152,20 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     Contrato de body JSON-only: create/partial_update/estado/cancelar esperan un
     objeto JSON. Se acepta además form-encoded (Mapping incluye QueryDict), pero
     NO listas/arrays (se rechazan con 400).
+
+    Unicidad del par (fk_agricultor, fecha_recoleccion) — capas y locks:
+    la garantía final es el UniqueConstraint parcial en BD (IntegrityError ->
+    400 discriminado por nombre de constraint en _manejar_integrity_error).
+    Por encima, dos capas de UX: (1) pre-check del serializer (mensaje con la
+    key del campo, sin lock) y (2) re-check bajo el lock del Usuario agricultor
+    (_lockear_y_validar_agricultor). El lock es la BARRERA DE SERIALIZACIÓN
+    deliberada del par: un segundo writer concurrente espera (sin nowait a
+    propósito; el fail-fast daría 500 por lock en vez del 400-duplicado), ve el
+    duplicado y recibe 400. Orden fijo usuario -> recolección en create y
+    partial_update para evitar deadlocks entre writers concurrentes del mismo
+    par. Riesgo residual (transacción externa estancada que bloquee la fila
+    indefinidamente): acotado con statement_timeout de 30s (SET LOCAL, solo
+    Postgres, dentro de la transacción actual) vía _acotar_espera_lock.
     """
 
     serializer_class = RecoleccionSerializer
@@ -192,9 +183,13 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
 
     def get_throttles(self):
         # Scopes separados de lectura y escritura para no compartir budget: el
-        # calendario del agricultor (list/retrieve) es lectura frecuente; las
-        # escrituras del vendedor usan su propio scope (ver settings).
-        self.throttle_scope = "recolecciones_read" if self.action in ("list", "retrieve") else "recolecciones_write"
+        # calendario del agricultor (list/retrieve) y el selector de agricultores
+        # (listar_agricultores) son lecturas frecuentes; las escrituras del
+        # vendedor usan su propio scope (ver settings).
+        if self.action in ("list", "retrieve", "listar_agricultores"):
+            self.throttle_scope = "recolecciones_read"
+        else:
+            self.throttle_scope = "recolecciones_write"
         return super().get_throttles()
 
     def _get_recoleccion(self, pk, for_update=False):
@@ -204,17 +199,8 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
             raise NotFound({"id_recoleccion": "Recolección no encontrada."})
         queryset = Recoleccion.objects.select_related("fk_agricultor__fk_persona")
         if for_update:
-            # NOTA (R4): sin nowait=True a propósito, a diferencia del resto del
-            # repo (admin_views, pedido, producto_imagen). Allí el lock protege
-            # una operación puntual y un conflicto = "ya en progreso" -> fail
-            # fast. Aquí el lock es la BARRERA DE SERIALIZACIÓN deliberada para
-            # el par (fk_agricultor, fecha): dos writers concurrentes deben
-            # esperarse para que el segundo vea el resultado del primero y
-            # reciba 400-duplicado (no 500 por lock).
-            # Mitigación del riesgo residual (transacción externa estancada que
-            # bloquee la fila indefinidamente): statement_timeout acotado a 30s,
-            # solo aplica a la transacción actual (SET LOCAL) y solo en Postgres
-            # (SQLite no tiene el concepto; los locks ahí son no-op).
+            # Lock de serialización deliberado (sin nowait a propósito) y riesgo
+            # residual acotado con statement_timeout: ver docstring del ViewSet.
             _acotar_espera_lock()
             queryset = queryset.select_for_update()
         try:
@@ -246,6 +232,9 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # sus recolecciones). Un autenticado sin perfil Usuario no puede leer nada:
         # 403 explícito (evita el 200 con lista vacía silencioso para un User huérfano).
         # Un rol legítimo sin permiso de lectura (Cliente) ve lista vacía a propósito.
+        # Asimetría intencional (ronda 8): en retrieve el mismo perfil sin permiso
+        # de lectura recibe 404 (queryset.none() -> get_object 404), no 403; el 403
+        # explícito es solo para un User sin perfil Usuario. Sin fuga de datos.
         usuario = getattr(self.request.user, "usuario", None)
         if usuario is None:
             raise PermissionDenied({"detalle": "El usuario no tiene un perfil válido para consultar recolecciones."})
@@ -263,9 +252,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
                 if not _pk_entero_valido(fk_param):
                     raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
                 if int(fk_param) != usuario.id_usuario:
-                    raise ValidationError(
-                        {"fk_agricultor": "Un agricultor solo puede consultar sus propias recolecciones."}
-                    )
+                    raise ValidationError({"fk_agricultor": MSG_AGRICULTOR_SOLO_PROPIAS})
         if self.action != "list":
             return queryset
         return self._aplicar_filtros(queryset, params)
@@ -307,11 +294,29 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         # el dataset cambia entre páginas.
         return queryset.order_by("fecha_recoleccion", F("hora_inicio").asc(nulls_last=True), "id_recoleccion")
 
+    @action(detail=False, methods=["get"], url_path="agricultores")
+    def listar_agricultores(self, request):
+        """Selector de agricultores activos para Admin/Vendedor (calendario).
+
+        @action(detail=False) mantiene la ruta bajo el router y elimina la
+        fragilidad del orden de urlpatterns (antes la ruta explícita debía ir
+        antes del include o "agricultores" matcheaba como pk=detalle -> 404).
+        Contrato de respuesta paginado igual que el resto del catálogo.
+        """
+        queryset = (
+            Usuario.objects.filter(estado=True, fk_rol__nombre_rol=AGRICULTOR)
+            .select_related("fk_persona__fk_localidad__fk_municipio", "fk_rol")
+            .order_by("fk_persona__nombre", "fk_persona__apellido_paterno")
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = AgricultorSerializer(page, many=True)
+        return ok_response(data=self.get_paginated_response(serializer.data).data)
+
     def create(self, request, *args, **kwargs):
         if not isinstance(request.data, Mapping):
             raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
-            raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
+            raise ValidationError({"estado": MSG_ESTADO_VIA_ENDPOINT})
         # Un fk_agricultor fuera de rango en el body (ej. 99999999999999999999) no
         # debe llegar al get(pk=...): en Postgres lanza NumericValueOutOfRange
         # (DataError) que DRF no convierte -> 500. Mismo guard que para query
@@ -325,16 +330,9 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         agricultor = serializer.validated_data["fk_agricultor"]
         try:
             with transaction.atomic():
-                # Capas que protegen la unicidad en create:
-                # 1. Pre-check del serializer (UX, sin lock; redundante con la 2,
-                #    pero devuelve el mensaje con la key fk_agricultor antes de la BD).
-                # 2. Re-check bajo el lock del agricultor (evita TOCTOU entre el
-                #    validate y el save en creaciones concurrentes del mismo par).
-                # 3. UniqueConstraint parcial en BD (garantía final; IntegrityError
-                #    -> 400 discriminado por constraint name en el except de abajo).
-                # Lock bloqueante deliberado (ver NOTA R4 en _get_recoleccion):
-                # serializa los creates del mismo par; un segundo writer
-                # concurrente espera, ve el duplicado y recibe 400, no 500.
+                # Capas de unicidad y por qué este lock: ver docstring del ViewSet.
+                # Re-check bajo el lock del agricultor (evita el TOCTOU entre el
+                # validate y el save en creates concurrentes del mismo par).
                 agricultor = _lockear_y_validar_agricultor(agricultor.pk)
                 if (
                     Recoleccion.objects.filter(
@@ -376,7 +374,7 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         if not isinstance(request.data, Mapping):
             raise ValidationError({"detalle": "El body debe ser un objeto JSON."})
         if "estado" in request.data:
-            raise ValidationError({"estado": "Use /estado/ o /cancelar/ para cambiar el estado."})
+            raise ValidationError({"estado": MSG_ESTADO_VIA_ENDPOINT})
         # Mismo guard de rango que en create: un fk_agricultor fuera de rango en
         # el body no debe llegar al get(pk=...) (DataError de Postgres -> 500).
         # El null se deja pasar: lo rechaza el serializer con "El agricultor es
@@ -384,16 +382,9 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         fk_agricultor = request.data.get("fk_agricultor")
         if "fk_agricultor" in request.data and fk_agricultor is not None and not _pk_entero_valido(fk_agricultor):
             raise ValidationError({"fk_agricultor": MSG_FK_AGRICULTOR_ENTERO_INVALIDO})
-        # Capas que protegen la unicidad en partial_update:
-        # 1. Pre-check del serializer (UX, sin lock del agricultor).
-        # 2. UniqueConstraint parcial en BD (garantía final; IntegrityError -> 400
-        #    discriminado por constraint name).
-        # ORDEN FIJO DE LOCKS (usuario -> recolección): si el PATCH reasigna
-        # agricultor, el lock del Usuario se adquiere ANTES que el lock de la
-        # Recolección, el mismo orden que create (usuario primero, luego el INSERT
-        # de la recolección). Dos writers concurrentes del mismo par
-        # agricultor+fecha con orden invertido de locks (uno creando y otro
-        # reasignando) podrían interbloquearse y terminar en 500.
+        # Capas de unicidad y por qué este lock: ver docstring del ViewSet.
+        # Orden fijo usuario -> recolección (igual que create) para evitar
+        # deadlocks entre writers concurrentes del mismo par.
         try:
             with transaction.atomic():
                 # Lectura SIN lock solo para validar el serializer: la fila puede
@@ -476,25 +467,27 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
         """
         with transaction.atomic():
             recoleccion = self._get_recoleccion_locked(pk)
-            if recoleccion.estado == "cancelado":
-                # Camino idempotente: no hay transición de estado, así que no se
-                # crea HistorialEstadoRecoleccion (el historial solo registra
-                # transiciones reales). Se audita igual para dejar rastro.
-                _log(request.user, f"cancelar_recoleccion id={recoleccion.pk} (ya estaba cancelada)", request)
-                return ok_response(
-                    data=RecoleccionSerializer(recoleccion).data,
-                    message="La recolección ya estaba cancelada.",
+            ya_cancelada = recoleccion.estado == "cancelado"
+            if not ya_cancelada:
+                serializer = RecoleccionCambiarEstadoSerializer(recoleccion, data={"estado": "cancelado"})
+                serializer.is_valid(raise_exception=True)
+                estado_anterior = recoleccion.estado
+                recoleccion.estado = "cancelado"
+                recoleccion.save(update_fields=["estado"])
+                HistorialEstadoRecoleccion.objects.create(
+                    fk_recoleccion=recoleccion,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo="cancelado",
+                    fk_cambiado_por=getattr(request.user, "usuario", None),
                 )
-            serializer = RecoleccionCambiarEstadoSerializer(recoleccion, data={"estado": "cancelado"})
-            serializer.is_valid(raise_exception=True)
-            estado_anterior = recoleccion.estado
-            recoleccion.estado = "cancelado"
-            recoleccion.save(update_fields=["estado"])
-            HistorialEstadoRecoleccion.objects.create(
-                fk_recoleccion=recoleccion,
-                estado_anterior=estado_anterior,
-                estado_nuevo="cancelado",
-                fk_cambiado_por=getattr(request.user, "usuario", None),
+        # _log fuera de la transacción (consistente con el resto del módulo). En
+        # el camino idempotente no hay transición de estado ni Historial (el
+        # historial solo registra transiciones reales); se audita igual.
+        if ya_cancelada:
+            _log(request.user, f"cancelar_recoleccion id={recoleccion.pk} (ya estaba cancelada)", request)
+            return ok_response(
+                data=RecoleccionSerializer(recoleccion).data,
+                message="La recolección ya estaba cancelada.",
             )
         _log(request.user, f"cancelar_recoleccion id={recoleccion.pk}", request)
         return ok_response(

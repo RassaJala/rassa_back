@@ -279,7 +279,11 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(recoleccion.estado, "recolectado")
 
     def test_cambiar_estado_transicion_invalida(self):
-        """Valida que un pendiente con fecha FUTURA no salte directo a recolectado (debe ir por en_ruta)."""
+        """Valida que un pendiente con fecha FUTURA no salte directo a recolectado (debe ir por en_ruta).
+
+        Fija la asimetría intencional de B3 (ronda 8): el camino válido es en_ruta,
+        o retroceder la fecha vía PATCH (backdating) y completar directo.
+        """
         recoleccion = self._crear_recoleccion()
         response = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
@@ -437,6 +441,52 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Estado inválido", str(response.data["estado"][0]))
         self.assertIn("pendiente", str(response.data["estado"][0]))
+
+    def test_estado_obligatorio_mensaje_espanol(self):
+        """Contrato Spanish: /estado/ con body {} -> 'estado' obligatorio en ES, no inglés."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.post(f"/api/recolecciones/{recoleccion.pk}/estado/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("estado", response.data)
+        self.assertEqual(response.data["estado"][0], "El campo 'estado' es obligatorio.")
+
+    def test_hora_formato_invalido_mensaje_espanol(self):
+        """Contrato Spanish: hora_inicio/hora_fin con formato inválido -> mensaje ES, no inglés."""
+        payload = self._payload()
+        payload["hora_inicio"] = "25:99"
+        payload["hora_fin"] = "25:99"
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("hora_inicio", response.data)
+        self.assertEqual(response.data["hora_inicio"][0], "El campo 'hora_inicio' debe ser una hora válida (HH:MM:SS).")
+        self.assertEqual(response.data["hora_fin"][0], "El campo 'hora_fin' debe ser una hora válida (HH:MM:SS).")
+
+    def test_fecha_formato_invalido_mensaje_espanol(self):
+        """Contrato Spanish: fecha_recoleccion con formato inválido -> mensaje ES, no inglés."""
+        payload = self._payload(fecha="2026-99-99")
+        response = self.client.post("/api/recolecciones/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fecha_recoleccion", response.data)
+        self.assertEqual(
+            response.data["fecha_recoleccion"][0],
+            "El campo 'fecha_recoleccion' debe ser una fecha válida (AAAA-MM-DD).",
+        )
+
+    def test_throttle_scopes_configured(self):
+        """Contrato: los scopes de throttle del módulo existen en settings (patrón test_pagos)."""
+        from rassa.settings import REST_FRAMEWORK as rf
+
+        self.assertIn("recolecciones_read", rf["DEFAULT_THROTTLE_RATES"])
+        self.assertIn("recolecciones_write", rf["DEFAULT_THROTTLE_RATES"])
+
+    def test_estados_una_sola_fuente_de_verdad(self):
+        """Contrato: ESTADOS_VALIDOS (views) y ESTADOS_VALIDOS_STR (serializers) derivan de ESTADO_CHOICES."""
+        from rassa.blueprints.recoleccion.serializers import ESTADOS_VALIDOS_STR
+        from rassa.blueprints.recoleccion.views import ESTADOS_VALIDOS
+
+        choices = {c[0] for c in Recoleccion.ESTADO_CHOICES}
+        self.assertEqual(ESTADOS_VALIDOS, choices)
+        self.assertEqual(set(ESTADOS_VALIDOS_STR.split(", ")), choices)
 
     def test_crear_con_agricultor_sin_rol(self):
         """Valida que falle la creación con un usuario que no tiene rol Agricultor."""
@@ -736,16 +786,23 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["data"]["comentarios"], "Ajustar hora de llegada")
 
-    def test_patch_cambiar_fecha_a_pasada_retorna_400(self):
-        """Valida que PATCH rechace cambiar la fecha a una pasada."""
+    def test_patch_cambiar_fecha_a_pasada_permite_backdating(self):
+        """B3 (ronda 8): PATCH puede retroceder la fecha de una recolección pendiente.
+
+        El recolector va antes de la cita, registra el viernes y edita la fecha al
+        día real (pasado). POST sigue agendando hacia adelante
+        (test_fecha_pasada_retorna_400); la vista solo permite PATCH sobre filas
+        pendientes.
+        """
         recoleccion = self._crear_recoleccion()
         response = self.client.patch(
             f"/api/recolecciones/{recoleccion.pk}/",
             {"fecha_recoleccion": str(FECHA_PASADA)},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("fecha_recoleccion", response.data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        recoleccion.refresh_from_db()
+        self.assertEqual(str(recoleccion.fecha_recoleccion), str(FECHA_PASADA))
 
     def test_cancelar_desde_en_ruta(self):
         """Valida que una recolección en ruta pueda cancelarse."""
