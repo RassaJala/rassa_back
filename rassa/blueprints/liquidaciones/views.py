@@ -307,8 +307,10 @@ class LiquidacionViewSet(
         serializer.is_valid(raise_exception=True)
 
         agricultor = serializer.context["agricultor_obj"]
-        # Defensa en profundidad: el serializer ya valida, pero re-aseguramos
-        # el rol y el estado en caso de que el serializer sea reusado sin context.
+        # Defensa en profundidad (revisión 4R R2): CalcularLiquidacionSerializer ya
+        # valida el rol de AGRICULTOR y el campo `estado=True` en `validate_agricultor()`.
+        # Se conserva esta verificación secundaria en la vista como salvaguarda ante
+        # invocaciones directas o reutilizaciones del método sin pasar por la validación del serializador.
         if agricultor.fk_rol.nombre_rol != AGRICULTOR or not agricultor.estado:
             return _ok(
                 message="El usuario no es un agricultor activo.",
