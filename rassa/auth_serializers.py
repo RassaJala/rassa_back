@@ -41,9 +41,20 @@ ROLE_REVERSE_MAPPING = {
 
 
 def validate_fk_localidad(self, value):
-    """Validate that a localidad exists. Accepts self for DRF method binding."""
-    if not Localidad.objects.filter(id_localidad=value).exists():
-        raise serializers.ValidationError("La localidad especificada no existe.")
+    """Validate that a localidad exists, is active, and belongs to an active municipio.
+
+    Rechaza localidades soft-deleted y municipios sin localidades activas,
+    para que el frontend reciba un mensaje claro en el registro y el perfil.
+    Accepts self for DRF method binding.
+    """
+    if not Localidad.objects.filter(
+        id_localidad=value,
+        estado=True,
+        fk_municipio__estado=True,
+    ).exists():
+        raise serializers.ValidationError(
+            "La localidad seleccionada no está disponible. Verifica que el municipio tenga localidades activas."
+        )
     return value
 
 
