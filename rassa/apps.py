@@ -21,6 +21,6 @@ class RassaConfig(AppConfig):
     verbose_name = "Rassa - Sistema de Gestión Agrícola"
 
     def ready(self):
-        import rassa.checks  # noqa: F401 — registra system checks de postgresql >= 15
         import rassa.blueprints.chat.signals  # noqa: F401 — registra signal rename familia→chat
+        import rassa.checks  # noqa: F401 — registra system checks de postgresql >= 15
         import rassa.signals  # noqa: F401 — registra signals de historial de estados

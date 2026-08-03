@@ -413,11 +413,21 @@ class LiquidacionViewSet(
                 liquidacion = _reload_liquidacion(pk)
 
                 if liquidacion.estado == ESTADO_PAGADA:
-                    # Idempotencia: si ya está pagada, devolvemos el detalle con 200 OK.
-                    # Esto permite al cliente recuperarse de un timeout del request original.
+                    pago_existente = liquidacion.fk_pago_liquidacion
+                    if pago_existente:
+                        if pago_existente.fk_tipo_id != tipo_pago or (pago_existente.referencia or "") != referencia:
+                            return _ok(
+                                message=(
+                                    f"La liquidación ya fue pagada previamente con datos distintos "
+                                    f"(Folio: {pago_existente.folio}). No se puede modificar el pago."
+                                ),
+                                status_code=status.HTTP_409_CONFLICT,
+                            )
+
+                    # Idempotencia: si se re-envía la misma petición, devolvemos el detalle con 200 OK.
                     ventas = _ventas_snapshot(liquidacion)
                     output = _build_detalle_output(liquidacion, ventas)
-                    folio = liquidacion.fk_pago_liquidacion.folio if liquidacion.fk_pago_liquidacion else None
+                    folio = pago_existente.folio if pago_existente else None
                     return _ok(
                         data=output,
                         message=f"La liquidación ya está marcada como pagada. Folio: {folio}.",

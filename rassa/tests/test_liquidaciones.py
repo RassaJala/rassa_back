@@ -1584,6 +1584,40 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         self.assertIn("ya está marcada como pagada", resp2.json()["message"])
         self.assertEqual(resp2.json()["data"]["pago_liquidacion"]["folio"], folio_original)
 
+    def test_marcar_pagada_discrepancia_parametros_retorna_409(self):
+        """Si se intenta marcar como pagada una liquidación ya pagada enviando un tipo_pago o referencia
+        distinto, la API debe rechazar la discrepancia con 409 Conflict (revisión 4R SUGGESTION)."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+
+        # Calcular
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        # Marcar pagada (con efectivo)
+        resp1 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_efectivo.id_tipo_pago, "referencia": "REF-1"},
+            format="json",
+        )
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+
+        # Re-intentar con datos discrepantes (con transferencia) -> 409 Conflict
+        resp2 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_transferencia.id_tipo_pago, "referencia": "REF-2"},
+            format="json",
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("datos distintos", resp2.json()["message"])
+
     def test_calcular_excluye_pedidos_ya_liquidados(self):
         """Pedidos ya vinculados en una liquidación activa no deben ser incluidos
         en un nuevo cálculo (prevención de doble pago / revisión 4R R1)."""
