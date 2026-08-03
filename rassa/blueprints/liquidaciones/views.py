@@ -94,9 +94,8 @@ def _build_detalle_output(liquidacion: Liquidacion, ventas):
     Centraliza la construcción de la respuesta que se repetía en 3 lugares
     (retrieve, calcular, marcar_pagada) — revisión 4R R2.
     """
-    liquidacion_full = _reload_liquidacion(liquidacion.pk)
     return LiquidacionDetalleSerializer(
-        liquidacion_full,
+        liquidacion,
         context={"ventas_queryset": ventas},
     ).data
 
@@ -387,9 +386,7 @@ class LiquidacionViewSet(
                         status_code=status.HTTP_404_NOT_FOUND,
                     )
 
-                liquidacion = Liquidacion.objects.select_related(
-                    "fk_agricultor__fk_persona", "fk_pago_liquidacion"
-                ).get(pk=pk)
+                liquidacion = _reload_liquidacion(pk)
 
                 if liquidacion.estado == ESTADO_PAGADA:
                     # Idempotencia: si ya está pagada, devolvemos el detalle con 200 OK.
