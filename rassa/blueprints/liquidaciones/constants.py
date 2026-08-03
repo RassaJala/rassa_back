@@ -15,3 +15,8 @@ ESTADO_PEDIDO_ENTREGADO = "entregado"
 # Se conserva en el modelo por compatibilidad con la tabla SQL existente.
 
 MSG_LIQUIDACION_DUPLICADA = "Ya existe la liquidación #{id} para ese agricultor y periodo."
+
+SEMANA_MIN = 1
+SEMANA_MAX = 53
+ANIO_MIN = 2000
+ANIO_MAX = 2100

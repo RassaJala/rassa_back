@@ -4,6 +4,7 @@ from datetime import date
 
 from rest_framework import serializers
 
+from rassa.blueprints.liquidaciones.constants import ANIO_MAX, ANIO_MIN, SEMANA_MAX, SEMANA_MIN
 from rassa.models import Liquidacion, LiquidacionVenta, Pago, TipoPago, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
 from rassa.utils import nombre_completo
@@ -128,8 +129,8 @@ class CalcularLiquidacionSerializer(serializers.Serializer):
     """Input para POST /api/liquidaciones/calcular/."""
 
     agricultor = serializers.IntegerField()
-    semana = serializers.IntegerField(min_value=1, max_value=53)
-    anio = serializers.IntegerField(min_value=2000, max_value=2100)
+    semana = serializers.IntegerField(min_value=SEMANA_MIN, max_value=SEMANA_MAX)
+    anio = serializers.IntegerField(min_value=ANIO_MIN, max_value=ANIO_MAX)
 
     def validate_agricultor(self, value):
         try:
