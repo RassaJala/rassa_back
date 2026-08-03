@@ -154,6 +154,13 @@ def _is_transient_error(exc: DatabaseError) -> bool:
     return sqlstate in ("40P01", "55P03")
 
 
+def _set_lock_timeout(timeout_str: str = "5s"):
+    """Limita el tiempo de espera por locks en la transacción actual de PostgreSQL (SET LOCAL)."""
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET LOCAL lock_timeout = '{timeout_str}'")
+
+
 class LiquidacionViewSet(
     OkResponseMixin,
     mixins.ListModelMixin,
@@ -283,10 +290,7 @@ class LiquidacionViewSet(
                 # Cap el tiempo que un select_for_update puede esperar
                 # un lock. Sin esto, un pedido bloqueado puede colgar
                 # `calcular` indefinidamente (revisión 4R R4).
-                # SET LOCAL solo afecta la transacción actual.
-                if connection.vendor == "postgresql":
-                    with connection.cursor() as cursor:
-                        cursor.execute("SET LOCAL lock_timeout = '5s'")
+                _set_lock_timeout("5s")
                 pedido_ids = [p.id_pedido for p in ventas]
                 list(PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk"))
 
@@ -393,9 +397,7 @@ class LiquidacionViewSet(
                 # Cap el tiempo que un select_for_update puede esperar
                 # un lock. Sin esto, un pedido bloqueado puede colgar
                 # `marcar_pagada` indefinidamente (revisión 4R R4).
-                if connection.vendor == "postgresql":
-                    with connection.cursor() as cursor:
-                        cursor.execute("SET LOCAL lock_timeout = '5s'")
+                _set_lock_timeout("5s")
 
                 locked_id = (
                     Liquidacion.objects.select_for_update()
