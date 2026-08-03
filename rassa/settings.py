@@ -196,6 +196,9 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones_current": "60/minute",
     "pagos_read": "60/minute",
     "pagos_write": "20/hour",
+    # Throttling diferenciado para Liquidaciones:
+    # `liquidaciones_calcular`: 30/hora (operación pesada de cálculo server-side).
+    # `liquidaciones_marcar_pagada`: 60/hora (registro operativo de pago).
     "liquidaciones_read": "60/minute",
     "liquidaciones_calcular": "30/hour",
     "liquidaciones_marcar_pagada": "60/hour",
