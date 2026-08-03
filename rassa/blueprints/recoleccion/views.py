@@ -34,7 +34,7 @@ ESTADOS_VALIDOS = {estado for estado, _ in Recoleccion.ESTADO_CHOICES}
 # y para el body (create/partial_update). Un entero fuera de rango o no numérico
 # es un id inválido, no un usuario inactivo: "no existe o está inactivo" era
 # engañoso en el body.
-MSG_FK_AGRICULTOR_ENTERO_INVALIDO = "El parámetro 'fk_agricultor' debe ser un número entero válido."
+MSG_FK_AGRICULTOR_ENTERO_INVALIDO = "El campo 'fk_agricultor' debe ser un número entero válido."
 
 
 def _acotar_espera_lock():
@@ -140,6 +140,9 @@ class AgricultorListView(APIView):
 
     permission_classes = [IsAuthenticated, HasRole(ADMIN, VENDEDOR)]
     pagination_class = CatalogPagination
+    # Mismo scope de lectura que list/retrieve del ViewSet: es un selector de
+    # lectura, no comparte budget con recolecciones_write.
+    throttle_scope = "recolecciones_read"
 
     def get(self, request):
         queryset = (

@@ -446,6 +446,53 @@ class RecoleccionesTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_agricultor", response.data)
 
+    def test_patch_reasignar_agricultor_inactivo_retorna_400(self):
+        """Fija el guard de reasignación en PATCH: mover a un agricultor inactivo -> 400.
+
+        Mismo path de lock que create (_lockear_y_validar_agricultor): si el PATCH
+        reasigna fk_agricultor, la validación activo/rol corre bajo el lock del
+        Usuario. Evita que una divergencia futura solo cubra create y no partial_update.
+        """
+        recoleccion = self._crear_recoleccion()
+        self.usuario_agricultor.estado = False
+        self.usuario_agricultor.save()
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"fk_agricultor": self.usuario_agricultor.id_usuario},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+        self.assertEqual(response.data["fk_agricultor"][0], MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO)
+
+    def test_patch_reasignar_agricultor_sin_rol_retorna_400(self):
+        """Fija el PATCH de reasignación: mover a un usuario sin rol Agricultor -> 400."""
+        recoleccion = self._crear_recoleccion()
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"fk_agricultor": self.usuario_cliente.id_usuario},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_agricultor", response.data)
+
+    def test_patch_reasignar_agricultor_inexistente_retorna_400(self):
+        """Fija el PATCH de reasignación: mover a un agricultor inexistente -> 400.
+
+        El pk inexistente lo rechaza el propio campo fk_agricultor (does_not_exist)
+        ANTES del lock, así que el resultado es 400 con el mensaje en español,
+        consistente con create. (El 404 de _lockear_y_validar_agricultor solo se
+        alcanza en el camino bajo el lock, que no aplica cuando el pk no existe.)
+        """
+        recoleccion = self._crear_recoleccion()
+        response = self.client.patch(
+            f"/api/recolecciones/{recoleccion.pk}/",
+            {"fk_agricultor": 999999},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["fk_agricultor"][0], MSG_AGRICULTOR_NO_EXISTE_O_INACTIVO)
+
     def test_crear_fk_agricultor_fuera_de_rango_retorna_400(self):
         """Valida que un fk_agricultor fuera de rango en el body retorne 400 y no 500.
 
