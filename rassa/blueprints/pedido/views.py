@@ -32,6 +32,7 @@ from .serializers import (
     PedidoDetailSerializer,
     PedidoListSerializer,
     PedidoOutputSerializer,
+    es_pedido_expirado,
 )
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
             self.check_object_permissions(request, pedido)
             estado_actual = pedido.fk_estado.tipo_estado
+
+            if es_pedido_expirado(pedido):
+                return ok_response(
+                    message="El pedido expiró y ya no está disponible.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             if estado_actual in ESTADOS_TERMINALES:
                 return ok_response(
