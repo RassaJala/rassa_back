@@ -1,4 +1,8 @@
-"""Utilidades compartidas del módulo rassa."""
+"""Utilidades compartidas del proyecto."""
+
+from datetime import datetime
+
+from rest_framework.exceptions import ValidationError
 
 
 def nombre_completo(usuario):
@@ -10,11 +14,6 @@ def nombre_completo(usuario):
         p = usuario.fk_persona
         return f"{p.nombre} {p.apellido_paterno}".strip()
     return None
-"""Utilidades compartidas del proyecto."""
-
-from datetime import datetime
-
-from rest_framework.exceptions import ValidationError
 
 
 def parse_date_param(raw, param_name):
