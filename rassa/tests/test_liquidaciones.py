@@ -185,6 +185,17 @@ class LiquidacionesTestBase(APITestCase):
             )
         return pedido
 
+    def _calcular(self, agricultor_id=None, semana=30, anio=2026, client=None, **extra_data):
+        """Helper para realizar peticiones POST /api/liquidaciones/calcular/."""
+        c = client or self.client
+        data = {
+            "agricultor": agricultor_id if agricultor_id is not None else self.usuario_agricultor.id_usuario,
+            "semana": semana,
+            "anio": anio,
+        }
+        data.update(extra_data)
+        return c.post("/api/liquidaciones/calcular/", data, format="json")
+
 
 class CalcularLiquidacionTest(LiquidacionesTestBase):
     """Cálculo de liquidaciones semanales por agricultor."""
@@ -198,15 +209,7 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
         self._crear_pedido_entregado(total=Decimal("200.00"), creado_en=_aware(2026, 7, 23))
         self._crear_pedido_entregado(total=Decimal("300.00"), creado_en=_aware(2026, 7, 26, hour=10))
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp = self._calcular()
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         body = resp.json()
         self.assertEqual(body["ok"], True)
@@ -225,15 +228,7 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
         self._crear_pedido_entregado(total=Decimal("300.00"), creado_en=_aware(2026, 7, 26, hour=23))
         self._crear_pedido_entregado(total=Decimal("999.00"), creado_en=_aware(2026, 7, 27))
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp = self._calcular()
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         # Solo entran los 2 pedidos de la semana 30 (lun 2026-07-20 a dom 2026-07-26 inclusive)
@@ -274,15 +269,7 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
             importe=Decimal("999.00"),
         )
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp = self._calcular()
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("500.00"))
@@ -341,15 +328,7 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
         )
 
         # Calcular para el primer agricultor: solo debe contar el pedido de 100
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp = self._calcular()
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
@@ -358,15 +337,7 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
         self._crear_pedido_entregado(total=Decimal("1000.00"), creado_en=_aware(2026, 7, 21))
 
         with patch("rassa.blueprints.liquidaciones.views.COMISION_RASSA", new=Decimal("0.05")):
-            resp = self.client.post(
-                "/api/liquidaciones/calcular/",
-                {
-                    "agricultor": self.usuario_agricultor.id_usuario,
-                    "semana": 30,
-                    "anio": 2026,
-                },
-                format="json",
-            )
+            resp = self._calcular()
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("1000.00"))
@@ -376,26 +347,10 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
     def test_calcular_bloquea_duplicado_409(self):
         self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
 
-        resp1 = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp1 = self._calcular()
         self.assertEqual(resp1.status_code, status.HTTP_201_CREATED)
 
-        resp2 = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp2 = self._calcular()
         self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
         body = resp2.json()
         self.assertEqual(body["data"]["id_liquidacion_existente"], resp1.json()["data"]["id_liquidacion"])
