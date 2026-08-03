@@ -1730,17 +1730,17 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         )
 
         # Calcular para agricultor 1
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-            },
-            format="json",
-        )
+        resp = self._calcular(agricultor_id=self.usuario_agricultor.id_usuario, semana=30, anio=2026)
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         # Debe ser exactamente 100.00 (no 300.00)
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
         self.assertEqual(Decimal(data["ventas"][0]["total"]), Decimal("100.00"))
+
+        # Calcular para agricultor 2 (mismo pedido compartido)
+        resp2 = self._calcular(agricultor_id=agri2.id_usuario, semana=30, anio=2026)
+        self.assertEqual(resp2.status_code, status.HTTP_201_CREATED)
+        data2 = resp2.json()["data"]
+        # Debe ser exactamente 200.00 (no 300.00)
+        self.assertEqual(Decimal(data2["monto_ventas"]), Decimal("200.00"))
+        self.assertEqual(Decimal(data2["ventas"][0]["total"]), Decimal("200.00"))
