@@ -647,10 +647,32 @@ class PermisosTest(LiquidacionesTestBase):
         resp = self._calcular()
         liquidacion_id = resp.json()["data"]["id_liquidacion"]
 
-        # Vendedor no debe poder ver el detalle
-        self.client.force_authenticate(user=self.user_vendedor)
-        resp_get = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
-        self.assertEqual(resp_get.status_code, status.HTTP_403_FORBIDDEN)
+        # Vendedor, cliente y agricultor no deben poder ver el detalle
+        for u in (self.user_vendedor, self.user_cliente, self.user_agricultor):
+            self.client.force_authenticate(user=u)
+            resp_get = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
+            self.assertEqual(resp_get.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cliente_y_agricultor_no_pueden_calcular(self):
+        for u in (self.user_cliente, self.user_agricultor):
+            resp = self._calcular(client=self.client)
+            self.client.force_authenticate(user=u)
+            resp = self._calcular()
+            self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cliente_y_agricultor_no_pueden_marcar_pagada(self):
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self._calcular()
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        for u in (self.user_cliente, self.user_agricultor):
+            self.client.force_authenticate(user=u)
+            resp2 = self.client.post(
+                f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+                {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+                format="json",
+            )
+            self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class CalcularEdgeCasesTest(LiquidacionesTestBase):
