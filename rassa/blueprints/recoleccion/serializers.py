@@ -214,8 +214,9 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
             )
         # Solo se bloquea pasar de pendiente -> en_ruta en una fecha pasada.
         # Cancelar (pendiente/en_ruta -> cancelado) se permite siempre,
-        # independientemente de la fecha. El completado en_ruta -> recolectado
-        # tiene su propio guard de fecha futura más abajo.
+        # independientemente de la fecha. En_ruta -> recolectado se permite con
+        # cualquier fecha: el recolector puede completar antes del día programado
+        # (y también editar la fecha de recolección).
         if (
             estado_actual == "pendiente"
             and estado_nuevo == "en_ruta"
@@ -225,25 +226,6 @@ class RecoleccionCambiarEstadoSerializer(serializers.Serializer):
                 {
                     "fecha_recoleccion": (
                         "La fecha de la recolección ya pasó; solo se permite cancelarla o marcarla como recolectada."
-                    )
-                }
-            )
-        # Regla de negocio (pendiente de confirmación): no se puede completar
-        # (en_ruta -> recolectado) ANTES de la fecha programada. El guard de
-        # "completado tardío" solo protegía fechas PASADAS, dejando que una cita
-        # FUTURA se marcara recolectada el mismo día que se agenda. Solo a partir
-        # del día de la cita (fecha <= hoy) se permite completar.
-        # ponytail: regla conservadora pendiente de confirmación de negocio; el
-        # upgrade path si se confirma lo contrario es eliminar este bloque.
-        if (
-            estado_actual == "en_ruta"
-            and estado_nuevo == "recolectado"
-            and self.instance.fecha_recoleccion > timezone.localdate()
-        ):
-            raise serializers.ValidationError(
-                {
-                    "fecha_recoleccion": (
-                        "No se puede marcar como recolectada una recolección antes de su fecha programada."
                     )
                 }
             )

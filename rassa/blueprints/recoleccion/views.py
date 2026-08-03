@@ -164,8 +164,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     agricultor agende/cancele, revisar get_permissions.
 
     El borrado de un Usuario con recolecciones fallará con ProtectedError
-    (fk_agricultor es on_delete=PROTECT). Si algún día existe un admin de
-    usuarios, ese error debería traducirse a 409 Conflict.
+    (fk_agricultor es on_delete=PROTECT). Deuda técnica fuera de este PR: no
+    existe aún el admin de usuarios, así que no hay un delete que capture este
+    error. CANDIDATA a resolver en el PR de gestión de usuarios: capturar
+    `except ProtectedError` y devolver 409 Conflict.
 
     Contrato de body JSON-only: create/partial_update/estado/cancelar esperan un
     objeto JSON. Se acepta además form-encoded (Mapping incluye QueryDict), pero

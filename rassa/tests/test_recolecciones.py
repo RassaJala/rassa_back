@@ -146,8 +146,8 @@ class RecoleccionesTestCase(TestCase):
     def test_slot_ocupado_tras_recolectar(self):
         """Fija la regla de negocio: una recolección recolectada SIGUE ocupando el slot
         agricultor+fecha; no se puede programar otra activa ese mismo día."""
-        # Fecha = hoy a propósito: en_ruta -> recolectado solo se permite a partir
-        # del día de la cita (regla de completado anticipado).
+        # Fecha = hoy: en_ruta -> recolectado con cualquier fecha se permite;
+        # el día 0 evita ambigüedad temporal en el completado.
         recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()))
         response_en_ruta = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
@@ -262,7 +262,7 @@ class RecoleccionesTestCase(TestCase):
 
     def test_cambiar_estado_transicion_valida(self):
         """Valida las transiciones pendiente -> en_ruta -> recolectado."""
-        # Fecha = hoy: en_ruta -> recolectado antes de la fecha programada se bloquea.
+        # Fecha = hoy: el completado en_ruta -> recolectado se permite con cualquier fecha.
         recoleccion = self._crear_recoleccion(fecha_recoleccion=str(timezone.localdate()))
         response1 = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "en_ruta"}, format="json"
@@ -847,18 +847,17 @@ class RecoleccionesTestCase(TestCase):
         recoleccion.refresh_from_db()
         self.assertEqual(recoleccion.estado, "recolectado")
 
-    def test_en_ruta_fecha_futura_no_puede_recolectarse(self):
-        """Regla de negocio (pendiente de confirmación): un en_ruta no puede marcarse
-        recolectado ANTES de su fecha programada (una cita futura no se completa hoy)."""
+    def test_en_ruta_fecha_futura_puede_recolectarse(self):
+        """Regla de negocio: un en_ruta con fecha FUTURA sí puede marcarse recolectado.
+        El recolector puede completar antes del día programado (y también editar la
+        fecha de recolección)."""
         recoleccion = self._crear_recoleccion(estado="en_ruta")  # fecha FECHA_FUTURA
         response = self.client.post(
             f"/api/recolecciones/{recoleccion.pk}/estado/", {"estado": "recolectado"}, format="json"
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("fecha_recoleccion", response.data)
-        self.assertIn("antes de su fecha programada", str(response.data["fecha_recoleccion"]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         recoleccion.refresh_from_db()
-        self.assertEqual(recoleccion.estado, "en_ruta")
+        self.assertEqual(recoleccion.estado, "recolectado")
 
     def test_en_ruta_fecha_hoy_puede_recolectarse(self):
         """Regla de negocio: a partir del día de la cita (fecha <= hoy) se permite completar."""
