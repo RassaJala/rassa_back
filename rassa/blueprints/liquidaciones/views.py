@@ -39,7 +39,12 @@ logger = logging.getLogger(__name__)
 
 
 def _rango_semana(year: int, week: int) -> tuple[date, date]:
-    """Retorna (lunes_inclusive, lunes_siguiente_exclusive) naive."""
+    """Retorna date objects (naive, representan fechas en la TZ configurada del proyecto).
+
+    Las fechas representan días en la zona horaria configurada del proyecto
+    (TIME_ZONE en settings). El filtro ``creado_en__date__gte/lt`` de Django
+    convierte automáticamente el datetime UTC al TIME_ZONE antes de comparar.
+    """
     lunes = date.fromisocalendar(year, week, 1)
     return lunes, lunes + timedelta(days=7)
 
@@ -164,7 +169,7 @@ class LiquidacionViewSet(
         if self.action == "calcular":
             self.throttle_scope = "liquidaciones_calcular"
         elif self.action == "marcar_pagada":
-            self.throttle_scope = "liquidaciones_pagada"
+            self.throttle_scope = "liquidaciones_marcar_pagada"
         else:
             self.throttle_scope = "liquidaciones_read"
         return super().get_throttles()
@@ -324,10 +329,12 @@ class LiquidacionViewSet(
                     agricultor.id_usuario,
                     semana,
                 )
-                return _ok(
+                response = _ok(
                     message="Conflicto de concurrencia al calcular. Reintente.",
                     status_code=status.HTTP_409_CONFLICT,
                 )
+                response["Retry-After"] = "5"
+                return response
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
@@ -412,10 +419,12 @@ class LiquidacionViewSet(
         except DatabaseError as exc:
             if _is_deadlock(exc):
                 logger.warning("Deadlock en marcar_pagada liquidacion=%s", pk)
-                return _ok(
+                response = _ok(
                     message="Conflicto de concurrencia. Reintente.",
                     status_code=status.HTTP_409_CONFLICT,
                 )
+                response["Retry-After"] = "5"
+                return response
             logger.error("Error al registrar pago de liquidación %s: %s", pk, exc)
             return _ok(
                 message="Error al procesar el pago de la liquidación. Intente de nuevo.",

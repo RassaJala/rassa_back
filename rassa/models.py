@@ -835,7 +835,14 @@ class Recibo(models.Model):
 
 
 class Liquidacion(models.Model):
-    """Liquidación de ventas de un agricultor en un periodo."""
+    """Liquidación de ventas de un agricultor en un periodo.
+
+    Estados:
+        - pendiente: recién calculada, pendiente de pago.
+        - pagada: pago registrado vía fk_pago_liquidacion.
+        - parcial: reservado para pagos parciales futuros (ninguna ruta
+          del backend lo produce actualmente).
+    """
 
     ESTADO_CHOICES = [
         ("pendiente", "Pendiente"),

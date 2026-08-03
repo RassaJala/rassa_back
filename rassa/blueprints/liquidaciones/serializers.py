@@ -6,9 +6,9 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
-from rassa.blueprints.pagos.serializers import _nombre_completo
 from rassa.models import Liquidacion, Pago, PedidoCabecera, TipoPago, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
+from rassa.utils import nombre_completo
 
 
 class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
@@ -28,7 +28,7 @@ class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
         ]
 
     def get_cliente_nombre(self, obj):
-        return _nombre_completo(obj.fk_cliente)
+        return nombre_completo(obj.fk_cliente)
 
     def get_pago_folio(self, obj):
         # Importante: NO usar `pagos.first()` aquí — Django emite una query
@@ -64,7 +64,7 @@ class AgricultorNombreMixin:
     opera sobre Liquidacion (revisión 4R R2 SUGGESTION sobre duplicación)."""
 
     def get_agricultor_nombre(self, obj):
-        return _nombre_completo(obj.fk_agricultor)
+        return nombre_completo(obj.fk_agricultor)
 
 
 class LiquidacionListSerializer(AgricultorNombreMixin, serializers.ModelSerializer):
@@ -111,7 +111,7 @@ class LiquidacionDetalleSerializer(AgricultorNombreMixin, serializers.ModelSeria
         ]
 
     def get_agricultor_nombre(self, obj):
-        return _nombre_completo(obj.fk_agricultor)
+        return nombre_completo(obj.fk_agricultor)
 
     def get_ventas(self, obj):
         ventas = self.context.get("ventas_queryset")
