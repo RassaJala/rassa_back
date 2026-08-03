@@ -2063,6 +2063,20 @@ class Command(BaseCommand):
             Integrante.objects.update_or_create(id_miembro=i["id_miembro"], defaults=i)
         self.stdout.write("  Integrantes: OK")
 
+        # Sincronizar conversaciones familiares: enlazar por nombre las convs
+        # 7/8/9 ya creadas sin fk_familia, luego ensure_family_chat reconcilia
+        # integrantes/roles. ponytail: se hace aquí (tras crear convs+integrantes)
+        # en vez de tras _seed_familias porque las convs aún no existían allí.
+        from rassa.blueprints.chat.services import chat_sync
+
+        for f in Familia.objects.all():
+            Conversacion.objects.filter(nombre=f.nombre_familia, fk_familia__isnull=True, tipo=True).update(
+                fk_familia=f
+            )
+        for f in Familia.objects.all():
+            chat_sync.ensure_family_chat(f.id_familia)
+        self.stdout.write("  Conversaciones familiares sincronizadas: OK")
+
     def _seed_mensajes(self):
         mensajes = [
             {
