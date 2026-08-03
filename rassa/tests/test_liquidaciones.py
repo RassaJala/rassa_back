@@ -480,7 +480,7 @@ class MarcarPagadaTest(LiquidacionesTestBase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["pago_liquidacion"]["referencia"], "")
 
-    def test_marcar_pagada_sobre_ya_pagada_retorna_400(self):
+    def test_marcar_pagada_sobre_ya_pagada_es_idempotente_200(self):
         self.client.post(
             f"/api/liquidaciones/{self.liquidacion_id}/marcar-pagada/",
             {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
@@ -491,7 +491,7 @@ class MarcarPagadaTest(LiquidacionesTestBase):
             {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
             format="json",
         )
-        self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
 
     def test_marcar_pagada_tipo_pago_inexistente_retorna_400(self):
         resp = self.client.post(
@@ -802,6 +802,98 @@ class CalcularEdgeCasesTest(LiquidacionesTestBase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("no existe", str(resp.json()))
 
+    def test_tasa_comision_fuera_de_rango_retorna_400(self):
+        """tasa_comision está acotada 0..1 con 4 decimales. Valores fuera
+        de rango retornan 400 (revisión 4R R3)."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+
+        for tasa_invalida in ("-0.5", "1.5", "2.0000"):
+            resp = self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                    "tasa_comision": tasa_invalida,
+                },
+                format="json",
+            )
+            self.assertEqual(
+                resp.status_code,
+                status.HTTP_400_BAD_REQUEST,
+                f"tasa={tasa_invalida} esperaba 400, recibí {resp.status_code}: {resp.json()}",
+            )
+
+        # Tasa con más de 4 decimales también falla
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+                "tasa_comision": "0.12345",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_calcular_sin_estado_entregado_en_bd_retorna_500(self):
+        """Si el seed no ha creado el EstadoPedido 'entregado', calcular
+        retorna 500 con mensaje claro (revisión 4R R4 SUGGESTION)."""
+        from unittest.mock import patch
+
+        from rassa.models import EstadoPedido
+
+        # Forzar que el .get() de EstadoPedido lance DoesNotExist
+        with patch("rassa.blueprints.liquidaciones.views.EstadoPedido.objects.get") as mock_get:
+            mock_get.side_effect = EstadoPedido.DoesNotExist("entregado")
+            resp = self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                },
+                format="json",
+            )
+        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn("estado 'entregado'", resp.json()["message"])
+
+    def test_calcular_con_parcial_existente_retorna_409(self):
+        """Una liquidación en estado 'parcial' (reservado para futuro)
+        también cuenta como duplicada para re-calcular (revisión 4R R3
+        advertencia sobre 'solo se testea pendiente')."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+
+        # Crear liquidación y forzar estado 'parcial' manualmente
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+        Liquidacion.objects.filter(pk=liquidacion_id).update(estado="parcial")
+
+        # Re-calcular el mismo periodo con parcial existente → 409
+        resp2 = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            resp2.json()["data"]["id_liquidacion_existente"],
+            liquidacion_id,
+        )
+
 
 class MarcarPagadaEdgeCasesTest(LiquidacionesTestBase):
     """Casos borde de marcar como pagada (transición desde parcial)."""
@@ -1001,6 +1093,11 @@ class CalcularYearBoundaryTest(LiquidacionesTestBase):
             total=Decimal("999.00"),
             creado_en=_aware(2026, 12, 27),
         )
+        # Borde lejano: pedido del domingo 2027-01-03 a última hora debe ser incluido en semana 53 (revisión 4R R3).
+        self._crear_pedido_entregado(
+            total=Decimal("50.00"),
+            creado_en=_aware(2027, 1, 3, hour=23, minute=59),
+        )
 
         resp = self.client.post(
             "/api/liquidaciones/calcular/",
@@ -1015,9 +1112,9 @@ class CalcularYearBoundaryTest(LiquidacionesTestBase):
         data = resp.json()["data"]
         self.assertEqual(data["periodo_inicio"], "2026-12-28")
         self.assertEqual(data["periodo_fin"], "2027-01-03")
-        # Solo cuenta el pedido del 2026-12-28 (100.00), no el del 27 (999.00)
-        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
-        self.assertEqual(len(data["ventas"]), 1)
+        # Cuenta el del 28 (100.00) y el del 3 (50.00), total = 150.00
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("150.00"))
+        self.assertEqual(len(data["ventas"]), 2)
 
     def test_semana_53_de_2026_excluye_lunes_2027_01_04(self):
         """El lunes 2027-01-04 pertenece a la SEMANA 1 de 2027, no a la
@@ -1188,9 +1285,9 @@ class CalcularConcurrencyTest(TransactionTestCase):
             f"Esperaba 1 created, recibí {results}",
         )
         self.assertEqual(
-            sum(1 for c in codes if c == status.HTTP_409_CONFLICT),
+            sum(1 for c in codes if c in (status.HTTP_409_CONFLICT, status.HTTP_400_BAD_REQUEST)),
             NUM_THREADS - 1,
-            f"Esperaba {NUM_THREADS - 1} conflictos, recibí {results}",
+            f"Esperaba {NUM_THREADS - 1} no-ops (409 o 400), recibí {results}",
         )
         # Y en la BD solo debe haber 1 liquidación
         self.assertEqual(
@@ -1277,18 +1374,18 @@ class CalcularConcurrencyTest(TransactionTestCase):
         # El view debe tener OTRO mecanismo (advisory lock, constraint)
         # que evite crear más de una liquidación.
         successes = sum(1 for c in codes if c == status.HTTP_201_CREATED)
-        duplicates = sum(1 for c in codes if c == status.HTTP_409_CONFLICT)
+        duplicates = sum(1 for c in codes if c in (status.HTTP_409_CONFLICT, status.HTTP_400_BAD_REQUEST))
         self.assertEqual(
             successes + duplicates,
             NUM_THREADS,
-            f"Esperaba solo 201+409, recibí {codes}",
+            f"Esperaba solo 201+409/400, recibí {codes}",
         )
         self.assertGreater(
             duplicates,
             0,
             "Sin serialización real, todos los threads crearían liquidaciones "
             "duplicadas (race condition). El view debe serializar via "
-            "advisory lock u otro mecanismo.",
+            "advisory lock, constraint u otro mecanismo.",
         )
         # En la BD: solo 1 liquidación activa
         self.assertEqual(
@@ -1473,3 +1570,81 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         resp = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.json()["data"]["ventas"]), 1)
+
+    def test_marcar_pagada_idempotencia(self):
+        """Si marcar_pagada recibe una liquidación ya pagada, devuelve 200 OK
+        con el detalle y el folio del pago en lugar de un error 400 (revisión 4R R4)."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+
+        # Calcular
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        # Marcar pagada (primer intento)
+        resp1 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+            format="json",
+        )
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+        folio_original = resp1.json()["data"]["pago_liquidacion"]["folio"]
+
+        # Marcar pagada (segundo intento)
+        resp2 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+            format="json",
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        self.assertIn("ya está marcada como pagada", resp2.json()["message"])
+        self.assertEqual(resp2.json()["data"]["pago_liquidacion"]["folio"], folio_original)
+
+    def test_calcular_excluye_pedidos_ya_liquidados(self):
+        """Pedidos ya vinculados en una liquidación activa no deben ser incluidos
+        en un nuevo cálculo (prevención de doble pago / revisión 4R R1)."""
+        # Crear 2 pedidos entregados en semana 30
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        self._crear_pedido_entregado(total=Decimal("50.00"), creado_en=_aware(2026, 7, 22))
+
+        # Crear una liquidación dummy en un periodo diferente (semana 29)
+        from rassa.models import Liquidacion, LiquidacionVenta, PedidoCabecera
+
+        liq_dummy = Liquidacion.objects.create(
+            fk_agricultor=self.usuario_agricultor,
+            periodo_inicio=date(2026, 7, 13),
+            periodo_fin=date(2026, 7, 19),
+            monto_ventas=Decimal("100.00"),
+            comision=Decimal("10.00"),
+            monto_liquidar=Decimal("90.00"),
+            estado="pagada",
+        )
+        # Vincular el primer pedido (100.00) de la semana 30 a esta liquidación dummy
+        LiquidacionVenta.objects.create(
+            fk_liquidacion=liq_dummy,
+            fk_pedido=PedidoCabecera.objects.get(total=Decimal("100.00")),
+            monto_aportado=Decimal("100.00"),
+        )
+
+        # Ahora calculamos la semana 30
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.json())
+        data = resp.json()["data"]
+        # Debe excluir el pedido de 100.00 (ya liquidado) y solo incluir el de 50.00
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("50.00"))
+        self.assertEqual(len(data["ventas"]), 1)

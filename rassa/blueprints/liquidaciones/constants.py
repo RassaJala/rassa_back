@@ -6,6 +6,8 @@ COMISION_RASSA = Decimal("0.10")
 
 ESTADO_PENDIENTE = "pendiente"
 ESTADO_PAGADA = "pagada"
+ESTADOS_ACTIVOS = ["pendiente", "parcial"]
+ESTADO_PEDIDO_ENTREGADO = "entregado"
 
 # Estado `parcial` está en ESTADO_CHOICES del modelo (Liquidacion) pero
 # ninguna ruta del backend lo produce hoy (calcular siempre crea

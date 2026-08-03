@@ -59,7 +59,15 @@ class PagoLiquidacionSerializer(serializers.ModelSerializer):
         ]
 
 
-class LiquidacionListSerializer(serializers.ModelSerializer):
+class AgricultorNombreMixin:
+    """Mixin compartido: agrega `agricultor_nombre` al serializer que
+    opera sobre Liquidacion (revisión 4R R2 SUGGESTION sobre duplicación)."""
+
+    def get_agricultor_nombre(self, obj):
+        return _nombre_completo(obj.fk_agricultor)
+
+
+class LiquidacionListSerializer(AgricultorNombreMixin, serializers.ModelSerializer):
     agricultor_id = serializers.IntegerField(source="fk_agricultor_id", read_only=True)
     agricultor_nombre = serializers.SerializerMethodField()
 
@@ -78,11 +86,8 @@ class LiquidacionListSerializer(serializers.ModelSerializer):
             "creado_en",
         ]
 
-    def get_agricultor_nombre(self, obj):
-        return _nombre_completo(obj.fk_agricultor)
 
-
-class LiquidacionDetalleSerializer(serializers.ModelSerializer):
+class LiquidacionDetalleSerializer(AgricultorNombreMixin, serializers.ModelSerializer):
     agricultor_id = serializers.IntegerField(source="fk_agricultor_id", read_only=True)
     agricultor_nombre = serializers.SerializerMethodField()
     ventas = serializers.SerializerMethodField()

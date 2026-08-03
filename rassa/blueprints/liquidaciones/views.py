@@ -4,7 +4,7 @@ import logging
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -13,6 +13,7 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.blueprints.liquidaciones.constants import (
     ESTADO_PAGADA,
+    ESTADO_PEDIDO_ENTREGADO,
     ESTADO_PENDIENTE,
     MSG_LIQUIDACION_DUPLICADA,
 )
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def _rango_semana(year: int, week: int) -> tuple[date, date]:
-    """Retorna (lunes_inclusive, lunes_siguiente_exclusive) en zona local."""
+    """Retorna (lunes_inclusive, lunes_siguiente_exclusive) naive."""
     lunes = date.fromisocalendar(year, week, 1)
     return lunes, lunes + timedelta(days=7)
 
@@ -49,7 +50,7 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
     inicio es inclusivo, fin_exclusive es exclusivo. Los pedidos con
     `creado_en` en la fecha fin_exclusive (lunes siguiente) NO cuentan.
     """
-    estado_entregado = EstadoPedido.objects.get(tipo_estado="entregado")
+    estado_entregado = EstadoPedido.objects.get(tipo_estado=ESTADO_PEDIDO_ENTREGADO)
     pedido_ids = (
         DetallePedido.objects.filter(fk_producto_semanal__fk_publicacion__fk_agricultor_id=agricultor_id)
         .values_list("fk_pedido_id", flat=True)
@@ -61,6 +62,7 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
             fk_estado=estado_entregado,
             creado_en__date__gte=inicio,
             creado_en__date__lt=fin_exclusive,
+            liquidaciones__isnull=True,
         )
         .select_related("fk_cliente__fk_persona")
         .prefetch_related("pago_set")
@@ -206,9 +208,24 @@ class LiquidacionViewSet(
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         if self.action == "retrieve":
-            instance = self.get_object()
+            # _cached_instance se setea en retrieve() (override abajo)
+            # para evitar un segundo SELECT a la BD (revisión 4R R2
+            # SUGGESTION — doble fetch en retrieve).
+            instance = getattr(self, "_cached_instance", None) or self.get_object()
+            self._cached_instance = instance
             ctx["ventas_queryset"] = _ventas_snapshot(instance)
         return ctx
+
+    def retrieve(self, request, *args, **kwargs):
+        # Override OkResponseMixin.retrieve para evitar el doble fetch:
+        # el super().retrieve() llama a get_object() y luego a
+        # get_serializer() que internamente llama a get_serializer_context()
+        # que volvía a llamar a get_object(). Ahora cacheamos la instancia
+        # en _cached_instance y la reutilizamos.
+        instance = self.get_object()
+        self._cached_instance = instance
+        serializer = self.get_serializer(instance)
+        return _ok(data=serializer.data)
 
     @action(detail=False, methods=["post"], url_path="calcular")
     def calcular(self, request):
@@ -235,7 +252,16 @@ class LiquidacionViewSet(
         if existing:
             return _liquidacion_duplicada_response(existing)
 
-        ventas = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
+        try:
+            ventas = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
+        except EstadoPedido.DoesNotExist:
+            # El seed no ha creado el estado "entregado" — es un error
+            # operacional, no del usuario (revisión 4R R4).
+            logger.error("EstadoPedido 'entregado' no existe en la BD. Ejecutar seed_rassa_data.")
+            return _ok(
+                message="Error de configuración: estado 'entregado' no está en la BD. Contacta al administrador.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         if not ventas:
             return _ok(
                 message="No hay ventas entregadas para este agricultor en el periodo.",
@@ -244,6 +270,13 @@ class LiquidacionViewSet(
 
         try:
             with transaction.atomic():
+                # Cap el tiempo que un select_for_update puede esperar
+                # un lock. Sin esto, un pedido bloqueado puede colgar
+                # `calcular` indefinidamente (revisión 4R R4).
+                # SET LOCAL solo afecta la transacción actual.
+                if connection.vendor == "postgresql":
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL lock_timeout = '5s'")
                 pedido_ids = [p.id_pedido for p in ventas]
                 list(PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk"))
 
@@ -255,15 +288,22 @@ class LiquidacionViewSet(
                 comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
                 monto_liquidar = monto_ventas - comision
 
-                liquidacion = Liquidacion.objects.create(
-                    fk_agricultor=agricultor,
-                    periodo_inicio=inicio,
-                    periodo_fin=fin,
-                    monto_ventas=monto_ventas,
-                    comision=comision,
-                    monto_liquidar=monto_liquidar,
-                    estado=ESTADO_PENDIENTE,
-                )
+                try:
+                    with transaction.atomic():
+                        liquidacion = Liquidacion.objects.create(
+                            fk_agricultor=agricultor,
+                            periodo_inicio=inicio,
+                            periodo_fin=fin,
+                            monto_ventas=monto_ventas,
+                            comision=comision,
+                            monto_liquidar=monto_liquidar,
+                            estado=ESTADO_PENDIENTE,
+                        )
+                except IntegrityError as exc:
+                    existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
+                    if existing:
+                        return _liquidacion_duplicada_response(existing)
+                    raise exc
 
                 # Snapshot de las ventas que aportaron a esta liquidación
                 # (item 4 de la revisión 4R — ver review R3/R4).
@@ -327,23 +367,19 @@ class LiquidacionViewSet(
 
         try:
             with transaction.atomic():
-                # Lock first (no select_related — PostgreSQL forbids
-                # FOR UPDATE on the nullable side of an outer join).
-                try:
-                    locked_id = (
-                        Liquidacion.objects.select_for_update()
-                        .filter(pk=pk)
-                        .values_list("id_liquidacion", flat=True)
-                        .first()
-                    )
-                except DatabaseError as exc:
-                    if _is_deadlock(exc):
-                        logger.warning("Deadlock al marcar pagada liquidacion=%s", pk)
-                        return _ok(
-                            message="Conflicto de concurrencia. Reintente.",
-                            status_code=status.HTTP_409_CONFLICT,
-                        )
-                    raise
+                # Cap el tiempo que un select_for_update puede esperar
+                # un lock. Sin esto, un pedido bloqueado puede colgar
+                # `marcar_pagada` indefinidamente (revisión 4R R4).
+                if connection.vendor == "postgresql":
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL lock_timeout = '5s'")
+
+                locked_id = (
+                    Liquidacion.objects.select_for_update()
+                    .filter(pk=pk)
+                    .values_list("id_liquidacion", flat=True)
+                    .first()
+                )
 
                 if locked_id is None:
                     return _ok(
@@ -351,33 +387,27 @@ class LiquidacionViewSet(
                         status_code=status.HTTP_404_NOT_FOUND,
                     )
 
-                liquidacion = Liquidacion.objects.select_related("fk_agricultor__fk_persona").get(pk=pk)
+                liquidacion = Liquidacion.objects.select_related(
+                    "fk_agricultor__fk_persona", "fk_pago_liquidacion"
+                ).get(pk=pk)
 
                 if liquidacion.estado == ESTADO_PAGADA:
+                    # Idempotencia: si ya está pagada, devolvemos el detalle con 200 OK.
+                    # Esto permite al cliente recuperarse de un timeout del request original.
+                    ventas = _ventas_snapshot(liquidacion)
+                    output = _build_detalle_output(liquidacion, ventas)
+                    folio = liquidacion.fk_pago_liquidacion.folio if liquidacion.fk_pago_liquidacion else None
                     return _ok(
-                        message="La liquidación ya está marcada como pagada.",
-                        status_code=status.HTTP_400_BAD_REQUEST,
+                        data=output,
+                        message=f"La liquidación ya está marcada como pagada. Folio: {folio}.",
                     )
 
-                try:
-                    pago = Pago.objects.create(
-                        fk_pedido=None,
-                        fk_tipo_id=tipo_pago,
-                        monto=liquidacion.monto_liquidar,
-                        referencia=referencia,
-                    )
-                except DatabaseError as exc:
-                    if _is_deadlock(exc):
-                        logger.warning("Deadlock al generar folio de pago liquidacion=%s", pk)
-                        return _ok(
-                            message="Conflicto de concurrencia al generar folio. Reintente.",
-                            status_code=status.HTTP_409_CONFLICT,
-                        )
-                    logger.error("Error al registrar pago de liquidación %s: %s", pk, exc)
-                    return _ok(
-                        message="Error al procesar el pago de la liquidación. Intente de nuevo.",
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
+                pago = Pago.objects.create(
+                    fk_pedido=None,
+                    fk_tipo_id=tipo_pago,
+                    monto=liquidacion.monto_liquidar,
+                    referencia=referencia,
+                )
 
                 liquidacion.fk_pago_liquidacion = pago
                 liquidacion.estado = ESTADO_PAGADA
@@ -389,7 +419,11 @@ class LiquidacionViewSet(
                     message="Conflicto de concurrencia. Reintente.",
                     status_code=status.HTTP_409_CONFLICT,
                 )
-            raise
+            logger.error("Error al registrar pago de liquidación %s: %s", pk, exc)
+            return _ok(
+                message="Error al procesar el pago de la liquidación. Intente de nuevo.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
         ventas = _ventas_snapshot(liquidacion)
