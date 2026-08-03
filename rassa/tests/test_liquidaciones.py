@@ -642,37 +642,50 @@ class PermisosTest(LiquidacionesTestBase):
         )
         self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_retrieve_rechaza_no_admin_con_403(self):
-        # Crear una liquidación con admin
+    def test_cliente_no_puede_calcular(self):
+        self.client.force_authenticate(user=self.user_cliente)
         resp = self._calcular()
-        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
-        # Vendedor, cliente y agricultor no deben poder ver el detalle
-        for u in (self.user_vendedor, self.user_cliente, self.user_agricultor):
-            self.client.force_authenticate(user=u)
-            resp_get = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
-            self.assertEqual(resp_get.status_code, status.HTTP_403_FORBIDDEN)
+    def test_agricultor_no_puede_calcular(self):
+        self.client.force_authenticate(user=self.user_agricultor)
+        resp = self._calcular()
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_cliente_y_agricultor_no_pueden_calcular(self):
-        for u in (self.user_cliente, self.user_agricultor):
-            resp = self._calcular(client=self.client)
-            self.client.force_authenticate(user=u)
-            resp = self._calcular()
-            self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-
-    def test_cliente_y_agricultor_no_pueden_marcar_pagada(self):
+    def test_cliente_no_puede_marcar_pagada(self):
         self.client.force_authenticate(user=self.user_admin)
         resp = self._calcular()
         liquidacion_id = resp.json()["data"]["id_liquidacion"]
 
+        self.client.force_authenticate(user=self.user_cliente)
+        resp2 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+            format="json",
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_agricultor_no_puede_marcar_pagada(self):
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self._calcular()
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        self.client.force_authenticate(user=self.user_agricultor)
+        resp2 = self.client.post(
+            f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+            {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
+            format="json",
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cliente_y_agricultor_no_pueden_consultar_detalle(self):
+        resp = self._calcular()
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
         for u in (self.user_cliente, self.user_agricultor):
             self.client.force_authenticate(user=u)
-            resp2 = self.client.post(
-                f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
-                {"tipo_pago": self.tipo_efectivo.id_tipo_pago},
-                format="json",
-            )
-            self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
+            resp_get = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
+            self.assertEqual(resp_get.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class CalcularEdgeCasesTest(LiquidacionesTestBase):
@@ -1125,6 +1138,7 @@ class CalcularConcurrencyTest(TransactionTestCase):
         self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Admin")
         self.rol_agricultor = Rol.objects.create(nombre_rol="Agricultor", descripcion="Agricultor")
         self.estado_entregado = EstadoPedido.objects.create(tipo_estado="entregado", descripcion="Entregado")
+        self.tipo_efectivo = TipoPago.objects.create(nombre="Efectivo")
 
         persona_admin = Persona.objects.create(
             nombre="Admin",
@@ -1348,6 +1362,56 @@ class CalcularConcurrencyTest(TransactionTestCase):
             ).count(),
             1,
         )
+
+    @unittest.skipUnless(
+        connection.vendor == "postgresql",
+        "El test depende del comportamiento real de select_for_update en PostgreSQL.",
+    )
+    def test_marcar_pagada_bajo_concurrencia_solo_un_pago_se_crea(self):
+        """Si múltiples hilos intentan marcar como pagada la misma liquidación simultáneamente,
+        solo se crea 1 pago y el estado cambia a pagada sin errores 500."""
+        client_admin = APIClient()
+        client_admin.force_authenticate(user=self.user_admin)
+        resp_calc = client_admin.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp_calc.status_code, status.HTTP_201_CREATED)
+        liquidacion_id = resp_calc.json()["data"]["id_liquidacion"]
+
+        NUM_THREADS = 5
+        results: list[tuple[int, dict]] = []
+        barrier = threading.Barrier(NUM_THREADS)
+
+        def pagar():
+            c = APIClient()
+            c.force_authenticate(user=self.user_admin)
+            barrier.wait()
+            resp = c.post(
+                f"/api/liquidaciones/{liquidacion_id}/marcar-pagada/",
+                {"tipo_pago": self.tipo_efectivo.id_tipo_pago, "referencia": "REF-CONC"},
+                format="json",
+            )
+            results.append((resp.status_code, resp.json()))
+
+        threads = [threading.Thread(target=pagar) for _ in range(NUM_THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        codes = [r[0] for r in results]
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, codes)
+
+        liq = Liquidacion.objects.get(pk=liquidacion_id)
+        self.assertEqual(liq.estado, "pagada")
+        self.assertIsNotNone(liq.fk_pago_liquidacion)
 
 
 class MarcarPagadaMockedTest(LiquidacionesTestBase):

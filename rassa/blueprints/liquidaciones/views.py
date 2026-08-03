@@ -2,7 +2,7 @@
 
 import logging
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from rest_framework import mixins, status, viewsets
@@ -96,7 +96,7 @@ def _calcular_montos(ventas: list[PedidoCabecera], agricultor_id: int, tasa: Dec
     pedido_ids = [p.id_pedido for p in ventas]
     montos_map = _map_montos_agricultor_pedidos(pedido_ids, agricultor_id)
     monto_ventas = sum((montos_map.get(pid, Decimal("0.00")) for pid in pedido_ids), Decimal("0.00"))
-    comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
+    comision = (monto_ventas * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     monto_liquidar = monto_ventas - comision
     return montos_map, monto_ventas, comision, monto_liquidar
 
