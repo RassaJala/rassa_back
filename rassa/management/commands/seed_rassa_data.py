@@ -2223,6 +2223,10 @@ class Command(BaseCommand):
         self.stdout.write("  Documentos: OK")
 
     def _write_demo_media(self):
+        """Genera archivos media demo en MEDIA_ROOT/documentos/.
+
+        Estos archivos son bloqueantes — solo aplica en entornos de desarrollo/test.
+        """
         docs_dir = Path(settings.MEDIA_ROOT) / "documentos"
         docs_dir.mkdir(parents=True, exist_ok=True)
         _write_tone_wav(docs_dir / "nota_recoleccion.wav")
