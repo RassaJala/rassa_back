@@ -166,6 +166,10 @@ class RecoleccionViewSet(OkResponseMixin, viewsets.ModelViewSet):
     El borrado de un Usuario con recolecciones fallará con ProtectedError
     (fk_agricultor es on_delete=PROTECT). Si algún día existe un admin de
     usuarios, ese error debería traducirse a 409 Conflict.
+
+    Contrato de body JSON-only: create/partial_update/estado/cancelar esperan un
+    objeto JSON. Se acepta además form-encoded (Mapping incluye QueryDict), pero
+    NO listas/arrays (se rechazan con 400).
     """
 
     serializer_class = RecoleccionSerializer

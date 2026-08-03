@@ -214,7 +214,7 @@ class MermaResumenView(APIView):
             qs = qs.filter(creado_en__date__lte=fecha_hasta)
 
         if fecha_desde is not None and fecha_hasta is not None and fecha_desde > fecha_hasta:
-            raise ValidationError("fecha_desde no puede ser mayor a fecha_hasta.")
+            raise ValidationError({"fecha_desde": "fecha_desde no puede ser mayor a fecha_hasta."})
 
         producto_id = self._parse_producto_id(producto_id_raw)
         if producto_id is not None:
