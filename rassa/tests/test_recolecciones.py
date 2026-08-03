@@ -1036,6 +1036,9 @@ class RecoleccionConcurrenciaTests(TransactionTestCase):
     pasar es que ambos devuelvan 201: el lock del agricultor en create (re-check
     bajo select_for_update) + el UniqueConstraint parcial lo impiden en Postgres.
     select_for_update() es no-op en SQLite, por eso esta clase se salta ahí.
+    LIMITACIÓN SQLite: el lock no existe y estos tests NO corren en desarrollo
+    local (solo en CI con Postgres). No confiar en ellos corriendo localmente:
+    una race condition real solo se detecta contra PG.
 
     NOTA: TransactionTestCase (no TestCase) porque necesita transacciones reales
     concurrentes; select_for_update() dentro de una transacción de TestCase
