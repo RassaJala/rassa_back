@@ -38,6 +38,17 @@ def calcular_proximo_lunes():
     return prox_lunes, prox_lunes.isocalendar()[1]
 
 
+def _error_si_no_lunes(accion="editarse"):
+    """Retorna un mensaje de error si hoy no es lunes, o None si lo es.
+
+    Se usa para restringir la creación y edición de publicaciones y sus
+    productos al día lunes.
+    """
+    if timezone.localdate().weekday() != 0:
+        return f"Las publicaciones solo pueden {accion} los lunes."
+    return None
+
+
 class PublicacionViewSet(viewsets.ViewSet):
     pagination_class = CatalogPagination
     throttle_scope = "publicaciones"
@@ -80,11 +91,9 @@ class PublicacionViewSet(viewsets.ViewSet):
         return ok_response(data=self.paginator.get_paginated_response(serializer.data).data)
 
     def create(self, request):
-        if timezone.localdate().weekday() != 0:
-            return Response(
-                {"error": "Las publicaciones solo pueden crearse los lunes."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        error = _error_si_no_lunes("crearse")
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
 
         prox_lunes, semana = calcular_proximo_lunes()
         publicacion = PublicacionSemanal.objects.create(
@@ -113,6 +122,10 @@ class PublicacionViewSet(viewsets.ViewSet):
                 {"error": "Solo se puede eliminar una publicación en estado borrador."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        error = _error_si_no_lunes()
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
 
         publicacion.estado = PublicacionSemanal.ESTADO_CANCELADO
         publicacion.save(update_fields=["estado"])
@@ -224,6 +237,9 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
     def create(self, request, pub_id=None):
         publicacion = self._get_publicacion(pub_id, request)
+        error = _error_si_no_lunes()
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
             return Response(
                 {"error": "Solo se pueden agregar productos a una publicación en estado borrador."},
@@ -241,6 +257,9 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
     def partial_update(self, request, pub_id=None, pk=None):
         publicacion = self._get_publicacion(pub_id, request)
+        error = _error_si_no_lunes()
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
             return Response(
                 {"error": "Solo se pueden modificar productos en una publicación en estado borrador."},
@@ -259,6 +278,9 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
 
     def destroy(self, request, pub_id=None, pk=None):
         publicacion = self._get_publicacion(pub_id, request)
+        error = _error_si_no_lunes()
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
             return Response(
                 {"error": "Solo se pueden eliminar productos en una publicación en estado borrador."},
@@ -280,6 +302,15 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
             item = publicacion.productosemanal_set.get(pk=pk, estado=ProductoSemanal.ESTADO_INACTIVO)
         except ProductoSemanal.DoesNotExist as err:
             raise NotFound("Producto no encontrado en la papelera.") from err
+
+        error = _error_si_no_lunes()
+        if error:
+            return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
+        if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
+            return Response(
+                {"error": "Solo se pueden restaurar productos en una publicación en estado borrador."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         item.estado = ProductoSemanal.ESTADO_ACTIVO
         item.save(update_fields=["estado"])
