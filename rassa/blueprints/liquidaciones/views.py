@@ -161,6 +161,16 @@ def _set_lock_timeout(timeout_str: str = "5s"):
             cursor.execute(f"SET LOCAL lock_timeout = '{timeout_str}'")
 
 
+def _deadlock_response(message: str = "Conflicto de concurrencia. Reintente."):
+    """Construye una respuesta 409 Conflict con la cabecera Retry-After para errores transitorios de concurrencia."""
+    response = _ok(
+        message=message,
+        status_code=status.HTTP_409_CONFLICT,
+    )
+    response["Retry-After"] = "5"
+    return response
+
+
 class LiquidacionViewSet(
     OkResponseMixin,
     mixins.ListModelMixin,
@@ -341,12 +351,7 @@ class LiquidacionViewSet(
                     agricultor.id_usuario,
                     semana,
                 )
-                response = _ok(
-                    message="Conflicto de concurrencia al calcular. Reintente.",
-                    status_code=status.HTTP_409_CONFLICT,
-                )
-                response["Retry-After"] = "5"
-                return response
+                return _deadlock_response("Conflicto de concurrencia al calcular. Reintente.")
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
