@@ -1,10 +1,5 @@
 # Agrega el modelo LiquidacionVenta (snapshot de pedidos por liquidación).
-# Nota: esta migración se genera con `makemigrations` Django que detecta
-# la migración 0019 previa; intencionalmente la dep apunta a 0018 y se
-# omiten operaciones sobre Liquidacion porque el constraint
-# `unique_liquidacion_agricultor_periodo_activo` se eliminó del modelo
-# en este mismo PR. Si un entorno tiene ese constraint aplicado
-# (por una corrida previa de 0019), debe removerse manualmente con SQL.
+# Depende de la migración 0018 y crea las relaciones para liquidar pedidos.
 
 import django.db.models.deletion
 from django.db import migrations, models
