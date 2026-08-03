@@ -1,12 +1,10 @@
 """Serializers para el módulo de Liquidaciones."""
 
 from datetime import date
-from decimal import Decimal
 
 from rest_framework import serializers
 
-from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
-from rassa.models import Liquidacion, Pago, PedidoCabecera, TipoPago, Usuario
+from rassa.models import Liquidacion, LiquidacionVenta, Pago, TipoPago, Usuario
 from rassa.permissions.role_permissions import AGRICULTOR
 from rassa.utils import nombre_completo
 
@@ -14,11 +12,14 @@ from rassa.utils import nombre_completo
 class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
     """Una venta (pedido) que aporta al cálculo de la liquidación."""
 
+    id_pedido = serializers.IntegerField(source="fk_pedido_id", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
+    total = serializers.DecimalField(source="monto_aportado", max_digits=10, decimal_places=2, read_only=True)
+    creado_en = serializers.DateTimeField(source="fk_pedido.creado_en", read_only=True)
     pago_folio = serializers.SerializerMethodField()
 
     class Meta:
-        model = PedidoCabecera
+        model = LiquidacionVenta
         fields = [
             "id_pedido",
             "cliente_nombre",
@@ -28,13 +29,13 @@ class VentaEnLiquidacionSerializer(serializers.ModelSerializer):
         ]
 
     def get_cliente_nombre(self, obj):
-        return nombre_completo(obj.fk_cliente)
+        return nombre_completo(obj.fk_pedido.fk_cliente)
 
     def get_pago_folio(self, obj):
         # Importante: NO usar `pagos.first()` aquí — Django emite una query
         # nueva por cada `obj` (N+1), incluso con prefetch_related.
         # `next(iter(...))` consume la cache del prefetch sin tocar la BD.
-        pagos = getattr(obj, "pago_set", None)
+        pagos = getattr(obj.fk_pedido, "pago_set", None)
         if pagos is None:
             return None
         first = next(iter(pagos.all()), None)
@@ -80,6 +81,7 @@ class LiquidacionListSerializer(AgricultorNombreMixin, serializers.ModelSerializ
             "periodo_inicio",
             "periodo_fin",
             "monto_ventas",
+            "tasa_comision",
             "comision",
             "monto_liquidar",
             "estado",
@@ -102,6 +104,7 @@ class LiquidacionDetalleSerializer(AgricultorNombreMixin, serializers.ModelSeria
             "periodo_inicio",
             "periodo_fin",
             "monto_ventas",
+            "tasa_comision",
             "comision",
             "monto_liquidar",
             "estado",
@@ -109,9 +112,6 @@ class LiquidacionDetalleSerializer(AgricultorNombreMixin, serializers.ModelSeria
             "ventas",
             "pago_liquidacion",
         ]
-
-    def get_agricultor_nombre(self, obj):
-        return nombre_completo(obj.fk_agricultor)
 
     def get_ventas(self, obj):
         ventas = self.context.get("ventas_queryset")
@@ -130,14 +130,6 @@ class CalcularLiquidacionSerializer(serializers.Serializer):
     agricultor = serializers.IntegerField()
     semana = serializers.IntegerField(min_value=1, max_value=53)
     anio = serializers.IntegerField(min_value=2000, max_value=2100)
-    tasa_comision = serializers.DecimalField(
-        max_digits=5,
-        decimal_places=4,
-        required=False,
-        default=COMISION_RASSA,
-        min_value=Decimal("0"),
-        max_value=Decimal("1"),
-    )
 
     def validate_agricultor(self, value):
         try:

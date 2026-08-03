@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
 from rassa.blueprints.liquidaciones.constants import (
+    COMISION_RASSA,
     ESTADO_PAGADA,
     ESTADO_PEDIDO_ENTREGADO,
     ESTADO_PENDIENTE,
@@ -75,22 +76,27 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
     )
 
 
-def _ventas_snapshot(liquidacion: Liquidacion) -> list[PedidoCabecera]:
-    """Retorna los pedidos del snapshot de la liquidación, en el orden del snapshot.
+def _map_montos_agricultor_pedidos(pedido_ids: list[int], agricultor_id: int) -> dict[int, Decimal]:
+    """Retorna un diccionario de pedido_id -> monto sumado de las líneas del agricultor."""
+    from django.db.models import Sum
 
-    Cierra el riesgo de inconsistencia entre `monto_ventas` y las ventas
-    mostradas en el detalle (revisión 4R R3/R4 — ventas en vivo).
-    """
-    snapshot_ids = list(liquidacion.ventas.order_by("id_liquidacion_venta").values_list("fk_pedido_id", flat=True))
-    if not snapshot_ids:
-        return []
-    pedidos = (
-        PedidoCabecera.objects.filter(id_pedido__in=snapshot_ids)
-        .select_related("fk_cliente__fk_persona")
-        .prefetch_related("pago_set")
+    lineas = (
+        DetallePedido.objects.filter(
+            fk_pedido_id__in=pedido_ids, fk_producto_semanal__fk_publicacion__fk_agricultor_id=agricultor_id
+        )
+        .values("fk_pedido_id")
+        .annotate(total_agricultor=Sum("importe"))
     )
-    pedido_by_id = {p.id_pedido: p for p in pedidos}
-    return [pedido_by_id[pid] for pid in snapshot_ids if pid in pedido_by_id]
+    return {item["fk_pedido_id"]: Decimal(str(item["total_agricultor"] or "0.00")) for item in lineas}
+
+
+def _ventas_snapshot(liquidacion: Liquidacion):
+    """Retorna los registros LiquidacionVenta del snapshot de la liquidación."""
+    return list(
+        liquidacion.ventas.select_related("fk_pedido__fk_cliente__fk_persona")
+        .prefetch_related("fk_pedido__pago_set")
+        .order_by("id_liquidacion_venta")
+    )
 
 
 def _build_detalle_output(liquidacion: Liquidacion, ventas):
@@ -139,13 +145,13 @@ def _liquidacion_duplicada_response(existing: Liquidacion):
     )
 
 
-def _is_deadlock(exc: DatabaseError) -> bool:
-    """Detecta deadlocks de PostgreSQL (psycopg2)."""
+def _is_transient_error(exc: DatabaseError) -> bool:
+    """Detecta deadlocks (40P01) o timeouts de lock (55P03) en PostgreSQL."""
     if connection.vendor != "postgresql":
         return False
     cause = exc.__cause__ or exc.__context__
     sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
-    return sqlstate == "40P01"
+    return sqlstate in ("40P01", "55P03")
 
 
 class LiquidacionViewSet(
@@ -247,7 +253,7 @@ class LiquidacionViewSet(
 
         semana = serializer.validated_data["semana"]
         anio = serializer.validated_data["anio"]
-        tasa = serializer.validated_data["tasa_comision"]
+        tasa = COMISION_RASSA
 
         inicio, fin_exclusive = _rango_semana(anio, semana)
         fin = fin_exclusive - timedelta(days=1)
@@ -288,7 +294,8 @@ class LiquidacionViewSet(
                 if existing:
                     return _liquidacion_duplicada_response(existing)
 
-                monto_ventas = sum((p.total for p in ventas), Decimal("0.00"))
+                montos_map = _map_montos_agricultor_pedidos(pedido_ids, agricultor.id_usuario)
+                monto_ventas = sum((montos_map.get(pid, Decimal("0.00")) for pid in pedido_ids), Decimal("0.00"))
                 comision = (monto_ventas * tasa).quantize(Decimal("0.01"))
                 monto_liquidar = monto_ventas - comision
 
@@ -299,6 +306,7 @@ class LiquidacionViewSet(
                             periodo_inicio=inicio,
                             periodo_fin=fin,
                             monto_ventas=monto_ventas,
+                            tasa_comision=tasa,
                             comision=comision,
                             monto_liquidar=monto_liquidar,
                             estado=ESTADO_PENDIENTE,
@@ -317,15 +325,15 @@ class LiquidacionViewSet(
                         LiquidacionVenta(
                             fk_liquidacion=liquidacion,
                             fk_pedido=p,
-                            monto_aportado=p.total,
+                            monto_aportado=montos_map.get(p.id_pedido, Decimal("0.00")),
                         )
                         for p in ventas
                     ]
                 )
         except DatabaseError as exc:
-            if _is_deadlock(exc):
+            if _is_transient_error(exc):
                 logger.warning(
-                    "Deadlock al calcular liquidación agricultor=%s semana=%s",
+                    "Error transitorio (deadlock/timeout) al calcular liquidación agricultor=%s semana=%s",
                     agricultor.id_usuario,
                     semana,
                 )
@@ -338,7 +346,8 @@ class LiquidacionViewSet(
             raise
 
         liquidacion = _reload_liquidacion(liquidacion.pk)
-        output = _build_detalle_output(liquidacion, ventas)
+        ventas_snapshot = _ventas_snapshot(liquidacion)
+        output = _build_detalle_output(liquidacion, ventas_snapshot)
 
         _log(
             request.user,
@@ -365,6 +374,14 @@ class LiquidacionViewSet(
 
     @action(detail=True, methods=["post"], url_path="marcar-pagada")
     def marcar_pagada(self, request, pk=None):
+        try:
+            int(pk)
+        except (ValueError, TypeError):
+            return _ok(
+                message="ID de liquidación inválido.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = MarcarPagadaSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -417,8 +434,8 @@ class LiquidacionViewSet(
                 liquidacion.estado = ESTADO_PAGADA
                 liquidacion.save(update_fields=["fk_pago_liquidacion", "estado"])
         except DatabaseError as exc:
-            if _is_deadlock(exc):
-                logger.warning("Deadlock en marcar_pagada liquidacion=%s", pk)
+            if _is_transient_error(exc):
+                logger.warning("Error transitorio (deadlock/timeout) en marcar_pagada liquidacion=%s", pk)
                 response = _ok(
                     message="Conflicto de concurrencia. Reintente.",
                     status_code=status.HTTP_409_CONFLICT,

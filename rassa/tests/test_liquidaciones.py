@@ -357,16 +357,16 @@ class CalcularLiquidacionTest(LiquidacionesTestBase):
     def test_calcular_con_tasa_personalizada(self):
         self._crear_pedido_entregado(total=Decimal("1000.00"), creado_en=_aware(2026, 7, 21))
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-                "tasa_comision": "0.0500",
-            },
-            format="json",
-        )
+        with patch("rassa.blueprints.liquidaciones.views.COMISION_RASSA", new=Decimal("0.05")):
+            resp = self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                },
+                format="json",
+            )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("1000.00"))
@@ -708,16 +708,16 @@ class CalcularEdgeCasesTest(LiquidacionesTestBase):
     def test_tasa_comision_cero_calcula_sin_comision(self):
         self._crear_pedido_entregado(total=Decimal("500.00"), creado_en=_aware(2026, 7, 21))
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-                "tasa_comision": "0.0000",
-            },
-            format="json",
-        )
+        with patch("rassa.blueprints.liquidaciones.views.COMISION_RASSA", new=Decimal("0.00")):
+            resp = self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                },
+                format="json",
+            )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("500.00"))
@@ -727,16 +727,16 @@ class CalcularEdgeCasesTest(LiquidacionesTestBase):
     def test_tasa_comision_uno_calcula_todo_como_comision(self):
         self._crear_pedido_entregado(total=Decimal("500.00"), creado_en=_aware(2026, 7, 21))
 
-        resp = self.client.post(
-            "/api/liquidaciones/calcular/",
-            {
-                "agricultor": self.usuario_agricultor.id_usuario,
-                "semana": 30,
-                "anio": 2026,
-                "tasa_comision": "1.0000",
-            },
-            format="json",
-        )
+        with patch("rassa.blueprints.liquidaciones.views.COMISION_RASSA", new=Decimal("1.00")):
+            resp = self.client.post(
+                "/api/liquidaciones/calcular/",
+                {
+                    "agricultor": self.usuario_agricultor.id_usuario,
+                    "semana": 30,
+                    "anio": 2026,
+                },
+                format="json",
+            )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("500.00"))
@@ -802,40 +802,23 @@ class CalcularEdgeCasesTest(LiquidacionesTestBase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("no existe", str(resp.json()))
 
-    def test_tasa_comision_fuera_de_rango_retorna_400(self):
-        """tasa_comision está acotada 0..1 con 4 decimales. Valores fuera
-        de rango retornan 400 (revisión 4R R3)."""
+    def test_tasa_comision_en_request_es_ignorada(self):
+        """tasa_comision enviada en el request es ignorada y se usa la tasa del server."""
         self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
 
-        for tasa_invalida in ("-0.5", "1.5", "2.0000"):
-            resp = self.client.post(
-                "/api/liquidaciones/calcular/",
-                {
-                    "agricultor": self.usuario_agricultor.id_usuario,
-                    "semana": 30,
-                    "anio": 2026,
-                    "tasa_comision": tasa_invalida,
-                },
-                format="json",
-            )
-            self.assertEqual(
-                resp.status_code,
-                status.HTTP_400_BAD_REQUEST,
-                f"tasa={tasa_invalida} esperaba 400, recibí {resp.status_code}: {resp.json()}",
-            )
-
-        # Tasa con más de 4 decimales también falla
         resp = self.client.post(
             "/api/liquidaciones/calcular/",
             {
                 "agricultor": self.usuario_agricultor.id_usuario,
                 "semana": 30,
                 "anio": 2026,
-                "tasa_comision": "0.12345",
+                "tasa_comision": "0.5000",
             },
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.json()["data"]
+        self.assertEqual(Decimal(data["comision"]), Decimal("10.00"))
 
     def test_calcular_sin_estado_entregado_en_bd_retorna_500(self):
         """Si el seed no ha creado el EstadoPedido 'entregado', calcular
@@ -1304,17 +1287,11 @@ class CalcularConcurrencyTest(TransactionTestCase):
         "El test depende del comportamiento real de select_for_update en PostgreSQL.",
     )
     def test_calcular_bajo_concurrencia_con_pedidos_disjuntos(self):
-        """Versión más estricta del test anterior: cada thread usa un
-        pedido DIFERENTE, así el lock de PedidoCabecera no los serializa.
-        El único serializador real es la combinación de:
-        - outer check (read no-lock)
-        - inner check (read bajo lock del pedido)
-        - eventual constraint de BD
-        - advisory lock de Postgres (si está implementado)
-
-        Sin advisory lock ni constraint, varios threads pueden crear
-        liquidaciones duplicadas — el test expone esa race. Si el test
-        pasa, significa que el view tiene la serialización correcta.
+        """Prueba de concurrencia para la creación de liquidaciones.
+        Dado que ambos threads operan sobre el mismo agricultor y periodo,
+        el view recuperará y bloqueará el mismo conjunto de pedidos.
+        Este test valida que el constraint de base de datos actúe como
+        salvaguarda definitiva ante cualquier intento de duplicación concurrente.
         """
         NUM_THREADS = 5
 
@@ -1648,3 +1625,113 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         # Debe excluir el pedido de 100.00 (ya liquidado) y solo incluir el de 50.00
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("50.00"))
         self.assertEqual(len(data["ventas"]), 1)
+
+    def test_detalle_usa_monto_aportado_snapshot_cuando_cambia_pedido_total(self):
+        """Si el total del pedido cambia después de liquidarse, el detalle de la liquidación
+        debe seguir reportando el monto_aportado del snapshot, no el total en vivo."""
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        liquidacion_id = resp.json()["data"]["id_liquidacion"]
+
+        # Modificar el total en vivo del pedido
+        from rassa.models import PedidoCabecera
+
+        pedido = PedidoCabecera.objects.get(creado_en__date=date(2026, 7, 21))
+        pedido.total = Decimal("500.00")
+        pedido.save()
+
+        # El detalle debe seguir reportando 100.00
+        resp = self.client.get(f"/api/liquidaciones/{liquidacion_id}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(Decimal(resp.json()["data"]["ventas"][0]["total"]), Decimal("100.00"))
+
+    def test_calcular_pedido_multi_agricultor_solo_suma_lineas_propias(self):
+        """Si un pedido contiene productos de múltiples agricultores, calcular solo
+        debe sumar las líneas correspondientes al agricultor a liquidar."""
+        from django.contrib.auth.models import User
+
+        from rassa.models import DetallePedido, Persona, ProductoSemanal, PublicacionSemanal, Usuario
+
+        # Crear segundo agricultor
+        p2 = Persona.objects.create(
+            nombre="Segundo",
+            apellido_paterno="Agri",
+            fecha_nacimiento="1990-01-01",
+            sexo="M",
+            domicilio="Rancho 3",
+        )
+        u2 = User.objects.create_user(username="agri2@test.com", email="agri2@test.com", password="pass")
+        agri2 = Usuario.objects.create(
+            fk_user=u2,
+            fk_persona=p2,
+            telefono="999",
+            correo="agri2@test.com",
+            fk_rol=self.rol_agricultor,
+        )
+        pub2 = PublicacionSemanal.objects.create(
+            fk_agricultor=agri2,
+            fecha_publicacion=date(2026, 7, 20),
+            semana=30,
+            estado="publicado",
+        )
+        ps2 = ProductoSemanal.objects.create(
+            fk_publicacion=pub2,
+            fk_producto=self.producto,
+            fk_unidad=self.unidad,
+            precio=Decimal("50.00"),
+            stock=100,
+        )
+
+        # Pedido con líneas de ambos
+        pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_entregado,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("300.00"),
+            iva=Decimal("0.00"),
+            total=Decimal("300.00"),
+        )
+        PedidoCabecera.objects.filter(pk=pedido.pk).update(creado_en=_aware(2026, 7, 21))
+
+        # Línea de agricultor 1 (monto 100.00)
+        DetallePedido.objects.create(
+            fk_pedido=pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Papa",
+            precio_unitario=Decimal("25.00"),
+            cantidad=4,
+            importe=Decimal("100.00"),
+        )
+        # Línea de agricultor 2 (monto 200.00)
+        DetallePedido.objects.create(
+            fk_pedido=pedido,
+            fk_producto_semanal=ps2,
+            nombre_producto="Tomate",
+            precio_unitario=Decimal("50.00"),
+            cantidad=4,
+            importe=Decimal("200.00"),
+        )
+
+        # Calcular para agricultor 1
+        resp = self.client.post(
+            "/api/liquidaciones/calcular/",
+            {
+                "agricultor": self.usuario_agricultor.id_usuario,
+                "semana": 30,
+                "anio": 2026,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.json()["data"]
+        # Debe ser exactamente 100.00 (no 300.00)
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
+        self.assertEqual(Decimal(data["ventas"][0]["total"]), Decimal("100.00"))

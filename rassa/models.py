@@ -15,8 +15,6 @@ Política de on_delete:
 from django.db import connection, models
 from django.utils import timezone
 
-from rassa.blueprints.liquidaciones.constants import ESTADOS_ACTIVOS
-
 # ============================================================
 # 1. TABLAS BASE (sin dependencias)
 # ============================================================
@@ -858,6 +856,7 @@ class Liquidacion(models.Model):
     periodo_fin = models.DateField()
     monto_ventas = models.DecimalField(max_digits=10, decimal_places=2)
     comision = models.DecimalField(max_digits=10, decimal_places=2)
+    tasa_comision = models.DecimalField(max_digits=5, decimal_places=4, default=0.1000)
     monto_liquidar = models.DecimalField(max_digits=10, decimal_places=2)
     fk_pago_liquidacion = models.ForeignKey(
         Pago,
@@ -874,9 +873,8 @@ class Liquidacion(models.Model):
         ordering = ["id_liquidacion"]
         constraints = [
             models.UniqueConstraint(
-                condition=models.Q(estado__in=ESTADOS_ACTIVOS),
                 fields=["fk_agricultor", "periodo_inicio", "periodo_fin"],
-                name="unique_liquidacion_agricultor_periodo_activo",
+                name="unique_liquidacion_agricultor_periodo",
             ),
         ]
 
