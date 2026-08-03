@@ -1,7 +1,6 @@
 """Vistas para el módulo de Mermas (Waste)."""
 
 import logging
-from datetime import date, datetime
 
 from django.db import transaction
 from django.db.models import Count, F, Sum
@@ -14,6 +13,7 @@ from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from rassa.models import DecisionMerma, Merma, ProductoSemanal
 from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log
 from rassa.views import _ok as ok_response
 
@@ -179,15 +179,6 @@ class MermaResumenView(APIView):
 
     permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
 
-    def _parse_date(self, raw: str, param_name: str) -> date:
-        """Validate and return a date object or raise ValidationError."""
-        try:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError as err:
-            raise ValidationError(
-                {param_name: f"{param_name} debe tener formato YYYY-MM-DD. Recibido: '{raw}'."}
-            ) from err
-
     def _parse_producto_id(self, raw: str | None) -> int | None:
         """Validate and return an integer producto_id or raise ValidationError."""
         if raw is None:
@@ -216,14 +207,14 @@ class MermaResumenView(APIView):
         agrupar_por_raw = request.query_params.get("agrupar_por")
 
         if fecha_desde is not None:
-            fecha_desde = self._parse_date(fecha_desde, "fecha_desde")
+            fecha_desde = parse_date_param(fecha_desde, "fecha_desde")
             qs = qs.filter(creado_en__date__gte=fecha_desde)
         if fecha_hasta is not None:
-            fecha_hasta = self._parse_date(fecha_hasta, "fecha_hasta")
+            fecha_hasta = parse_date_param(fecha_hasta, "fecha_hasta")
             qs = qs.filter(creado_en__date__lte=fecha_hasta)
 
         if fecha_desde is not None and fecha_hasta is not None and fecha_desde > fecha_hasta:
-            raise ValidationError("fecha_desde no puede ser mayor a fecha_hasta.")
+            raise ValidationError({"fecha_desde": "fecha_desde no puede ser mayor a fecha_hasta."})
 
         producto_id = self._parse_producto_id(producto_id_raw)
         if producto_id is not None:

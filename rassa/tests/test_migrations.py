@@ -5,6 +5,8 @@ Verifies:
 - Squash migration exists and replaces the 21 individual stubs
 - 0008 depends on the squash (not orphaned)
 - backfill_unidad_nombre_abreviatura and reverse are idempotent
+- 0015 eliminates orphan Recoleccion rows (fk_agricultor NULL) before the
+  SET NOT NULL so the migration does not fail with "column contains null values"
 """
 
 from django.db import connection
@@ -128,3 +130,125 @@ class DataMigrationTests(TransactionTestCase):
     # declaratively via AddConstraint. On existing databases the constraint
     # is skipped by --fake; duplicates were already resolved by the original
     # 0014_add_unique_es_principal_constraint migration.
+
+
+class Migration0015Tests(TransactionTestCase):
+    """Verifica que la migración 0015 elimine las huérfanas antes del SET NOT NULL.
+
+    El estado previo (0014) permitía fk_agricultor NULL; la migración 0015 lo
+    vuelve NOT NULL, por lo que debe eliminar (o abortar) cualquier fila
+    huérfana antes de aplicar el AlterField.
+
+    IMPORTANTE: este test migra el esquema compartido de la BD de test en vivo
+    (0016 -> 0014 -> 0015 -> 0016). Solo es seguro corriendo de forma
+    secuencial: NO usar pytest-xdist (paraleliza workers sobre la misma BD y
+    rompería el esquema a mitad de migración).
+    """
+
+    def test_0015_elimina_huerfanas_y_aplica_not_null(self):
+        # La BD de test parte del estado final; bajar a 0014 revierte 0016 y 0015
+        # (sus RunPython tienen reverse=noop, no borran datos).
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0014_populate_conversacion_fk_familia")])
+
+        # Restaurar el esquema al estado final para no romper el resto de pruebas.
+        # addCleanup corre tras el test y reporta su propio fallo sin enmascarar el
+        # error principal (un finally podría tapar el fallo real de la migración).
+        def restaurar_esquema():
+            MigrationExecutor(connection).migrate([("rassa", "0016_historialestadorecoleccion")])
+
+        self.addCleanup(restaurar_esquema)
+
+        old_apps = executor.loader.project_state([("rassa", "0014_populate_conversacion_fk_familia")]).apps
+        Recoleccion = old_apps.get_model("rassa", "Recoleccion")
+        Recoleccion.objects.create(fk_agricultor=None, fecha_recoleccion="2026-01-01", estado="pendiente")
+        self.assertTrue(Recoleccion.objects.filter(fk_agricultor__isnull=True).exists())
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")])
+        new_apps = executor.loader.project_state([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")]).apps
+        RecoleccionNew = new_apps.get_model("rassa", "Recoleccion")
+        # La huérfana se eliminó y el SET NOT NULL pudo aplicarse sin error.
+        self.assertFalse(RecoleccionNew.objects.filter(fk_agricultor__isnull=True).exists())
+
+    def test_0015_conserva_pendiente_sobre_recolectado_en_duplicado(self):
+        """Verifica que cancelar_duplicados_legacy priorice el estado NO-terminal.
+
+        Si un par legacy tiene una recolectado (id menor, ya completada) y una
+        pendiente (id mayor, la programada real), debe sobrevivir la pendiente y
+        cancelarse la recolectado. Antes se conservaba la de menor id y se
+        destruía la cita real (criterio viejo: solo por id_recoleccion).
+        """
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0014_populate_conversacion_fk_familia")])
+
+        def restaurar_esquema():
+            MigrationExecutor(connection).migrate([("rassa", "0016_historialestadorecoleccion")])
+
+        self.addCleanup(restaurar_esquema)
+
+        old_apps = executor.loader.project_state([("rassa", "0014_populate_conversacion_fk_familia")]).apps
+        Rol = old_apps.get_model("rassa", "Rol")
+        Persona = old_apps.get_model("rassa", "Persona")
+        Usuario = old_apps.get_model("rassa", "Usuario")
+        Recoleccion = old_apps.get_model("rassa", "Recoleccion")
+
+        rol = Rol.objects.create(nombre_rol="Agricultor", descripcion="Agricultor")
+        persona = Persona.objects.create(
+            nombre="Juan",
+            apellido_paterno="Perez",
+            fecha_nacimiento="1990-01-01",
+            sexo="M",
+            domicilio="Calle 1",
+        )
+        agricultor = Usuario.objects.create(
+            fk_persona=persona,
+            fk_rol=rol,
+            telefono="1234567890",
+            correo="agri@migracion.test",
+        )
+
+        # Mismo agricultor, misma fecha: la recolectado se crea PRIMERO (id menor).
+        completada = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-01", estado="recolectado"
+        )
+        programada = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-01", estado="pendiente"
+        )
+        self.assertLess(completada.pk, programada.pk)
+
+        # Par TODO no-terminal: dos pendientes, misma fecha -> sobrevive la menor id.
+        no_term_1 = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-02", estado="pendiente"
+        )
+        no_term_2 = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-02", estado="en_ruta"
+        )
+        self.assertLess(no_term_1.pk, no_term_2.pk)
+
+        # Par TODO terminal: dos recolectado, misma fecha -> sobrevive la menor id.
+        term_1 = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-03", estado="recolectado"
+        )
+        term_2 = Recoleccion.objects.create(
+            fk_agricultor=agricultor, fecha_recoleccion="2026-01-03", estado="recolectado"
+        )
+        self.assertLess(term_1.pk, term_2.pk)
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")])
+        new_apps = executor.loader.project_state([("rassa", "0015_alter_recoleccion_fk_agricultor_and_more")]).apps
+        RecoleccionNew = new_apps.get_model("rassa", "Recoleccion")
+
+        # La pendiente (id mayor, la programada real) sobrevive sin cambios.
+        self.assertEqual(RecoleccionNew.objects.get(pk=programada.pk).estado, "pendiente")
+        # La recolectado (id menor, terminal) se cancela para liberar el constraint.
+        self.assertEqual(RecoleccionNew.objects.get(pk=completada.pk).estado, "cancelado")
+
+        # Todo-no-terminal: sobrevive la menor id, se cancela la segunda.
+        self.assertEqual(RecoleccionNew.objects.get(pk=no_term_1.pk).estado, "pendiente")
+        self.assertEqual(RecoleccionNew.objects.get(pk=no_term_2.pk).estado, "cancelado")
+
+        # Todo-terminal: sobrevive la menor id, se cancela la segunda.
+        self.assertEqual(RecoleccionNew.objects.get(pk=term_1.pk).estado, "recolectado")
+        self.assertEqual(RecoleccionNew.objects.get(pk=term_2.pk).estado, "cancelado")

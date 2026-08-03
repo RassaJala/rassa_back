@@ -15,7 +15,7 @@ from rassa.models import (
     PedidoCabecera,
     TipoPago,
 )
-from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log
 
 from .serializers import (
@@ -36,10 +36,12 @@ class PagoViewSet(
 ):
     """ViewSet para registrar y consultar pagos."""
 
-    permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN)]
+    permission_classes = [IsAuthenticated, HasRole(VENDEDOR, ADMIN, CLIENTE)]
     throttle_classes = [ScopedRateThrottle]
 
     def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated(), HasRole(VENDEDOR, ADMIN)]
         if self.action == "tipos_pago":
             return [IsAuthenticated()]
         return super().get_permissions()
@@ -65,6 +67,8 @@ class PagoViewSet(
 
         if nombre_rol == VENDEDOR:
             qs = qs.filter(fk_pedido__fk_vendedor=usuario)
+        elif nombre_rol == CLIENTE:
+            qs = qs.filter(fk_pedido__fk_cliente=usuario)
         elif nombre_rol != ADMIN:
             qs = qs.none()
 
