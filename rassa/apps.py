@@ -22,4 +22,5 @@ class RassaConfig(AppConfig):
 
     def ready(self):
         import rassa.checks  # noqa: F401 — registra system checks de postgresql >= 15
+        import rassa.blueprints.chat.signals  # noqa: F401 — registra signal rename familia→chat
         import rassa.signals  # noqa: F401 — registra signals de historial de estados

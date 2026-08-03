@@ -1,11 +1,11 @@
 meta {
-  name: Agregar integrante a grupo
+  name: Override nombre de conversación familiar
   type: http
-  seq: 10
+  seq: 14
 }
 
-post {
-  url: {{baseUrl}}/api/chat/conversaciones/19/agregar-integrante/
+patch {
+  url: {{baseUrl}}/api/chat/conversaciones/19/override-nombre/
   body: json
   auth: inherit
 }
@@ -17,6 +17,6 @@ headers {
 
 body:json {
   {
-    "usuario_id": 6
+    "nombre_override": true
   }
 }

@@ -13,6 +13,7 @@ Política de on_delete:
 """
 
 from django.db import connection, models
+from django.db.models import Q
 from django.utils import timezone
 
 from rassa.blueprints.liquidaciones.constants import ESTADOS_ACTIVOS
@@ -615,12 +616,20 @@ class Conversacion(models.Model):
     nombre = models.CharField(max_length=100, blank=True, null=True)
     tipo = models.BooleanField(default=False)  # FALSE = privada, TRUE = grupal
     fk_familia = models.ForeignKey(Familia, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_familia")
+    nombre_override = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "conversacion"
         ordering = ["id_conversacion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_familia"],
+                condition=Q(estado=True, fk_familia__isnull=False),
+                name="unique_active_family_conversation",
+            ),
+        ]
 
     def __str__(self):
         tipo_str = "Grupal" if self.tipo else "Privada"
@@ -630,11 +639,14 @@ class Conversacion(models.Model):
 class Integrante(models.Model):
     """Miembro participante en una conversación."""
 
+    ROL_CHOICES = [("miembro", "Miembro"), ("admin", "Admin")]
+
     id_miembro = models.AutoField(primary_key=True)
     fk_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
     fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
+    rol = models.CharField(max_length=10, choices=ROL_CHOICES, default="miembro")
 
     class Meta:
         db_table = "integrantes"

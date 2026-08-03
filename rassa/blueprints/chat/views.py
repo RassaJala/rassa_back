@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from rassa.models import Conversacion, Documento, Familia, Integrante, Mensaje, MensajeDocumento, Usuario
+from rassa.permissions.role_permissions import ADMIN, HasRole
 from rassa.views import _ok
 
 from .serializers import (
@@ -24,6 +25,7 @@ from .serializers import (
     MensajeUpdateSerializer,
     UsuarioBuscarSerializer,
 )
+from .services import chat_sync
 
 
 def _error(message, status_code=status.HTTP_400_BAD_REQUEST, data=None):
@@ -57,7 +59,7 @@ def _get_active_conversation_for_user(conversacion_id, usuario, *, require_grupa
     return conv
 
 
-def _get_or_reactivate_integrante(usuario, conversacion):
+def _get_or_reactivate_integrante(usuario, conversacion, *, rol=None):
     """Crea o reactiva un Integrante. Devuelve (integrante, created_or_reactivated).
 
     A diferencia de get_or_create sin defaults, este helper reactiva un integrante
@@ -65,11 +67,37 @@ def _get_or_reactivate_integrante(usuario, conversacion):
     """
     integrante = Integrante.objects.filter(fk_usuario=usuario, fk_conversacion=conversacion).first()
     if integrante:
-        if not integrante.estado:
+        if not integrante.estado or (rol is not None and integrante.rol != rol):
             integrante.estado = True
-            integrante.save(update_fields=["estado"])
+            update_fields = ["estado"]
+            if rol is not None:
+                integrante.rol = rol
+                update_fields.append("rol")
+            integrante.save(update_fields=update_fields)
         return integrante
-    return Integrante.objects.create(fk_usuario=usuario, fk_conversacion=conversacion)
+    create_kwargs = {"fk_usuario": usuario, "fk_conversacion": conversacion}
+    if rol is not None:
+        create_kwargs["rol"] = rol
+    return Integrante.objects.create(**create_kwargs)
+
+
+def _require_chat_admin(conversacion, usuario):
+    """Devuelve el integrante activo si el usuario es admin del chat.
+
+    Si no lo es, devuelve una respuesta 403 con el envelope {ok, message}.
+    """
+    integrante = Integrante.objects.filter(
+        fk_conversacion=conversacion,
+        fk_usuario=usuario,
+        estado=True,
+        rol="admin",
+    ).first()
+    if integrante is None:
+        return _error(
+            "Solo el administrador del chat puede realizar esta acción.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    return integrante
 
 
 class MensajeListView(generics.ListAPIView):
@@ -84,6 +112,13 @@ class MensajeListView(generics.ListAPIView):
         return (
             Mensaje.objects.filter(fk_conversacion_id=conversacion_id, estado=True)
             .select_related("fk_emisor__fk_persona")
+            .prefetch_related(
+                Prefetch(
+                    "mensajedocumento_set",
+                    queryset=MensajeDocumento.objects.filter(estado=True).select_related("fk_documento"),
+                    to_attr="mensaje_documento",
+                )
+            )
             .order_by("-creado_en")
         )
 
@@ -275,6 +310,9 @@ class ConversacionGrupalCreateView(APIView):
         if not nombre or not nombre.strip():
             return _error("El campo nombre es requerido.")
 
+        if "fk_familia" in request.data:
+            return _error("No se puede vincular una conversación a una familia manualmente.")
+
         usuario_creador = request.user.usuario
         fk_usuarios = request.data.get("fk_usuarios")
 
@@ -323,7 +361,7 @@ class ConversacionGrupalCreateView(APIView):
 
         with transaction.atomic():
             conv = Conversacion.objects.create(tipo=True, nombre=nombre.strip())
-            _get_or_reactivate_integrante(usuario_creador, conv)
+            _get_or_reactivate_integrante(usuario_creador, conv, rol="admin")
 
             for usuario in usuarios:
                 _get_or_reactivate_integrante(usuario, conv)
@@ -350,6 +388,16 @@ class ConversacionRenombrarView(APIView):
             request.user.usuario,
             require_grupal=True,
         )
+
+        admin_check = _require_chat_admin(conv, request.user.usuario)
+        if isinstance(admin_check, Response):
+            return admin_check
+
+        if conv.fk_familia_id is not None and not conv.nombre_override:
+            return _error(
+                "El nombre del grupo familiar se gestiona desde la familia."
+                " Un admin puede desacoplarlo mediante override."
+            )
 
         conv.nombre = nombre.strip()
         conv.save(update_fields=["nombre"])
@@ -381,6 +429,15 @@ class ConversacionAgregarIntegranteView(APIView):
             require_grupal=True,
         )
 
+        admin_check = _require_chat_admin(conv, request.user.usuario)
+        if isinstance(admin_check, Response):
+            return admin_check
+
+        if conv.fk_familia_id is not None:
+            return _error(
+                "No se pueden agregar integrantes manualmente a un chat familiar; use la administración de familias.",
+            )
+
         try:
             usuario_nuevo = Usuario.objects.get(pk=usuario_id, estado=True)
         except Usuario.DoesNotExist:
@@ -399,6 +456,43 @@ class ConversacionAgregarIntegranteView(APIView):
             data={"id_conversacion": conv.id_conversacion},
             message="Integrante agregado correctamente.",
             status_code=status.HTTP_201_CREATED,
+        )
+
+
+class ConversacionIntegranteRemoveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
+
+    def delete(self, request, conversacion_id, usuario_id):
+        conv = _get_active_conversation_for_user(
+            conversacion_id,
+            request.user.usuario,
+            require_grupal=True,
+        )
+
+        admin_check = _require_chat_admin(conv, request.user.usuario)
+        if isinstance(admin_check, Response):
+            return admin_check
+
+        if conv.fk_familia_id is not None:
+            return _error(
+                "No se pueden remover integrantes manualmente de un chat familiar; use la administración de familias.",
+            )
+
+        if not Usuario.objects.filter(pk=usuario_id, estado=True).exists():
+            return _error("El usuario no existe.", status_code=status.HTTP_404_NOT_FOUND)
+
+        integrante = Integrante.objects.filter(fk_usuario_id=usuario_id, fk_conversacion=conv).first()
+        if integrante is None:
+            return _error("El usuario no es miembro de esta conversación.", status_code=status.HTTP_404_NOT_FOUND)
+
+        if integrante.estado:
+            integrante.estado = False
+            integrante.save(update_fields=["estado"])
+
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion},
+            message="Integrante removido correctamente.",
         )
 
 
@@ -423,6 +517,7 @@ class ConversacionIntegrantesListView(APIView):
                     "id_usuario": user.id_usuario,
                     "nombre_completo": nombre_completo,
                     "correo": user.correo,
+                    "rol": integrante.rol,
                     "creado_en": integrante.creado_en.isoformat(),
                 }
             )
@@ -457,7 +552,7 @@ class ConversacionListView(APIView):
                     )
                     & ~Q(mensaje__fk_emisor=usuario),
                 ),
-                es_familia=Exists(Familia.objects.filter(pk=OuterRef("fk_familia_id"))),
+                es_familia=Exists(Familia.objects.filter(pk=OuterRef("fk_familia_id"), estado=True)),
             )
             .prefetch_related(
                 Prefetch(
@@ -493,6 +588,7 @@ class ConversacionListView(APIView):
                     ),
                     "no_leidos": conv.no_leidos_count,
                     "es_familia": conv.es_familia,
+                    "nombre_override": conv.nombre_override,
                 }
             )
 
@@ -582,6 +678,9 @@ class ConversacionDetalleView(APIView):
                 "id_conversacion": conversacion.id_conversacion,
                 "tipo": "grupal" if conversacion.tipo else "privada",
                 "nombre": conversacion.nombre or "",
+                "es_familia": conversacion.fk_familia_id is not None
+                and Familia.objects.filter(pk=conversacion.fk_familia_id, estado=True).exists(),
+                "nombre_override": conversacion.nombre_override,
             },
         )
 
@@ -612,3 +711,54 @@ class UsuarioBuscarView(APIView):
 
         serializer = UsuarioBuscarSerializer(usuarios, many=True)
         return _ok(data=serializer.data)
+
+
+class ConversacionFamiliaSyncView(APIView):
+    """Resincroniza la conversación familiar de una familia (admin)."""
+
+    permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
+    throttle_scope = "chat_write"
+
+    def post(self, request, familia_id):
+        familia = Familia.objects.filter(pk=familia_id).first()
+        if familia is None:
+            return _error("La familia no existe.", status_code=status.HTTP_404_NOT_FOUND)
+        conv = chat_sync.ensure_family_chat(familia.id_familia)
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion, "id_familia": familia.id_familia},
+            message="Conversación familiar sincronizada correctamente.",
+        )
+
+
+class ConversacionOverrideNombreView(APIView):
+    """Activa/desactiva el override del nombre de una conversación familiar."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "chat_write"
+
+    def patch(self, request, conversacion_id):
+        conv = _get_active_conversation_for_user(conversacion_id, request.user.usuario, require_grupal=True)
+
+        admin_check = _require_chat_admin(conv, request.user.usuario)
+        if isinstance(admin_check, Response):
+            return admin_check
+
+        valor = request.data.get("nombre_override")
+        if valor is None:
+            return _error("El campo nombre_override es requerido.")
+
+        if isinstance(valor, str):
+            bool_val = valor.strip().lower() in ("true", "1", "yes")
+        else:
+            bool_val = bool(valor)
+
+        if conv.fk_familia_id is None:
+            return _error("Esta conversación no está vinculada a una familia.")
+
+        conv.nombre_override = bool_val
+        conv.save(update_fields=["nombre_override"])
+
+        return _ok(
+            data={"id_conversacion": conv.id_conversacion, "nombre_override": conv.nombre_override},
+            message="Estado de override actualizado.",
+        )
