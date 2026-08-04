@@ -325,6 +325,11 @@ class LiquidacionViewSet(
         return ctx
 
     def retrieve(self, request, pk=None, *args, **kwargs):
+        if len(str(pk)) > 15:
+            return _ok(
+                message="ID de liquidación inválido.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             int(pk)
         except (ValueError, TypeError):
@@ -485,6 +490,11 @@ class LiquidacionViewSet(
 
     @action(detail=True, methods=["post"], url_path="marcar-pagada")
     def marcar_pagada(self, request, pk=None):
+        if len(str(pk)) > 15:
+            return _ok(
+                message="ID de liquidación inválido.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             int(pk)
         except (ValueError, TypeError):

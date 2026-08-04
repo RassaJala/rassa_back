@@ -1918,3 +1918,18 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.45"))
         self.assertEqual(Decimal(data["comision"]), Decimal("10.05"))
         self.assertEqual(Decimal(data["monto_liquidar"]), Decimal("90.40"))
+
+    def test_redondeo_half_up_tres_decimales_100_005(self):
+        """SUGGESTION Test: redondeo con Decimal('100.005') * 10% = 10.0005 -> 10.00 comision, 90.01 liquidar."""
+        self._crear_pedido_entregado(total=Decimal("100.005"), creado_en=_aware(2026, 7, 21))
+        resp = self._calcular(semana=30, anio=2026)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.json()["data"]
+        self.assertEqual(Decimal(data["comision"]), Decimal("10.00"))
+        self.assertEqual(Decimal(data["monto_liquidar"]), Decimal("90.01"))
+
+    def test_retrieve_con_id_supera_longitud_maxima_retorna_400(self):
+        """SUGGESTION Test: PK que supera 15 caracteres retorna 400 Bad Request de inmediato."""
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self.client.get("/api/liquidaciones/9999999999999999999999/")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
