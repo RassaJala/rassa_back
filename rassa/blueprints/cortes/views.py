@@ -54,11 +54,9 @@ class CorteViewSet(
         return qs
 
     def _monto_teorico(self, vendedor, fecha):
-        total = (
-            Pago.objects.filter(fk_pedido__fk_vendedor=vendedor, creado_en__date=fecha).aggregate(
-                total=Sum("monto")
-            )["total"]
-        )
+        total = Pago.objects.filter(fk_pedido__fk_vendedor=vendedor, creado_en__date=fecha).aggregate(
+            total=Sum("monto")
+        )["total"]
         return total or Decimal("0.00")
 
     def create(self, request, *args, **kwargs):
@@ -91,7 +89,9 @@ class CorteViewSet(
                 estado="cerrado",
             )
         except IntegrityError:
-            logger.warning("IntegrityError esperado (concurrencia) al crear corte para vendedor=%s fecha=%s", usuario.pk, fecha)
+            logger.warning(
+                "IntegrityError esperado (concurrencia) al crear corte para vendedor=%s fecha=%s", usuario.pk, fecha
+            )
             return Response(
                 {"message": f"Ya existe un corte para la fecha {fecha}."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -99,8 +99,7 @@ class CorteViewSet(
 
         _log(
             request.user,
-            f"corte_creado Corte #{corte.id_corte} fecha={fecha} "
-            f"monto_real={monto_real} monto_teorico={monto_teorico}",
+            f"corte_creado Corte #{corte.id_corte} fecha={fecha} monto_real={monto_real} monto_teorico={monto_teorico}",
             request,
         )
         logger.info("Corte #%s creado para vendedor=%s fecha=%s", corte.id_corte, usuario.pk, fecha)

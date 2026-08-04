@@ -558,9 +558,7 @@ class Corte(models.Model):
     ]
 
     id_corte = models.AutoField(primary_key=True)
-    fk_vendedor = models.ForeignKey(
-        "Usuario", on_delete=models.SET_NULL, null=True, blank=True, related_name="cortes"
-    )
+    fk_vendedor = models.ForeignKey("Usuario", on_delete=models.SET_NULL, null=True, blank=True, related_name="cortes")
     fecha = models.DateField(default=timezone.localdate)
     monto_real = models.DecimalField(max_digits=10, decimal_places=2)
     monto_teorico = models.DecimalField(max_digits=10, decimal_places=2)

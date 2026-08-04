@@ -145,9 +145,7 @@ class CorteCreateTest(CortesTestBase):
         self._crear_pago(
             Decimal("50.00"),
             self.usuario_vendedor,
-            fecha=timezone.make_aware(
-                timezone.datetime.combine(ayer, timezone.datetime.min.time())
-            ),
+            fecha=timezone.make_aware(timezone.datetime.combine(ayer, timezone.datetime.min.time())),
         )
         resp = self.client.post(
             "/api/cortes/",

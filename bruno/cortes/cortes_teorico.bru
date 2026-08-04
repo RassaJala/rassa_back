@@ -1,0 +1,16 @@
+meta {
+  name: Monto teórico del corte
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/cortes/teorico/?fecha=2026-08-03
+  body: none
+  auth: inherit
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
