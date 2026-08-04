@@ -377,20 +377,30 @@ class LiquidacionViewSet(
                         status_code=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # Bloquear las filas de PedidoCabecera sin outer joins (select_for_update en PK directa)
+                # Bloquear PedidoCabecera y DetallePedido sin outer joins (C3 Fix)
                 pedido_ids = [p.id_pedido for p in ventas_iniciales]
                 pedidos_lockeados = list(
                     PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk")
                 )
+                list(
+                    DetallePedido.objects.select_for_update().filter(
+                        fk_pedido_id__in=pedido_ids,
+                        fk_producto_semanal__fk_publicacion__fk_agricultor_id=agricultor.id_usuario,
+                    )
+                )
 
-                # C2 Fix: Re-validar estado 'entregado' y no-liquidado tras adquirir el lock
+                # Re-validación atómica bulk sin N+1 queries
+                ya_liquidados_set = set(
+                    LiquidacionVenta.objects.filter(
+                        fk_pedido_id__in=pedido_ids,
+                        fk_liquidacion__fk_agricultor_id=agricultor.id_usuario,
+                    ).values_list("fk_pedido_id", flat=True)
+                )
+
                 ventas = [
                     p
                     for p in pedidos_lockeados
-                    if p.fk_estado.tipo_estado == ESTADO_PEDIDO_ENTREGADO
-                    and not LiquidacionVenta.objects.filter(
-                        fk_pedido=p.pk, fk_liquidacion__fk_agricultor_id=agricultor.id_usuario
-                    ).exists()
+                    if p.id_pedido not in ya_liquidados_set and p.fk_estado.tipo_estado == ESTADO_PEDIDO_ENTREGADO
                 ]
                 if not ventas:
                     return _ok(
