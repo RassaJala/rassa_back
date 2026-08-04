@@ -271,6 +271,20 @@ class CorteListTest(CortesTestBase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["monto_teorico"], "100.00")
 
+    def test_vendedor_no_ve_detalle_de_corte_de_otro(self):
+        """GET /api/cortes/{id}/ de un corte de otro vendedor devuelve 404."""
+        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
+        client1 = APIClient()
+        client1.force_authenticate(user=self.usuario_vendedor.fk_user)
+        resp = client1.post("/api/cortes/", {"monto_real": "100.00", "fecha": str(self.hoy)})
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        id_corte = resp.json()["id_corte"]
+
+        client2 = APIClient()
+        client2.force_authenticate(user=self.usuario_vendedor2.fk_user)
+        detail = client2.get(f"/api/cortes/{id_corte}/")
+        self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_admin_ve_todos_los_cortes(self):
         persona = Persona.objects.create(
             nombre="Admin",

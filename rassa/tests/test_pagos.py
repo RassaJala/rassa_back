@@ -268,6 +268,19 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
 
+    def test_pago_monto_mayor_al_total_pedido_falla(self):
+        pedido = self._crear_pedido(self.estado_listo)
+        resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "117.00",
+            },
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
+
     def test_pago_pedido_cancelado_falla(self):
         pedido = self._crear_pedido(self.estado_cancelado)
         resp = self.client.post(
@@ -426,6 +439,10 @@ class PagoPermisosTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_tipos_pago_sin_autenticacion_401(self):
+        resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_cliente_puede_ver_tipos_pago(self):

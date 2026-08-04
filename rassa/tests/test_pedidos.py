@@ -14,6 +14,8 @@ from rassa.models import (
     CategoriaProducto,
     DetallePedido,
     EstadoPedido,
+    Familia,
+    FamiliaUsuario,
     HistorialEstadoPedido,
     LimiteCliente,
     PedidoCabecera,
@@ -834,6 +836,20 @@ class PedidoCreateTestCase(APITestCase):
     def _crear_payload(self, items):
         return {"items": items}
 
+    def _crear_otro_cliente(self, username):
+        user = User.objects.create_user(username=username, email=f"{username}@rassa.com", password="password123")
+        persona = Persona.objects.create(
+            nombre="Otro", apellido_paterno="Cliente", fecha_nacimiento="1992-02-02", sexo="F", domicilio="Calle 7"
+        )
+        usuario = Usuario.objects.create(
+            fk_user=user,
+            fk_persona=persona,
+            telefono="5550001111",
+            correo=f"{username}@rassa.com",
+            fk_rol=self.rol_cliente,
+        )
+        return user, usuario
+
     # ── Happy path ────────────────────────────────────────────
 
     def test_crear_pedido_exitoso(self):
@@ -1094,6 +1110,125 @@ class PedidoCreateTestCase(APITestCase):
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("límite de crédito", str(response.data).lower())
+
+    # ── Límite de crédito — familia ─────────────────────────────
+
+    def test_credito_familia_combinado_excede_limite(self):
+        """Un pedido pendiente de otro miembro de la familia suma al límite del cliente."""
+        _, otro_cliente = self._crear_otro_cliente("cliente_familia_excede")
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=otro_cliente, fk_familia=familia, estado=True)
+        # El otro miembro ya gastó 900 del límite de 1000
+        PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            subtotal=Decimal("743.80"),
+            iva=Decimal("156.20"),
+            total=Decimal("900.00"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        # 10 unidades de 20 = 242 con IVA → 900 + 242 = 1142 > 1000
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 10}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("límite de crédito", str(response.data).lower())
+
+    def test_credito_familia_combinado_dentro_limite(self):
+        """Un pedido dentro del límite combinado con la familia se acepta."""
+        _, otro_cliente = self._crear_otro_cliente("cliente_familia_dentro")
+        familia = Familia.objects.create(nombre_familia="Familia Test")
+        FamiliaUsuario.objects.create(fk_usuario=self.usuario_cliente, fk_familia=familia, estado=True)
+        FamiliaUsuario.objects.create(fk_usuario=otro_cliente, fk_familia=familia, estado=True)
+        PedidoCabecera.objects.create(
+            fk_cliente=otro_cliente,
+            fk_estado=self.estado_pendiente,
+            subtotal=Decimal("743.80"),
+            iva=Decimal("156.20"),
+            total=Decimal("900.00"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        # 1 unidad de 20 = 24.20 con IVA → 900 + 24.20 = 924.20 < 1000
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    # ── Límite de crédito — cancelación y stock ─────────────────
+
+    def test_cancelar_pendiente_libera_saldo_credito(self):
+        """Cancelar un pedido pendiente libera el saldo y permite uno nuevo antes bloqueado."""
+        pedido_previo = PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            fk_vendedor=self.usuario_vendedor,
+            subtotal=Decimal("743.80"),
+            iva=Decimal("156.20"),
+            total=Decimal("900.00"),
+        )
+
+        self.client.force_authenticate(user=self.user_cliente)
+        # 10 unidades de 20 = 242 con IVA → 900 + 242 = 1142 > 1000 → bloqueado
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 10}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("límite de crédito", str(response.data).lower())
+
+        # Cancelar el pedido pendiente como vendedor
+        EstadoPedido.objects.get_or_create(tipo_estado="cancelado", defaults={"descripcion": "Cancelado"})
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp_cancel = self.client.patch(
+            f"/api/pedidos/{pedido_previo.id_pedido}/status/",
+            {"nuevo_estado": "cancelado"},
+            format="json",
+        )
+        self.assertEqual(resp_cancel.status_code, status.HTTP_200_OK)
+
+        # Ahora el mismo pedido de 242 ya no excede el límite → 201
+        self.client.force_authenticate(user=self.user_cliente)
+        response2 = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+
+    def test_credito_excede_limite_no_descuenta_stock(self):
+        """Si la validación de crédito falla, el stock del ProductoSemanal no se descuenta."""
+        self.client.force_authenticate(user=self.user_cliente)
+        # 50 unidades de 20 = 1000 + IVA 21% = 1210 > 1000 límite
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 50}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, 50)
+
+    # ── Historial — endpoint dedicado ───────────────────────────
+
+    def test_historial_endpoint_vendedor(self):
+        """GET /api/pedidos/{id}/historial/ como vendedor devuelve el historial del pedido."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=self.usuario_vendedor)
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        historial = resp.data["data"]
+        self.assertEqual(len(historial), 1)
+        self.assertIsNone(historial[0]["estado_anterior"])
+        self.assertEqual(historial[0]["estado_nuevo"], "pendiente")
+
 
     # ── Campos de salida del serializer ───────────────────────
 
