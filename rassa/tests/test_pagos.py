@@ -4,6 +4,7 @@ import threading
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -864,3 +865,71 @@ class PagoConcurrencyTest(TransactionTestCase):
         folios = list(Pago.objects.values_list("folio", flat=True))
         self.assertEqual(len(folios), NUM_THREADS)
         self.assertEqual(len(set(folios)), NUM_THREADS, "Folios duplicados bajo concurrencia")
+
+
+class PagoConstraintRegresionTest(TestCase):
+    """Tests de regresión para la migración 0018 (cambio nulls_distinct en Pago).
+
+    El constraint `unique_pago_per_pedido` cambió de `nulls_distinct=False` a
+    `nulls_distinct=True` para permitir múltiples Pagos con `fk_pedido=NULL`
+    (pagos de liquidación RASSA→agricultor). Este test blinda ese cambio.
+    """
+
+    def setUp(self):
+        # No necesitamos usuarios completos — solo verificar el nivel de BD.
+        self.rol = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
+        self.persona = Persona.objects.create(
+            nombre="Test",
+            apellido_paterno="X",
+            sexo="M",
+            fecha_nacimiento="1990-01-01",
+            domicilio="Calle 1",
+        )
+        self.user = User.objects.create_user(
+            username="regresion@test.com", email="regresion@test.com", password="pass123"
+        )
+        self.tipo = TipoPago.objects.create(nombre="Efectivo")
+
+    def test_multiples_pagos_con_fk_pedido_null_coexisten(self):
+        """Crear 3 Pagos con fk_pedido=NULL no debe violar el constraint."""
+        for i in range(3):
+            Pago.objects.create(
+                fk_pedido=None,
+                fk_tipo=self.tipo,
+                monto=Decimal("100.00"),
+                referencia=f"REF-{i}",
+            )
+        self.assertEqual(Pago.objects.filter(fk_pedido__isnull=True).count(), 3)
+
+    def test_un_pago_por_pedido_NO_NULL_sigue_intacto(self):
+        """Crea 2 Pagos con el mismo fk_pedido NO NULL. El segundo debe
+        fallar con IntegrityError — el constraint sigue garantizando
+        "un pago por pedido" cuando fk_pedido IS NOT NULL (revisión 4R
+        R3 SUGGESTION sobre la regresión 0018)."""
+
+        # Setup mínimo: un pedido en estado "listo_para_retirar"
+        estado_listo = EstadoPedido.objects.create(tipo_estado="listo_para_retirar", descripcion="Listo")
+        pedido = PedidoCabecera.objects.create(
+            fk_estado=estado_listo,
+            subtotal=Decimal("100.00"),
+            iva=Decimal("0.00"),
+            total=Decimal("100.00"),
+        )
+
+        # Primer pago: OK (atomic bloquea la transacción de TestCase para
+        # que el IntegrityError del 2do no la aborte).
+        with transaction.atomic():
+            Pago.objects.create(fk_pedido=pedido, fk_tipo=self.tipo, monto=Decimal("100.00"))
+
+            # Segundo pago con el mismo pedido: debe violar el constraint.
+            # Savepoint interno para que el catch limpie el error sin afectar
+            # la transacción externa.
+            with self.assertRaises(IntegrityError):
+                with transaction.atomic():
+                    Pago.objects.create(fk_pedido=pedido, fk_tipo=self.tipo, monto=Decimal("100.00"))
+
+        # Coexisten: 1 con fk_pedido + 1 con fk_pedido=None
+        Pago.objects.create(fk_pedido=None, fk_tipo=self.tipo, monto=Decimal("50.00"))
+        self.assertEqual(Pago.objects.count(), 2)
+        self.assertEqual(Pago.objects.filter(fk_pedido__isnull=True).count(), 1)
+        self.assertEqual(Pago.objects.filter(fk_pedido__isnull=False).count(), 1)

@@ -5,6 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from rassa.models import DetallePedido, Pago, PedidoCabecera, TipoPago
+from rassa.utils import nombre_completo as _nombre_completo
 
 ESTADO_REQUERIDO = "listo_para_retirar"
 
@@ -60,13 +61,6 @@ class PagoCreateSerializer(serializers.Serializer):
             )
 
         return attrs
-
-
-def _nombre_completo(usuario):
-    if usuario and usuario.fk_persona:
-        p = usuario.fk_persona
-        return f"{p.nombre} {p.apellido_paterno}"
-    return None
 
 
 class ClienteNombreMixin:

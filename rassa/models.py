@@ -16,6 +16,8 @@ from django.db import connection, models
 from django.db.models import Q
 from django.utils import timezone
 
+from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
+
 # ============================================================
 # 1. TABLAS BASE (sin dependencias)
 # ============================================================
@@ -504,7 +506,7 @@ class Pago(models.Model):
         db_table = "pago"
         ordering = ["id_pago"]
         constraints = [
-            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=False),
+            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=True),
         ]
 
     def __str__(self):
@@ -912,7 +914,14 @@ class Recibo(models.Model):
 
 
 class Liquidacion(models.Model):
-    """Liquidación de ventas de un agricultor en un periodo."""
+    """Liquidación de ventas de un agricultor en un periodo.
+
+    Estados:
+        - pendiente: recién calculada, pendiente de pago.
+        - pagada: pago registrado vía fk_pago_liquidacion.
+        - parcial: reservado para pagos parciales futuros (ninguna ruta
+          del backend lo produce actualmente).
+    """
 
     ESTADO_CHOICES = [
         ("pendiente", "Pendiente"),
@@ -928,6 +937,7 @@ class Liquidacion(models.Model):
     periodo_fin = models.DateField()
     monto_ventas = models.DecimalField(max_digits=10, decimal_places=2)
     comision = models.DecimalField(max_digits=10, decimal_places=2)
+    tasa_comision = models.DecimalField(max_digits=5, decimal_places=4, default=COMISION_RASSA)
     monto_liquidar = models.DecimalField(max_digits=10, decimal_places=2)
     fk_pago_liquidacion = models.ForeignKey(
         Pago,
@@ -942,11 +952,56 @@ class Liquidacion(models.Model):
     class Meta:
         db_table = "liquidacion"
         ordering = ["id_liquidacion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "periodo_inicio", "periodo_fin"],
+                name="unique_liquidacion_agricultor_periodo",
+            ),
+        ]
 
     def __str__(self):
         return f"Liquidación #{self.id_liquidacion} — {str(self.fk_agricultor)}"
 
-    def save(self, *args, **kwargs):
-        if self.monto_liquidar is None:
-            self.monto_liquidar = self.monto_ventas - self.comision
-        super().save(*args, **kwargs)
+
+class LiquidacionVenta(models.Model):
+    """Snapshot de los pedidos que aportaron al cálculo de una liquidación.
+
+    Permite que el detalle de la liquidación (ventas incluidas) sea estable
+    frente a cambios futuros en el estado de los pedidos: aunque un pedido
+    deje de estar `entregado` después de liquidarse, sigue contando para
+    la liquidación original. Cierra el riesgo de "doble pago" si se
+    re-calcula un periodo con ventas distintas en el snapshot.
+    """
+
+    id_liquidacion_venta = models.AutoField(primary_key=True)
+    fk_liquidacion = models.ForeignKey(
+        Liquidacion,
+        on_delete=models.CASCADE,
+        db_column="fk_liquidacion",
+        related_name="ventas",
+    )
+    fk_pedido = models.ForeignKey(
+        "PedidoCabecera",
+        on_delete=models.PROTECT,
+        db_column="fk_pedido",
+        related_name="liquidaciones",
+    )
+    monto_aportado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Total del pedido al momento de la liquidación (snapshot).",
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "liquidacion_venta"
+        ordering = ["id_liquidacion_venta"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_liquidacion", "fk_pedido"],
+                name="unique_liquidacion_venta_pedido",
+            ),
+        ]
+
+    def __str__(self):
+        return f"LV #{self.id_liquidacion_venta} — liq={self.fk_liquidacion_id} pedido={self.fk_pedido_id}"

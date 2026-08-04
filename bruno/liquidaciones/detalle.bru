@@ -1,0 +1,15 @@
+meta {
+  name: Detalle Liquidación
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/liquidaciones/{{liquidacionId}}/
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}
