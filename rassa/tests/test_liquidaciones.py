@@ -1819,6 +1819,19 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
         self.assertEqual(Decimal(data["ventas"][0]["total"]), Decimal("100.00"))
 
+        # C1 Fix Test: El 2º agricultor puede liquidar su parte del mismo pedido compartido después del 1º
+        resp2 = self._calcular(agricultor_id=agri2.id_usuario, semana=30, anio=2026)
+        self.assertEqual(resp2.status_code, status.HTTP_201_CREATED)
+        data2 = resp2.json()["data"]
+        self.assertEqual(Decimal(data2["monto_ventas"]), Decimal("200.00"))
+        self.assertEqual(Decimal(data2["ventas"][0]["total"]), Decimal("200.00"))
+
+    def test_retrieve_con_id_no_numerico_retorna_400(self):
+        """C3 Fix Test: GET /api/liquidaciones/abc/ retorna 400 Bad Request en lugar de 500."""
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self.client.get("/api/liquidaciones/abc/")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_redondeo_half_up_comision_fraccionaria(self):
         """Verifica la regla ROUND_HALF_UP con centavos fraccionarios.
 

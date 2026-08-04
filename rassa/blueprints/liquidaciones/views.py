@@ -57,31 +57,22 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
     inicio es inclusivo, fin_exclusive es exclusivo. Los pedidos con
     `creado_en` en la fecha fin_exclusive (lunes siguiente) NO cuentan.
     """
+    from django.db.models import Exists, OuterRef
+
+    from rassa.models import LiquidacionVenta
+
     estado_entregado = EstadoPedido.objects.get(tipo_estado=ESTADO_PEDIDO_ENTREGADO)
     pedido_ids = (
         DetallePedido.objects.filter(fk_producto_semanal__fk_publicacion__fk_agricultor_id=agricultor_id)
         .values_list("fk_pedido_id", flat=True)
         .distinct()
     )
-    # Auditoría/Monitoreo: registrar pedidos entregados en el rango que ya fueron liquidados previamente.
-    ya_liquidados = list(
-        PedidoCabecera.objects.filter(
-            id_pedido__in=pedido_ids,
-            fk_estado=estado_entregado,
-            creado_en__date__gte=inicio,
-            creado_en__date__lt=fin_exclusive,
-            liquidaciones__isnull=False,
-        ).values_list("id_pedido", flat=True)
+
+    # C1 Fix: Excluir pedidos solo si ya fueron liquidados para ESTE agricultor específico
+    ya_liquidado_para_este_agricultor = LiquidacionVenta.objects.filter(
+        fk_pedido=OuterRef("pk"),
+        fk_liquidacion__fk_agricultor_id=agricultor_id,
     )
-    if ya_liquidados:
-        logger.info(
-            "Monitoreo liquidaciones: Excluidos %s pedidos ya liquidados para agricultor=%s en rango %s a %s: %s",
-            len(ya_liquidados),
-            agricultor_id,
-            inicio,
-            fin_exclusive,
-            ya_liquidados,
-        )
 
     return (
         PedidoCabecera.objects.filter(
@@ -89,8 +80,9 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
             fk_estado=estado_entregado,
             creado_en__date__gte=inicio,
             creado_en__date__lt=fin_exclusive,
-            liquidaciones__isnull=True,
         )
+        .annotate(ya_liquidado=Exists(ya_liquidado_para_este_agricultor))
+        .filter(ya_liquidado=False)
         .select_related("fk_cliente__fk_persona")
         .prefetch_related("pago_set")
         .order_by("creado_en")
@@ -311,13 +303,21 @@ class LiquidacionViewSet(
             ctx["ventas_queryset"] = _ventas_snapshot(instance)
         return ctx
 
-    def retrieve(self, request, *args, **kwargs):
-        # Override OkResponseMixin.retrieve para evitar el doble fetch:
-        # el super().retrieve() llama a get_object() y luego a
-        # get_serializer() que internamente llama a get_serializer_context()
-        # que volvía a llamar a get_object(). Ahora cacheamos la instancia
-        # en _cached_instance y la reutilizamos.
-        instance = self.get_object()
+    def retrieve(self, request, pk=None, *args, **kwargs):
+        try:
+            int(pk)
+        except (ValueError, TypeError):
+            return _ok(
+                message="ID de liquidación inválido.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            instance = self.get_object()
+        except Exception:
+            return _ok(
+                message="Liquidación no encontrada.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
         self._cached_instance = instance
         serializer = self.get_serializer(instance)
         return _ok(data=serializer.data)
@@ -359,7 +359,7 @@ class LiquidacionViewSet(
             with transaction.atomic():
                 _set_lock_timeout("5s")
                 try:
-                    ventas = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
+                    ventas_iniciales = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
                 except EstadoPedido.DoesNotExist:
                     logger.error("EstadoPedido 'entregado' no existe en la BD. Ejecutar seed_rassa_data.")
                     return _ok(
@@ -368,19 +368,32 @@ class LiquidacionViewSet(
                         ),
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     )
-                if not ventas:
+                if not ventas_iniciales:
                     return _ok(
                         message="No hay ventas entregadas para este agricultor en el periodo.",
                         status_code=status.HTTP_400_BAD_REQUEST,
                     )
 
                 # Bloquear las filas de PedidoCabecera sin outer joins (select_for_update en PK directa)
-                pedido_ids = [p.id_pedido for p in ventas]
-                list(PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk"))
+                pedido_ids = [p.id_pedido for p in ventas_iniciales]
+                pedidos_lockeados = list(
+                    PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk")
+                )
 
-                existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
-                if existing:
-                    return _liquidacion_duplicada_response(existing)
+                # C2 Fix: Re-validar estado 'entregado' y no-liquidado tras adquirir el lock
+                ventas = [
+                    p
+                    for p in pedidos_lockeados
+                    if p.fk_estado.tipo_estado == ESTADO_PEDIDO_ENTREGADO
+                    and not LiquidacionVenta.objects.filter(
+                        fk_pedido=p.pk, fk_liquidacion__fk_agricultor_id=agricultor.id_usuario
+                    ).exists()
+                ]
+                if not ventas:
+                    return _ok(
+                        message="No hay ventas entregadas para este agricultor en el periodo.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 montos_map, monto_ventas_total, comision_total, monto_liquidar = _calcular_montos(
                     ventas, agricultor.id_usuario, tasa
@@ -479,8 +492,8 @@ class LiquidacionViewSet(
 
                 liquidacion = _reload_liquidacion(pk)
 
-                if liquidacion.estado == ESTADO_PAGADA:
-                    pago_existente = liquidacion.fk_pago_liquidacion
+                pago_existente = liquidacion.fk_pago_liquidacion
+                if liquidacion.estado == ESTADO_PAGADA or pago_existente is not None:
                     if pago_existente:
                         if pago_existente.fk_tipo_id != tipo_pago or (pago_existente.referencia or "") != referencia:
                             return _ok(
