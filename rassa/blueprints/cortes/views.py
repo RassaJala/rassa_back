@@ -6,6 +6,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -42,14 +43,12 @@ class CorteViewSet(
         return CorteSerializer
 
     def get_queryset(self):
-        qs = Corte.objects.all()
-        usuario = getattr(self.request.user, "usuario", None)
+        qs = Corte.objects.select_related("fk_vendedor__fk_persona").all()
+        usuario = self._usuario_autenticado(self.request)
         if usuario is None:
             return qs.none()
 
-        rol = getattr(usuario, "fk_rol", None)
-        nombre_rol = rol.nombre_rol if rol else None
-
+        nombre_rol = self._rol_nombre(usuario)
         if nombre_rol == VENDEDOR:
             qs = qs.filter(fk_vendedor=usuario)
         elif nombre_rol != ADMIN:
@@ -57,7 +56,19 @@ class CorteViewSet(
 
         return qs
 
+    def _usuario_autenticado(self, request):
+        """Devuelve el perfil Usuario asociado a request.user, o None."""
+        return getattr(request.user, "usuario", None)
+
+    def _rol_nombre(self, usuario):
+        """Nombre del rol del usuario, o None si no tiene rol asignado."""
+        rol = getattr(usuario, "fk_rol", None)
+        return rol.nombre_rol if rol else None
+
     def _monto_teorico(self, vendedor, fecha):
+        # Solo pagos en efectivo. El nombre canónico es "Efectivo"
+        # (id_tipo_pago=1 en seed_rassa_data.py); __iexact cubre variantes
+        # manuales de mayúsculas ("efectivo") sin atar el filtro a un id numérico.
         # Límites en la zona horaria local (settings.TIME_ZONE), no en la zona de la
         # conexión (UTC): un pago a las 23:59 local pertenece al día local, no al siguiente.
         tz = ZoneInfo(getattr(settings, "TIME_ZONE", "UTC"))
@@ -65,6 +76,7 @@ class CorteViewSet(
         fin = inicio + timedelta(days=1)
         total = Pago.objects.filter(
             fk_pedido__fk_vendedor=vendedor,
+            fk_tipo__nombre__iexact="efectivo",
             creado_en__gte=inicio,
             creado_en__lt=fin,
         ).aggregate(total=Sum("monto"))["total"]
@@ -74,7 +86,7 @@ class CorteViewSet(
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        usuario = getattr(request.user, "usuario", None)
+        usuario = self._usuario_autenticado(request)
         if usuario is None:
             return Response(
                 {"message": "No se encontró el perfil de usuario."},
@@ -129,12 +141,28 @@ class CorteViewSet(
         fecha = timezone.localdate()
         raw_fecha = request.query_params.get("fecha")
         if raw_fecha:
-            try:
-                fecha = datetime.strptime(raw_fecha, "%Y-%m-%d").date()
-            except ValueError as err:
-                raise ValidationError({"fecha": "fecha debe tener formato YYYY-MM-DD."}) from err
+            fecha = self._parsear_fecha(raw_fecha)
 
-        usuario = getattr(request.user, "usuario", None)
-        monto_teorico = self._monto_teorico(usuario, fecha) if usuario is not None else Decimal("0.00")
+        usuario = self._usuario_autenticado(request)
+        if usuario is None:
+            monto_teorico = Decimal("0.00")
+        else:
+            # Solo este endpoint cachea (TTL 60s): es una lectura para la UI.
+            # create() usa _monto_teorico() sin cache para no persistir un valor
+            # desactualizado como snapshot del corte.
+            cache_key = f"corte_monto_teorico_{usuario.pk}_{fecha}"
+            cached = cache.get(cache_key)
+            if cached is not None:
+                monto_teorico = Decimal(cached)
+            else:
+                monto_teorico = self._monto_teorico(usuario, fecha)
+                # Decimal no es JSON-serializable: se guarda como string.
+                cache.set(cache_key, str(monto_teorico), 60)
 
         return Response({"fecha": str(fecha), "monto_teorico": str(monto_teorico)})
+
+    def _parsear_fecha(self, raw_fecha):
+        try:
+            return datetime.strptime(raw_fecha, "%Y-%m-%d").date()
+        except ValueError as err:
+            raise ValidationError({"fecha": "fecha debe tener formato YYYY-MM-DD."}) from err

@@ -8,8 +8,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import connection, connections
 from django.test import TestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -45,6 +47,12 @@ class CortesTestBase(TestCase):
         cls.usuario_vendedor2 = cls._crear_usuario("vendedor2@test.com", cls.rol_vendedor)
         cls.usuario_cliente = cls._crear_usuario("cliente@test.com", cls.rol_cliente)
 
+    def setUp(self):
+        # S2: _monto_teorico cachea 60s en LocMemCache (persiste entre tests del
+        # mismo proceso); sin limpiarla un test podría leer el valor cacheado de
+        # otro test y dar falso-verde o flakiness.
+        cache.clear()
+
     @classmethod
     def _crear_usuario(cls, email, rol):
         persona = Persona.objects.create(
@@ -57,7 +65,7 @@ class CortesTestBase(TestCase):
         user = User.objects.create_user(username=email, email=email, password="pass123")
         return Usuario.objects.create(fk_user=user, fk_persona=persona, fk_rol=rol, correo=email)
 
-    def _crear_pago(self, monto, vendedor, fecha=None):
+    def _crear_pago(self, monto, vendedor, fecha=None, tipo=None):
         """Crea un pago directamente en BD, con creado_en controlable."""
         pedido = PedidoCabecera.objects.create(
             fk_cliente=self.usuario_cliente,
@@ -67,7 +75,7 @@ class CortesTestBase(TestCase):
             iva=Decimal("0.00"),
             total=monto,
         )
-        pago = Pago.objects.create(fk_pedido=pedido, fk_tipo=self.tipo_efectivo, monto=monto)
+        pago = Pago.objects.create(fk_pedido=pedido, fk_tipo=tipo or self.tipo_efectivo, monto=monto)
         if fecha is not None:
             Pago.objects.filter(pk=pago.pk).update(creado_en=fecha)
         return pago
@@ -77,6 +85,7 @@ class CorteCreateTest(CortesTestBase):
     """Tests de creación de cortes."""
 
     def setUp(self):
+        super().setUp()
         self.client = APIClient()
         self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
         self.hoy = timezone.localdate()
@@ -167,6 +176,19 @@ class CorteCreateTest(CortesTestBase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertEqual(resp.json()["monto_teorico"], "100.00")
 
+    def test_crear_corte_solo_suma_efectivo(self):
+        # S6: el monto teórico del arqueo solo incluye pagos en Efectivo; una
+        # transferencia del mismo vendedor el mismo día no debe sumarse.
+        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
+        tipo_transferencia = TipoPago.objects.create(id_tipo_pago=2, nombre="Transferencia")
+        self._crear_pago(Decimal("50.00"), self.usuario_vendedor, tipo=tipo_transferencia)
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "100.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.json()["monto_teorico"], "100.00")
+
     def test_crear_corte_incluye_pago_23_59_hora_local(self):
         # Un pago a las 23:59 hora local (settings.TIME_ZONE) pertenece al corte
         # del día local, aunque en UTC ya sea el día siguiente.
@@ -227,6 +249,7 @@ class CorteListTest(CortesTestBase):
     """Tests de listado de cortes."""
 
     def setUp(self):
+        super().setUp()
         self.client = APIClient()
         self.hoy = timezone.localdate()
 
@@ -273,15 +296,43 @@ class CorteListTest(CortesTestBase):
 
         admin_client = APIClient()
         admin_client.force_authenticate(user=user_admin)
-        resp = admin_client.get("/api/cortes/")
+        # R3-002: select_related("fk_vendedor__fk_persona") evita el N+1 de
+        # vendedor_nombre. Con el join el listado usa ~2 consultas (count + list);
+        # sin él, ~2 más por corte listado. Límite holgado de 4.
+        with CaptureQueriesContext(connection) as ctx:
+            resp = admin_client.get("/api/cortes/")
+        self.assertLessEqual(len(ctx.captured_queries), 4)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["count"], 2)
+
+    def test_corte_incluye_vendedor_nombre(self):
+        # S1: el serializer expone el nombre legible del vendedor (nombre +
+        # apellido_paterno) en detalle y listado.
+        self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
+        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "100.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        id_corte = resp.json()["id_corte"]
+
+        detail = self.client.get(f"/api/cortes/{id_corte}/")
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.json()["vendedor_nombre"], "vendedor Test")
+
+        list_resp = self.client.get("/api/cortes/")
+        self.assertEqual(list_resp.status_code, status.HTTP_200_OK)
+        results = list_resp.json()["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["vendedor_nombre"], "vendedor Test")
 
 
 class CorteTeoricoTest(CortesTestBase):
     """Tests del endpoint /api/cortes/teorico/."""
 
     def setUp(self):
+        super().setUp()
         self.client = APIClient()
         self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
         self.hoy = timezone.localdate()
@@ -296,6 +347,16 @@ class CorteTeoricoTest(CortesTestBase):
         data = resp.json()
         self.assertEqual(data["fecha"], str(self.hoy))
         self.assertEqual(data["monto_teorico"], "116.00")
+
+    def test_teorico_solo_suma_efectivo(self):
+        # S6: el teórico solo suma pagos en Efectivo; transferencias/depósitos
+        # del mismo vendedor el mismo día quedan fuera del arqueo.
+        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
+        tipo_transferencia = TipoPago.objects.create(id_tipo_pago=2, nombre="Transferencia")
+        self._crear_pago(Decimal("50.00"), self.usuario_vendedor, tipo=tipo_transferencia)
+        resp = self.client.get(f"/api/cortes/teorico/?fecha={self.hoy}")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["monto_teorico"], "100.00")
 
     def test_teorico_sin_fecha_usa_hoy(self):
         self._crear_pago(Decimal("40.00"), self.usuario_vendedor)
@@ -329,6 +390,7 @@ class CorteFKVendedorTest(CortesTestBase):
     """C2: fk_vendedor nullable + UniqueConstraint parcial que excluye NULLs (Opción B)."""
 
     def setUp(self):
+        super().setUp()
         self.client = APIClient()
         self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
         self.hoy = timezone.localdate()
@@ -363,6 +425,35 @@ class CorteFKVendedorTest(CortesTestBase):
             diferencia=Decimal("0.00"),
         )
         self.assertEqual(Corte.objects.filter(fecha=self.hoy).count(), 3)
+
+    def test_vendedor_nombre_none_en_corte_huerfano(self):
+        # R3-004: un corte huérfano (fk_vendedor NULL tras eliminar al vendedor)
+        # expone vendedor_nombre=None en el detalle sin romper el serializer.
+        corte = Corte.objects.create(
+            fk_vendedor=None,
+            fecha=self.hoy,
+            monto_real=Decimal("10.00"),
+            monto_teorico=Decimal("10.00"),
+            diferencia=Decimal("0.00"),
+        )
+        persona = Persona.objects.create(
+            nombre="Admin",
+            apellido_paterno="Test",
+            sexo="M",
+            fecha_nacimiento="1990-01-01",
+            domicilio="Calle 2",
+        )
+        user_admin = User.objects.create_user(username="admin@test.com", email="admin@test.com", password="pass123")
+        Usuario.objects.create(
+            fk_user=user_admin,
+            fk_persona=persona,
+            fk_rol=self.rol_admin,
+            correo="admin@test.com",
+        )
+        self.client.force_authenticate(user=user_admin)
+        resp = self.client.get(f"/api/cortes/{corte.id_corte}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsNone(resp.json()["vendedor_nombre"])
 
     def test_dos_vendedores_no_null_misma_fecha_sigue_imposible(self):
         resp = self.client.post(

@@ -8,8 +8,17 @@ from rest_framework import serializers
 from rassa.models import Corte
 
 
+def _nombre_completo(usuario):
+    if usuario and usuario.fk_persona:
+        p = usuario.fk_persona
+        return f"{p.nombre} {p.apellido_paterno}"
+    return None
+
+
 class CorteSerializer(serializers.ModelSerializer):
     """Serializer de salida para cortes de caja."""
+
+    vendedor_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = Corte
@@ -21,8 +30,12 @@ class CorteSerializer(serializers.ModelSerializer):
             "diferencia",
             "estado",
             "creado_en",
+            "vendedor_nombre",
         ]
         read_only_fields = ["id_corte", "monto_teorico", "diferencia", "estado", "creado_en"]
+
+    def get_vendedor_nombre(self, obj):
+        return _nombre_completo(obj.fk_vendedor)
 
 
 class CorteCreateSerializer(serializers.Serializer):
