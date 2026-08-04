@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.http import Http404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -126,7 +127,7 @@ def _crear_liquidacion_con_snapshot(
     ventas: list[PedidoCabecera],
     montos_map: dict[int, Decimal],
 ) -> Liquidacion:
-    """Crea la liquidación y persiste el snapshot de ventas en LiquidacionVenta."""
+    """Crea la liquidación y el snapshot en LiquidacionVenta en la misma transacción atómica (B1 Fix)."""
     with transaction.atomic():
         liquidacion = Liquidacion.objects.create(
             fk_agricultor=agricultor,
@@ -138,16 +139,16 @@ def _crear_liquidacion_con_snapshot(
             monto_liquidar=monto_liquidar,
             estado=ESTADO_PENDIENTE,
         )
-    LiquidacionVenta.objects.bulk_create(
-        [
-            LiquidacionVenta(
-                fk_liquidacion=liquidacion,
-                fk_pedido=p,
-                monto_aportado=montos_map.get(p.id_pedido, Decimal("0.00")),
-            )
-            for p in ventas
-        ]
-    )
+        LiquidacionVenta.objects.bulk_create(
+            [
+                LiquidacionVenta(
+                    fk_liquidacion=liquidacion,
+                    fk_pedido=p,
+                    monto_aportado=montos_map.get(p.id_pedido, Decimal("0.00")),
+                )
+                for p in ventas
+            ]
+        )
     return liquidacion
 
 
@@ -208,12 +209,12 @@ def _liquidacion_duplicada_response(existing: Liquidacion):
 
 
 def _is_transient_error(exc: DatabaseError) -> bool:
-    """Detecta deadlocks (40P01) o timeouts de lock (55P03) en PostgreSQL."""
+    """Detecta deadlocks (40P01), timeouts de lock (55P03), cierres de transacción y cancelaciones (C6 Fix)."""
     if connection.vendor != "postgresql":
         return False
     cause = exc.__cause__ or exc.__context__
     sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
-    return sqlstate in ("40P01", "55P03")
+    return sqlstate in ("40P01", "55P03", "57014", "08006", "57P01", "40001")
 
 
 def _set_lock_timeout(timeout_str: str = LOCK_TIMEOUT_SECONDS):
@@ -315,7 +316,7 @@ class LiquidacionViewSet(
             )
         try:
             instance = self.get_object()
-        except Exception:
+        except (Http404, Liquidacion.DoesNotExist):
             return _ok(
                 message="Liquidación no encontrada.",
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -359,7 +360,7 @@ class LiquidacionViewSet(
 
         try:
             with transaction.atomic():
-                _set_lock_timeout("5s")
+                _set_lock_timeout(LOCK_TIMEOUT_SECONDS)
                 try:
                     ventas_iniciales = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
                 except EstadoPedido.DoesNotExist:
@@ -477,7 +478,7 @@ class LiquidacionViewSet(
                 # `calcular` bloquea filas de `PedidoCabecera` para serializar cálculos.
                 # La garantía incondicional anti-duplicados a nivel de periodo está asegurada por el
                 # UniqueConstraint(fk_agricultor, periodo_inicio, periodo_fin) de la migración 0022.
-                _set_lock_timeout("5s")
+                _set_lock_timeout(LOCK_TIMEOUT_SECONDS)
 
                 locked_id = (
                     Liquidacion.objects.select_for_update()
