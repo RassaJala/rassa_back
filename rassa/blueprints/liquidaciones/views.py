@@ -226,6 +226,11 @@ def _set_lock_timeout(timeout_str: str = LOCK_TIMEOUT_SECONDS):
 
 def _deadlock_response(message: str = "Conflicto de concurrencia. Reintente."):
     """Construye una respuesta 409 Conflict con la cabecera Retry-After para errores transitorios de concurrencia."""
+    logger.warning(
+        "[METRIC_TRANSIENT_DB_ERROR] Conflicto de concurrencia o lock_timeout detectado. "
+        "Emitiendo HTTP 409 con Retry-After: %s",
+        RETRY_AFTER_SECONDS,
+    )
     response = _ok(
         message=message,
         status_code=status.HTTP_409_CONFLICT,
