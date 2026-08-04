@@ -1,11 +1,11 @@
 meta {
-  name: Crear publicación
+  name: Restaurar producto semanal
   type: http
-  seq: 2
+  seq: 12
 }
 
 post {
-  url: {{baseUrl}}/api/publicaciones/
+  url: {{baseUrl}}/api/publicaciones/{{publicacionId}}/productos/{{productoId}}/restore/
   body: none
   auth: inherit
 }
@@ -16,4 +16,6 @@ headers {
 
 vars:pre-request {
   baseUrl: http://localhost:8000
+  publicacionId: 4
+  productoId: 6
 }

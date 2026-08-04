@@ -5,6 +5,9 @@ Response format (standardized):
   Error:   { "field": ["error msg"] }
 """
 
+from copy import deepcopy
+
+from django.conf import settings as dj_settings
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
@@ -16,15 +19,10 @@ from rassa.models import Localidad, Municipio, Persona, Rol, Usuario
 
 User = get_user_model()
 
-
-@override_settings(
-    REST_FRAMEWORK={
+_TEST_REST_FRAMEWORK = deepcopy(dj_settings.REST_FRAMEWORK)
+_TEST_REST_FRAMEWORK.update(
+    {
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {
-            "user": "1000/hour",
-            "catalog_read": "60/minute",
-            "catalog_write": "60/hour",
-        },
         "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
         "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -32,6 +30,9 @@ User = get_user_model()
         "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
     }
 )
+
+
+@override_settings(REST_FRAMEWORK=_TEST_REST_FRAMEWORK)
 class CatalogosCRUDTest(APITestCase):
     """Test suite para CRUD de municipios y localidades."""
 

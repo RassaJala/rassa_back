@@ -21,6 +21,7 @@ from logs.utils import get_client_ip
 from rassa.admin_views import AdminUsuarioViewSet
 from rassa.auth_serializers import CustomTokenObtainPairSerializer
 from rassa.blueprints.chat.urls import urlpatterns as chat_urls
+from rassa.blueprints.cortes.urls import urlpatterns as cortes_urls
 from rassa.blueprints.familias.urls import urlpatterns as familias_urls
 from rassa.blueprints.liquidaciones.urls import urlpatterns as liquidaciones_urls
 from rassa.blueprints.pagos.urls import urlpatterns as pagos_urls
@@ -167,6 +168,7 @@ urlpatterns = [
     path("", include(pedido_urls)),
     path("", include(pagos_urls)),
     path("", include(liquidaciones_urls)),
+    path("", include(cortes_urls)),
     path("", include(waste_urls)),
     path("", include(recoleccion_urls)),
 ]

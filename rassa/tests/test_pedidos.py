@@ -1,11 +1,12 @@
 """Pruebas unitarias para el módulo de Pedidos."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.db import DatabaseError
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -403,6 +404,94 @@ class PedidosTestCase(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Pedido expirado ─────────────────────────────────────
+
+    def test_cambiar_estado_pedido_expirado_bloqueado(self):
+        """Un pedido pendiente expirado no puede avanzar ni cancelarse."""
+        self.pedido.fecha_expiracion = timezone.now() - timedelta(hours=1)
+        self.pedido.save(update_fields=["fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "confirmado"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["message"], "El pedido expiró y ya no está disponible.")
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.fk_estado.tipo_estado, "pendiente")
+
+    def test_cancelar_pedido_expirado_bloqueado(self):
+        """Cancelar un pedido pendiente expirado también queda bloqueado."""
+        self.pedido.fecha_expiracion = timezone.now() - timedelta(hours=1)
+        self.pedido.save(update_fields=["fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "cancelado"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["message"], "El pedido expiró y ya no está disponible.")
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.fk_estado.tipo_estado, "pendiente")
+
+    def test_pedido_expirado_no_pendiente_no_bloquea(self):
+        """La expiración solo aplica a pedidos pendientes."""
+        self.pedido.fk_estado = self.estado_confirmado
+        self.pedido.fecha_expiracion = timezone.now() - timedelta(hours=1)
+        self.pedido.save(update_fields=["fk_estado", "fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "en_preparacion"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.fk_estado.tipo_estado, "en_preparacion")
+
+    def test_pedido_sin_fecha_expiracion_no_bloquea(self):
+        """Pedido pendiente sin fecha de expiración se comporta normal."""
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.patch(
+            f"/api/pedidos/{self.pedido.id_pedido}/status/",
+            {"nuevo_estado": "confirmado"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_list_incluye_campo_expirado(self):
+        self.pedido.fecha_expiracion = timezone.now() - timedelta(hours=1)
+        self.pedido.save(update_fields=["fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("expirado", response.data["results"][0])
+        self.assertTrue(response.data["results"][0]["expirado"])
+
+    def test_list_expirado_false_cuando_no_expira(self):
+        self.pedido.fecha_expiracion = timezone.now() + timedelta(hours=1)
+        self.pedido.save(update_fields=["fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.get("/api/pedidos/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["results"][0]["expirado"])
+
+    def test_detalle_incluye_campo_expirado(self):
+        self.pedido.fecha_expiracion = timezone.now() - timedelta(hours=1)
+        self.pedido.save(update_fields=["fecha_expiracion"])
+
+        self.client.force_authenticate(user=self.user_vendedor)
+        response = self.client.get(f"/api/pedidos/{self.pedido.id_pedido}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["expirado"])
 
     # ── Historial ───────────────────────────────────────────
 
