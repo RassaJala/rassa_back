@@ -41,6 +41,9 @@ class LiquidacionesTestBase(APITestCase):
     """Datos base: roles, usuarios, catálogo, publicaciones, productos."""
 
     def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
         self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Administrador")
         self.rol_vendedor = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
         self.rol_cliente = Rol.objects.create(nombre_rol="Cliente", descripcion="Cliente")
