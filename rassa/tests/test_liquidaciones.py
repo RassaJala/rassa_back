@@ -1832,6 +1832,42 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         resp = self.client.get("/api/liquidaciones/abc/")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_marcar_pagada_con_pk_no_numerico_retorna_400(self):
+        """C5/C3 Fix Test: POST /api/liquidaciones/abc/marcar-pagada/ retorna 400 Bad Request."""
+        from rassa.models import TipoPago
+
+        tipo_pago = TipoPago.objects.first()
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self.client.post("/api/liquidaciones/abc/marcar-pagada/", {"tipo_pago": tipo_pago.pk})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_marcar_pagada_con_pago_existente_previene_doble_pago(self):
+        """C5/C8 Fix Test: si la liquidacion ya tiene un Pago asignado, previene crear un segundo Pago."""
+        from rassa.models import TipoPago
+
+        tipo_pago = TipoPago.objects.first()
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self._calcular(semana=30, anio=2026)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        liq_id = resp.json()["data"]["id_liquidacion"]
+
+        # Marcar pagada por primera vez
+        resp_pago1 = self.client.post(
+            f"/api/liquidaciones/{liq_id}/marcar-pagada/",
+            {"tipo_pago": tipo_pago.pk, "referencia": "REF123"},
+        )
+        self.assertEqual(resp_pago1.status_code, status.HTTP_200_OK)
+        conteo_pagos = Pago.objects.count()
+
+        # Re-enviar la misma petición de pago
+        resp_pago2 = self.client.post(
+            f"/api/liquidaciones/{liq_id}/marcar-pagada/",
+            {"tipo_pago": tipo_pago.pk, "referencia": "REF123"},
+        )
+        self.assertEqual(resp_pago2.status_code, status.HTTP_200_OK)
+        # El conteo total de objetos Pago no debe incrementarse
+        self.assertEqual(Pago.objects.count(), conteo_pagos)
+
     def test_redondeo_half_up_comision_fraccionaria(self):
         """Verifica la regla ROUND_HALF_UP con centavos fraccionarios.
 
