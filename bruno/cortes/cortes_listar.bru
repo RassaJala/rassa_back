@@ -1,0 +1,16 @@
+meta {
+  name: Listar cortes de caja
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/cortes/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}

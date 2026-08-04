@@ -570,21 +570,44 @@ class Corte(models.Model):
     ]
 
     id_corte = models.AutoField(primary_key=True)
+    fk_vendedor = models.ForeignKey("Usuario", on_delete=models.SET_NULL, null=True, blank=True, related_name="cortes")
+    fecha = models.DateField(default=timezone.localdate, db_index=True)
     monto_real = models.DecimalField(max_digits=10, decimal_places=2)
-    monto_teorico = models.DecimalField(max_digits=10, decimal_places=2)
-    diferencia = models.DecimalField(max_digits=10, decimal_places=2)
+    monto_teorico = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Snapshot calculado al crear el corte; no se actualiza con pagos posteriores.",
+    )
+    diferencia = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Snapshot de monto_real - monto_teorico al crear; no se actualiza con pagos posteriores.",
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="abierto")
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "corte"
-        ordering = ["id_corte"]
+        ordering = ["-fecha"]
+        constraints = [
+            # PostgreSQL trata NULL != NULL: el constraint excluye filas con
+            # fk_vendedor NULL (cortes huérfanos por vendedor eliminado) para
+            # permitir varios cortes huérfanos en la misma fecha, mientras dos
+            # vendedores no-null siguen siendo únicos por fecha.
+            models.UniqueConstraint(
+                fields=["fk_vendedor", "fecha"],
+                name="unique_corte_vendedor_fecha",
+                condition=Q(fk_vendedor__isnull=False),
+            ),
+        ]
 
     def __str__(self):
         return f"Corte #{self.id_corte} — {str(self.estado)}"
 
     def save(self, *args, **kwargs):
         if self.diferencia is None:
+            # Intentional snapshot: diferencia is frozen at creation time; payments
+            # added after the corte do not retroactively update monto_teorico/diferencia.
             self.diferencia = self.monto_real - self.monto_teorico
         super().save(*args, **kwargs)
 
