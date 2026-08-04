@@ -345,32 +345,36 @@ class LiquidacionViewSet(
         inicio, fin_exclusive = _rango_semana(anio, semana)
         fin = fin_exclusive - timedelta(days=1)
 
+        # Pre-check de anti-duplicado fuera del lock
         existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
         if existing:
             return _liquidacion_duplicada_response(existing)
 
-        try:
-            ventas = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
-        except EstadoPedido.DoesNotExist:
-            # El seed no ha creado el estado "entregado" — es un error
-            # operacional, no del usuario (revisión 4R R4).
-            logger.error("EstadoPedido 'entregado' no existe en la BD. Ejecutar seed_rassa_data.")
-            return _ok(
-                message="Error de configuración: estado 'entregado' no está en la BD. Contacta al administrador.",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if not ventas:
-            return _ok(
-                message="No hay ventas entregadas para este agricultor en el periodo.",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+        liquidacion = None
+        ventas_count = 0
+        monto_ventas_total = Decimal("0.00")
+        comision_total = Decimal("0.00")
 
         try:
             with transaction.atomic():
-                # Cap el tiempo que un select_for_update puede esperar
-                # un lock. Sin esto, un pedido bloqueado puede colgar
-                # `calcular` indefinidamente (revisión 4R R4).
                 _set_lock_timeout("5s")
+                try:
+                    ventas = list(_ventas_agricultor_en_rango(agricultor.id_usuario, inicio, fin_exclusive))
+                except EstadoPedido.DoesNotExist:
+                    logger.error("EstadoPedido 'entregado' no existe en la BD. Ejecutar seed_rassa_data.")
+                    return _ok(
+                        message=(
+                            "Error de configuración: estado 'entregado' no está en la BD. Contacta al administrador."
+                        ),
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+                if not ventas:
+                    return _ok(
+                        message="No hay ventas entregadas para este agricultor en el periodo.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Bloquear las filas de PedidoCabecera sin outer joins (select_for_update en PK directa)
                 pedido_ids = [p.id_pedido for p in ventas]
                 list(PedidoCabecera.objects.select_for_update().filter(id_pedido__in=pedido_ids).order_by("pk"))
 
@@ -378,19 +382,27 @@ class LiquidacionViewSet(
                 if existing:
                     return _liquidacion_duplicada_response(existing)
 
-                montos_map, monto_ventas, comision, monto_liquidar = _calcular_montos(
+                montos_map, monto_ventas_total, comision_total, monto_liquidar = _calcular_montos(
                     ventas, agricultor.id_usuario, tasa
                 )
 
-                try:
-                    liquidacion = _crear_liquidacion_con_snapshot(
-                        agricultor, inicio, fin, monto_ventas, tasa, comision, monto_liquidar, ventas, montos_map
-                    )
-                except IntegrityError as exc:
-                    existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
-                    if existing:
-                        return _liquidacion_duplicada_response(existing)
-                    raise exc
+                liquidacion = _crear_liquidacion_con_snapshot(
+                    agricultor,
+                    inicio,
+                    fin,
+                    monto_ventas_total,
+                    tasa,
+                    comision_total,
+                    monto_liquidar,
+                    ventas,
+                    montos_map,
+                )
+                ventas_count = len(ventas)
+        except IntegrityError:
+            existing = _buscar_liquidacion_existente(agricultor, inicio, fin)
+            if existing:
+                return _liquidacion_duplicada_response(existing)
+            raise
         except DatabaseError as exc:
             if _is_transient_error(exc):
                 logger.warning(
@@ -408,8 +420,8 @@ class LiquidacionViewSet(
             request.user,
             (
                 f"calcular_liquidacion id={liquidacion.id_liquidacion} "
-                f"agricultor={agricultor.id_usuario} ventas={len(ventas)} "
-                f"monto_ventas={monto_ventas} comision={comision}"
+                f"agricultor={agricultor.id_usuario} ventas={ventas_count} "
+                f"monto_ventas={monto_ventas_total} comision={comision_total}"
             ),
             request,
         )
@@ -417,8 +429,8 @@ class LiquidacionViewSet(
             "Liquidación %s calculada para agricultor %s: %s ventas, $%s",
             liquidacion.id_liquidacion,
             agricultor.id_usuario,
-            len(ventas),
-            monto_ventas,
+            ventas_count,
+            monto_ventas_total,
         )
 
         return _ok(

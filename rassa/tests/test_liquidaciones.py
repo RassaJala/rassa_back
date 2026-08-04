@@ -1428,6 +1428,8 @@ class CalcularConcurrencyTest(TransactionTestCase):
         liq = Liquidacion.objects.get(pk=liquidacion_id)
         self.assertEqual(liq.estado, "pagada")
         self.assertIsNotNone(liq.fk_pago_liquidacion)
+        # R3 WARNING: Verificar que exactamente 1 objeto Pago fue creado en BD para esta liquidacion
+        self.assertEqual(Pago.objects.filter(liquidacion=liq).count(), 1)
 
 
 class MarcarPagadaMockedTest(LiquidacionesTestBase):
@@ -1816,3 +1818,16 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         # Debe ser exactamente 100.00 (no 300.00)
         self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.00"))
         self.assertEqual(Decimal(data["ventas"][0]["total"]), Decimal("100.00"))
+
+    def test_redondeo_half_up_comision_fraccionaria(self):
+        """Verifica la regla ROUND_HALF_UP con centavos fraccionarios.
+
+        100.55 * 10% = 10.055 -> 10.06 comision, 90.49 monto liquidar.
+        """
+        self._crear_pedido_entregado(total=Decimal("100.55"), creado_en=_aware(2026, 7, 21))
+        resp = self._calcular(semana=30, anio=2026)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.json()["data"]
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.55"))
+        self.assertEqual(Decimal(data["comision"]), Decimal("10.06"))
+        self.assertEqual(Decimal(data["monto_liquidar"]), Decimal("90.49"))

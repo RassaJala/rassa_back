@@ -16,6 +16,8 @@ from django.db import connection, models
 from django.db.models import Q
 from django.utils import timezone
 
+from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
+
 # ============================================================
 # 1. TABLAS BASE (sin dependencias)
 # ============================================================
@@ -912,7 +914,7 @@ class Liquidacion(models.Model):
     periodo_fin = models.DateField()
     monto_ventas = models.DecimalField(max_digits=10, decimal_places=2)
     comision = models.DecimalField(max_digits=10, decimal_places=2)
-    tasa_comision = models.DecimalField(max_digits=5, decimal_places=4, default=0.1000)
+    tasa_comision = models.DecimalField(max_digits=5, decimal_places=4, default=COMISION_RASSA)
     monto_liquidar = models.DecimalField(max_digits=10, decimal_places=2)
     fk_pago_liquidacion = models.ForeignKey(
         Pago,
