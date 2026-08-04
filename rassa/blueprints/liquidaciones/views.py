@@ -1,6 +1,7 @@
 """Vistas para el módulo de Liquidaciones."""
 
 import logging
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -44,12 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _rango_semana(year: int, week: int) -> tuple[date, date]:
-    """Retorna date objects (naive, representan fechas en la TZ configurada del proyecto).
-
-    Las fechas representan días en la zona horaria configurada del proyecto
-    (TIME_ZONE en settings). El filtro ``creado_en__date__gte/lt`` de Django
-    convierte automáticamente el datetime UTC al TIME_ZONE antes de comparar.
-    """
+    """Retorna tuple (lunes_inicio, lunes_fin_exclusivo) para la semana ISO dada."""
     lunes = date.fromisocalendar(year, week, 1)
     return lunes, lunes + timedelta(days=7)
 
@@ -77,7 +73,7 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
         fk_liquidacion__fk_agricultor_id=agricultor_id,
     )
 
-    return (
+    queryset = (
         PedidoCabecera.objects.filter(
             id_pedido__in=pedido_ids,
             fk_estado=estado_entregado,
@@ -90,6 +86,14 @@ def _ventas_agricultor_en_rango(agricultor_id: int, inicio: date, fin_exclusive:
         .prefetch_related("pago_set")
         .order_by("creado_en")
     )
+    logger.debug(
+        "Ventas consultadas para agricultor=%s en periodo %s a %s: %s pedidos",
+        agricultor_id,
+        inicio,
+        fin_exclusive,
+        queryset.count(),
+    )
+    return queryset
 
 
 def _map_montos_agricultor_pedidos(pedido_ids: list[int], agricultor_id: int) -> dict[int, Decimal]:
@@ -103,14 +107,18 @@ def _map_montos_agricultor_pedidos(pedido_ids: list[int], agricultor_id: int) ->
         .values("fk_pedido_id")
         .annotate(total_agricultor=Sum("importe"))
     )
-    return {item["fk_pedido_id"]: Decimal(str(item["total_agricultor"] or "0.00")) for item in lineas}
+    return {item["fk_pedido_id"]: item["total_agricultor"] for item in lineas}
 
 
 def _calcular_montos(ventas: list[PedidoCabecera], agricultor_id: int, tasa: Decimal):
-    """Calcula monto_ventas, comision y monto_liquidar basándose en las líneas del agricultor."""
-    pedido_ids = [p.id_pedido for p in ventas]
-    montos_map = _map_montos_agricultor_pedidos(pedido_ids, agricultor_id)
-    monto_ventas = sum((montos_map.get(pid, Decimal("0.00")) for pid in pedido_ids), Decimal("0.00"))
+    """Calcula monto_ventas_total, comision_total y monto_liquidar.
+
+    Multi-agricultor (revisión 4R R3): suma ÚNICAMENTE las líneas de
+    DetallePedido que pertenecen a este agricultor. Ignora líneas de
+    otros agricultores en los mismos pedidos compartidos.
+    """
+    montos_map = _map_montos_agricultor_pedidos([p.id_pedido for p in ventas], agricultor_id)
+    monto_ventas = sum((montos_map.get(p.id_pedido, Decimal("0.00")) for p in ventas), Decimal("0.00"))
     comision = (monto_ventas * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     monto_liquidar = monto_ventas - comision
     return montos_map, monto_ventas, comision, monto_liquidar
@@ -209,7 +217,10 @@ def _liquidacion_duplicada_response(existing: Liquidacion):
 
 
 def _is_transient_error(exc: DatabaseError) -> bool:
-    """Detecta deadlocks (40P01), timeouts de lock (55P03), cierres de transacción y cancelaciones (C6 Fix)."""
+    """Detecta deadlocks (40P01), timeouts de lock (55P03) en PostgreSQL o DB locked en SQLite."""
+    if connection.vendor == "sqlite":
+        msg = str(exc).lower()
+        return "locked" in msg or "busy" in msg
     if connection.vendor != "postgresql":
         return False
     cause = exc.__cause__ or exc.__context__
@@ -220,6 +231,8 @@ def _is_transient_error(exc: DatabaseError) -> bool:
 def _set_lock_timeout(timeout_str: str = LOCK_TIMEOUT_SECONDS):
     """Limita el tiempo de espera por locks en la transacción actual de PostgreSQL (SET LOCAL)."""
     if connection.vendor == "postgresql":
+        if not re.match(r"^\d+s$", timeout_str):
+            raise ValueError(f"Formato de timeout inválido: {timeout_str}")
         with connection.cursor() as cursor:
             cursor.execute(f"SET LOCAL lock_timeout = '{timeout_str}'")
 
