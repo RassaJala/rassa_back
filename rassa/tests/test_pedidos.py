@@ -1229,7 +1229,6 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIsNone(historial[0]["estado_anterior"])
         self.assertEqual(historial[0]["estado_nuevo"], "pendiente")
 
-
     # ── Campos de salida del serializer ───────────────────────
 
     def test_output_serializer_usa_nombres_no_ids(self):
