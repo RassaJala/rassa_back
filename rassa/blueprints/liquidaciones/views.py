@@ -457,9 +457,11 @@ class LiquidacionViewSet(
 
         try:
             with transaction.atomic():
-                # Cap el tiempo que un select_for_update puede esperar
-                # un lock. Sin esto, un pedido bloqueado puede colgar
-                # `marcar_pagada` indefinidamente (revisión 4R R4).
+                # Contrato de Bloqueos (revisión 4R R4):
+                # `marcar_pagada` bloquea la fila de `Liquidacion` para serializar pagos concurrentes.
+                # `calcular` bloquea filas de `PedidoCabecera` para serializar cálculos.
+                # La garantía incondicional anti-duplicados a nivel de periodo está asegurada por el
+                # UniqueConstraint(fk_agricultor, periodo_inicio, periodo_fin) de la migración 0022.
                 _set_lock_timeout("5s")
 
                 locked_id = (
