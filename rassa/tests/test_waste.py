@@ -5,7 +5,7 @@ from threading import Barrier, Thread
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.test import TransactionTestCase
 from django.urls import reverse
 from rest_framework import status
@@ -517,17 +517,22 @@ class MermaConcurrencyTests(TransactionTestCase):
 
         def _create():
             close_old_connections()
-            client = APIClient()
-            client.force_authenticate(self.vendedor)
-            barrier.wait()  # Ambos hilos sincronizan antes de POST
-            payload = {
-                "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
-                "cantidad": 6,
-                "motivo": "Concurrente",
-                "fk_decision": self.decision.id_decision,
-            }
-            response = client.post(reverse("merma-list"), payload, format="json")
-            results.append(response.status_code)
+            try:
+                client = APIClient()
+                client.force_authenticate(self.vendedor)
+                barrier.wait()  # Ambos hilos sincronizan antes de POST
+                payload = {
+                    "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
+                    "cantidad": 6,
+                    "motivo": "Concurrente",
+                    "fk_decision": self.decision.id_decision,
+                }
+                response = client.post(reverse("merma-list"), payload, format="json")
+                results.append(response.status_code)
+            finally:
+                # conn_max_age=600 deja la conexión del hilo abierta tras el
+                # request; sin cerrarla el DROP de la test DB falla al final.
+                connections.close_all()
 
         threads = [Thread(target=_create) for _ in range(2)]
         for t in threads:

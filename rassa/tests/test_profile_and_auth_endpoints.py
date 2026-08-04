@@ -5,6 +5,9 @@ Response format (standardized):
   Error:   { "field": ["error msg"] }
 """
 
+from copy import deepcopy
+
+from django.conf import settings as dj_settings
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
@@ -16,15 +19,10 @@ from rassa.permissions.role_permissions import HasRole
 
 User = get_user_model()
 
-
-@override_settings(
-    REST_FRAMEWORK={
+_TEST_REST_FRAMEWORK = deepcopy(dj_settings.REST_FRAMEWORK)
+_TEST_REST_FRAMEWORK.update(
+    {
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {
-            "user": "1000/hour",
-            "catalog_read": "60/minute",
-            "catalog_write": "60/hour",
-        },
         "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
         "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -32,6 +30,9 @@ User = get_user_model()
         "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
     }
 )
+
+
+@override_settings(REST_FRAMEWORK=_TEST_REST_FRAMEWORK)
 class ProfileAndAuthEndpointsTest(APITestCase):
     """Test suite para los endpoints de autenticación y perfil."""
 
@@ -282,6 +283,28 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_localidad", resp.data)
 
+    def test_admin_create_farmer_inactive_localidad_rejected(self):
+        """Create-farmer with a soft-deleted localidad returns 400."""
+        self.localidad.estado = False
+        self.localidad.save()
+        resp = self.client.post(
+            reverse("create-farmer"), self._create_farmer_data(), format="json", **self._admin_auth()
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", resp.data)
+        self.assertIn("no está disponible", str(resp.data["fk_localidad"]))
+
+    def test_admin_create_farmer_inactive_municipio_rejected(self):
+        """Create-farmer when the localidad's municipio is inactive returns 400."""
+        self.municipio.estado = False
+        self.municipio.save()
+        resp = self.client.post(
+            reverse("create-farmer"), self._create_farmer_data(), format="json", **self._admin_auth()
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", resp.data)
+        self.assertIn("no está disponible", str(resp.data["fk_localidad"]))
+
     def test_admin_create_farmer_short_password(self):
         """Create-farmer with short password returns 400."""
         data = self._create_farmer_data(password="ab")
@@ -339,6 +362,28 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         response = self.client.post(reverse("register"), data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_localidad", response.data)
+
+    def test_register_inactive_localidad_rejected(self):
+        """Registering with a soft-deleted localidad returns 400 with clear message."""
+        self.localidad.estado = False
+        self.localidad.save()
+        data = self._register_data(email="locinactiva@rassa.com")
+        response = self.client.post(reverse("register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", response.data)
+        self.assertIn("no está disponible", str(response.data["fk_localidad"]))
+        self.assertFalse(Usuario.objects.filter(correo="locinactiva@rassa.com").exists())
+
+    def test_register_inactive_municipio_rejected(self):
+        """Registering when the localidad's municipio is inactive returns 400."""
+        self.municipio.estado = False
+        self.municipio.save()
+        data = self._register_data(email="muniinactivo@rassa.com")
+        response = self.client.post(reverse("register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", response.data)
+        self.assertIn("no está disponible", str(response.data["fk_localidad"]))
+        self.assertFalse(Usuario.objects.filter(correo="muniinactivo@rassa.com").exists())
 
     # ==================================================================
     # LOGIN
@@ -447,6 +492,36 @@ class ProfileAndAuthEndpointsTest(APITestCase):
             **self._auth_header(token),
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_update_profile_inactive_localidad_rejected(self):
+        """PATCH with a soft-deleted localidad returns 400 with clear message."""
+        self.localidad.estado = False
+        self.localidad.save()
+        token = self._login()
+        response = self.client.patch(
+            reverse("me"),
+            {"fk_localidad": self.localidad.id_localidad},
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", response.data)
+        self.assertIn("no está disponible", str(response.data["fk_localidad"]))
+
+    def test_update_profile_inactive_municipio_rejected(self):
+        """PATCH when the localidad's municipio is inactive returns 400."""
+        self.municipio.estado = False
+        self.municipio.save()
+        token = self._login()
+        response = self.client.patch(
+            reverse("me"),
+            {"fk_localidad": self.localidad.id_localidad},
+            format="json",
+            **self._auth_header(token),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_localidad", response.data)
+        self.assertIn("no está disponible", str(response.data["fk_localidad"]))
 
     # ==================================================================
     # CHANGE PASSWORD — with REAL JWT

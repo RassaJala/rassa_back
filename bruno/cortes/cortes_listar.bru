@@ -1,19 +1,16 @@
 meta {
-  name: Listar publicaciones
+  name: Listar cortes de caja
   type: http
   seq: 1
 }
 
 get {
-  url: {{baseUrl}}/api/publicaciones/
+  url: {{baseUrl}}/api/cortes/
   body: none
   auth: inherit
 }
 
 headers {
+  Accept: application/json
   Authorization: Bearer {{accessToken}}
-}
-
-vars:pre-request {
-  baseUrl: http://localhost:8000
 }
