@@ -1,10 +1,15 @@
 """Tests para el módulo de Cortes."""
 
-from datetime import timedelta
+import threading
+from datetime import datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
+import pytest
+from django.conf import settings
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.db import connection, connections
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -12,6 +17,7 @@ from rest_framework.test import APIClient
 from rassa.models import (
     Corte,
     EstadoPedido,
+    Log,
     Pago,
     PedidoCabecera,
     Persona,
@@ -106,6 +112,13 @@ class CorteCreateTest(CortesTestBase):
         self.assertEqual(data["monto_teorico"], "0.00")
         self.assertEqual(data["diferencia"], "0.00")
 
+    def test_monto_real_negativo_400(self):
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "-10.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_crear_corte_fecha_por_defecto_hoy(self):
         self._crear_pago(Decimal("50.00"), self.usuario_vendedor)
         resp = self.client.post("/api/cortes/", {"monto_real": "50.00"})
@@ -153,6 +166,36 @@ class CorteCreateTest(CortesTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertEqual(resp.json()["monto_teorico"], "100.00")
+
+    def test_crear_corte_incluye_pago_23_59_hora_local(self):
+        # Un pago a las 23:59 hora local (settings.TIME_ZONE) pertenece al corte
+        # del día local, aunque en UTC ya sea el día siguiente.
+        tz = ZoneInfo(getattr(settings, "TIME_ZONE", "UTC"))
+        creado_en = timezone.make_aware(datetime.combine(self.hoy, time(23, 59)), tz)
+        self._crear_pago(Decimal("88.00"), self.usuario_vendedor, fecha=creado_en)
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "88.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.json()["monto_teorico"], "88.00")
+
+    def test_crear_corte_registra_log_estructurado(self):
+        # El audit trail (tabla Log) debe llevar los campos financieros como
+        # pares key=value separados, no solo texto interpolado.
+        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "100.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        log_entry = Log.objects.filter(descripcion__startswith="corte_creado").latest("creado_en")
+        self.assertIn(f"id_corte={resp.json()['id_corte']}", log_entry.descripcion)
+        self.assertIn("vendedor_id=", log_entry.descripcion)
+        self.assertIn("fecha=", log_entry.descripcion)
+        self.assertIn("monto_real=", log_entry.descripcion)
+        self.assertIn("monto_teorico=", log_entry.descripcion)
+        self.assertIn("diferencia=", log_entry.descripcion)
 
 
 class CortePermisosTest(CortesTestBase):
@@ -270,3 +313,136 @@ class CorteTeoricoTest(CortesTestBase):
         resp = self.client.get(f"/api/cortes/teorico/?fecha={self.hoy}")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["monto_teorico"], "0.00")
+
+    def test_teorico_incluye_pago_23_59_hora_local(self):
+        # El pago a las 23:59 hora local cae en el día local; con el filtro
+        # __date en UTC (zona de la conexión) quedaría excluido al día siguiente.
+        tz = ZoneInfo(getattr(settings, "TIME_ZONE", "UTC"))
+        creado_en = timezone.make_aware(datetime.combine(self.hoy, time(23, 59)), tz)
+        self._crear_pago(Decimal("77.00"), self.usuario_vendedor, fecha=creado_en)
+        resp = self.client.get(f"/api/cortes/teorico/?fecha={self.hoy}")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["monto_teorico"], "77.00")
+
+
+class CorteFKVendedorTest(CortesTestBase):
+    """C2: fk_vendedor nullable + UniqueConstraint parcial que excluye NULLs (Opción B)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.usuario_vendedor.fk_user)
+        self.hoy = timezone.localdate()
+
+    def test_eliminar_vendedor_deja_null_y_conviven_huerfanos_misma_fecha(self):
+        # Dos vendedores distintos, misma fecha: ambos cortes conviven.
+        Corte.objects.create(
+            fk_vendedor=self.usuario_vendedor,
+            fecha=self.hoy,
+            monto_real=Decimal("10.00"),
+            monto_teorico=Decimal("10.00"),
+            diferencia=Decimal("0.00"),
+        )
+        Corte.objects.create(
+            fk_vendedor=self.usuario_vendedor2,
+            fecha=self.hoy,
+            monto_real=Decimal("20.00"),
+            monto_teorico=Decimal("20.00"),
+            diferencia=Decimal("0.00"),
+        )
+        # SET_NULL: eliminar el vendedor no borra el corte, deja fk_vendedor NULL.
+        self.usuario_vendedor.delete()
+        self.usuario_vendedor2.delete()
+        self.assertEqual(Corte.objects.filter(fecha=self.hoy, fk_vendedor__isnull=True).count(), 2)
+        # El constraint parcial excluye NULLs: un tercer corte huérfano en la
+        # misma fecha también se puede crear (PostgreSQL trata NULL != NULL).
+        Corte.objects.create(
+            fk_vendedor=None,
+            fecha=self.hoy,
+            monto_real=Decimal("30.00"),
+            monto_teorico=Decimal("30.00"),
+            diferencia=Decimal("0.00"),
+        )
+        self.assertEqual(Corte.objects.filter(fecha=self.hoy).count(), 3)
+
+    def test_dos_vendedores_no_null_misma_fecha_sigue_imposible(self):
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "10.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        resp = self.client.post(
+            "/api/cortes/",
+            {"monto_real": "10.00", "fecha": str(self.hoy)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Ya existe un corte", resp.json()["message"])
+        self.assertEqual(Corte.objects.filter(fk_vendedor=self.usuario_vendedor).count(), 1)
+
+
+class CorteConcurrenciaTest(TransactionTestCase):
+    """B1: 5 hilos POSTean el mismo corte (mismo vendedor+fecha) simultáneamente.
+
+    TransactionTestCase + `@pytest.mark.django_db(transaction=True)` dan semántica
+    de BD real: cada hilo usa su propia conexión y commit independiente, por lo que
+    la condición de carrera se reproduce de verdad. Esperado: exactamente 1×201,
+    4×400 y nunca 500.
+    """
+
+    def _crear_vendedor(self):
+        rol = Rol.objects.create(nombre_rol="Vendedor", descripcion="Vendedor")
+        persona = Persona.objects.create(
+            nombre="Concurrente",
+            apellido_paterno="Test",
+            sexo="M",
+            fecha_nacimiento="1990-01-01",
+            domicilio="Calle 1",
+        )
+        user = User.objects.create_user(username="conc@test.com", email="conc@test.com", password="pass123")
+        return Usuario.objects.create(
+            fk_user=user,
+            fk_persona=persona,
+            fk_rol=rol,
+            correo="conc@test.com",
+        )
+
+    @pytest.mark.django_db(transaction=True)
+    def test_creacion_concurrente_mismo_corte(self):
+        vendedor = self._crear_vendedor()
+        hoy = timezone.localdate()
+        n_threads = 5
+        barrier = threading.Barrier(n_threads)
+        resultados = []
+        errores = []
+        lock = threading.Lock()
+
+        def post_corte():
+            client = APIClient()
+            client.force_authenticate(user=vendedor.fk_user)
+            try:
+                barrier.wait(timeout=30)
+                resp = client.post("/api/cortes/", {"monto_real": "10.00", "fecha": str(hoy)})
+                with lock:
+                    resultados.append(resp.status_code)
+            except Exception as exc:  # pragma: no cover — fallo de infraestructura
+                with lock:
+                    errores.append(repr(exc))
+            finally:
+                # Cerrar la conexión propia del hilo: connections.close_all() solo
+                # cierra las del hilo actual y dejaría 5 sesiones abiertas al teardown.
+                connection.close()
+
+        threads = [threading.Thread(target=post_corte) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        # Cerrar la conexión del hilo principal por si quedó registrada.
+        connections.close_all()
+
+        self.assertEqual(errores, [], f"Excepciones en hilos: {errores}")
+        self.assertEqual(len(resultados), n_threads)
+        self.assertEqual(resultados.count(status.HTTP_201_CREATED), 1)
+        self.assertEqual(resultados.count(status.HTTP_400_BAD_REQUEST), 4)
+        self.assertEqual(resultados.count(status.HTTP_500_INTERNAL_SERVER_ERROR), 0)
+        self.assertEqual(Corte.objects.count(), 1)

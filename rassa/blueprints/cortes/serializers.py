@@ -1,5 +1,7 @@
 """Serializadores para el módulo de Cortes."""
 
+from decimal import Decimal
+
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -26,5 +28,9 @@ class CorteSerializer(serializers.ModelSerializer):
 class CorteCreateSerializer(serializers.Serializer):
     """Serializer de entrada para crear un corte."""
 
-    monto_real = serializers.DecimalField(max_digits=10, decimal_places=2)
+    monto_real = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+    )
     fecha = serializers.DateField(required=False, default=timezone.localdate)
