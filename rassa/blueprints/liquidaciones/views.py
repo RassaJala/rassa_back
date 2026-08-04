@@ -511,6 +511,29 @@ class LiquidacionViewSet(
                 liquidacion = _reload_liquidacion(pk)
 
                 pago_existente = liquidacion.fk_pago_liquidacion
+
+                # C8 Fix: Manejo robusto de inconsistencias de datos (Caso 1 y Caso 2)
+                if liquidacion.estado == ESTADO_PENDIENTE and pago_existente is not None:
+                    logger.warning(
+                        "[DATA_INCONSISTENCY_WARNING] Liquidación %s tenía estado PENDIENTE pero "
+                        "fk_pago_liquidacion=%s asignado. Auto-corrigiendo estado a PAGADA.",
+                        pk,
+                        pago_existente.pk,
+                    )
+                    liquidacion.estado = ESTADO_PAGADA
+                    liquidacion.save(update_fields=["estado"])
+
+                if liquidacion.estado == ESTADO_PAGADA and pago_existente is None:
+                    logger.error(
+                        "[DATA_INCONSISTENCY_ERROR] Liquidación %s tiene estado PAGADA pero "
+                        "fk_pago_liquidacion es NULL.",
+                        pk,
+                    )
+                    return _ok(
+                        message="Inconsistencia de datos: la liquidación no tiene registro de pago.",
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
                 if liquidacion.estado == ESTADO_PAGADA or pago_existente is not None:
                     if pago_existente:
                         if pago_existente.fk_tipo_id != tipo_pago or (pago_existente.referencia or "") != referencia:

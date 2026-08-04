@@ -1868,6 +1868,44 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
         # El conteo total de objetos Pago no debe incrementarse
         self.assertEqual(Pago.objects.count(), conteo_pagos)
 
+    def test_marcar_pagada_inconsistencia_pendiente_con_pago_autocorrige_a_pagada(self):
+        """C8 Fix Test: estado PENDIENTE con fk_pago_liquidacion asignado se auto-corrige a PAGADA."""
+        from rassa.blueprints.liquidaciones.constants import ESTADO_PAGADA, ESTADO_PENDIENTE
+        from rassa.models import Liquidacion, TipoPago
+
+        tipo_pago = TipoPago.objects.first()
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self._calcular(semana=30, anio=2026)
+        liq_id = resp.json()["data"]["id_liquidacion"]
+
+        # Forzar pago por primera vez
+        payload = {"tipo_pago": tipo_pago.pk, "referencia": "REF1"}
+        self.client.post(f"/api/liquidaciones/{liq_id}/marcar-pagada/", payload)
+
+        # Simular inconsistencia: cambiar estado a PENDIENTE conservando el pago
+        Liquidacion.objects.filter(pk=liq_id).update(estado=ESTADO_PENDIENTE)
+
+        resp2 = self.client.post(f"/api/liquidaciones/{liq_id}/marcar-pagada/", payload)
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        liq_db = Liquidacion.objects.get(pk=liq_id)
+        self.assertEqual(liq_db.estado, ESTADO_PAGADA)
+
+    def test_marcar_pagada_inconsistencia_pagada_sin_pago_retorna_500(self):
+        """C8 Fix Test: estado PAGADA sin fk_pago_liquidacion asignado retorna 500 Internal Server Error."""
+        from rassa.blueprints.liquidaciones.constants import ESTADO_PAGADA
+        from rassa.models import Liquidacion, TipoPago
+
+        tipo_pago = TipoPago.objects.first()
+        self._crear_pedido_entregado(total=Decimal("100.00"), creado_en=_aware(2026, 7, 21))
+        resp = self._calcular(semana=30, anio=2026)
+        liq_id = resp.json()["data"]["id_liquidacion"]
+
+        # Simular inconsistencia: marcar estado PAGADA sin asignar fk_pago_liquidacion
+        Liquidacion.objects.filter(pk=liq_id).update(estado=ESTADO_PAGADA, fk_pago_liquidacion=None)
+
+        resp2 = self.client.post(f"/api/liquidaciones/{liq_id}/marcar-pagada/", {"tipo_pago": tipo_pago.pk})
+        self.assertEqual(resp2.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def test_redondeo_half_up_comision_fraccionaria(self):
         """Verifica la regla ROUND_HALF_UP con centavos fraccionarios.
 
