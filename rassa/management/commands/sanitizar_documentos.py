@@ -33,6 +33,7 @@ def sanitize_filename(name: str) -> str:
     Preserva el prefijo uuid de 32 hex (que ya es seguro) y solo sane/acota el
     resto del nombre para no truncar la parte legible.
     """
+    name = os.path.basename(name)
     ext_match = re.search(r"\.[A-Za-z0-9]+$", name)
     ext = ext_match.group(0).lower() if ext_match else ""
     base = name[: -len(ext)] if ext else name
@@ -94,6 +95,9 @@ class Command(BaseCommand):
             if dry_run:
                 self.stdout.write(message)
             else:
+                # El orden importa: primero disco, luego DB. Si el proceso muere
+                # entre rename y save, el archivo queda con nombre nuevo pero la
+                # DB apunta al viejo. Usar --dry-run para validar antes de ejecutar.
                 os.rename(old_path, new_path)
                 doc.url_documento = f"documentos/{new_name}"
                 doc.save(update_fields=["url_documento"])

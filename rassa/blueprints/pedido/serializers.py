@@ -1,5 +1,6 @@
 """Serializadores para el módulo de Pedidos."""
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal
@@ -17,6 +18,20 @@ ESTADOS_DESTINO = [
 ESTADOS_DESTINO_CHOICES = [(e, e.replace("_", " ").title()) for e in ESTADOS_DESTINO]
 
 
+def es_pedido_expirado(pedido) -> bool:
+    """True si el pedido está pendiente y su fecha de expiración ya pasó.
+
+    No modifica el estado en BD: solo indica la condición para que la
+    vista decida bloquear o informar.
+    """
+    estado = getattr(pedido, "fk_estado", None)
+    if estado and getattr(estado, "tipo_estado", None) != "pendiente":
+        return False
+    if not pedido.fecha_expiracion:
+        return False
+    return pedido.fecha_expiracion < timezone.now()
+
+
 def _nombre_completo(usuario):
     if usuario and usuario.fk_persona:
         p = usuario.fk_persona
@@ -30,6 +45,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
     estado_actual = serializers.CharField(source="fk_estado.tipo_estado", read_only=True)
     productos = serializers.SerializerMethodField()
     has_more_productos = serializers.SerializerMethodField()
+    expirado = serializers.SerializerMethodField()
 
     class Meta:
         model = PedidoCabecera
@@ -41,6 +57,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
             "has_more_productos",
             "total",
             "estado_actual",
+            "expirado",
             "creado_en",
         ]
 
@@ -49,6 +66,9 @@ class PedidoListSerializer(serializers.ModelSerializer):
 
     def get_vendedor_nombre(self, obj):
         return _nombre_completo(obj.fk_vendedor)
+
+    def get_expirado(self, obj):
+        return es_pedido_expirado(obj)
 
     def get_productos(self, obj):
         detalles = getattr(obj, "detallepedido_set", None)
@@ -103,6 +123,7 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
     estado_actual = serializers.CharField(source="fk_estado.tipo_estado", read_only=True)
     detalles = serializers.SerializerMethodField()
     historial = serializers.SerializerMethodField()
+    expirado = serializers.SerializerMethodField()
 
     class Meta:
         model = PedidoCabecera
@@ -115,6 +136,7 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
             "total",
             "estado_actual",
             "fecha_expiracion",
+            "expirado",
             "creado_en",
             "detalles",
             "historial",
@@ -125,6 +147,9 @@ class PedidoDetailSerializer(serializers.ModelSerializer):
 
     def get_vendedor_nombre(self, obj):
         return _nombre_completo(obj.fk_vendedor)
+
+    def get_expirado(self, obj):
+        return es_pedido_expirado(obj)
 
     def get_detalles(self, obj):
         detalles = getattr(obj, "detallepedido_set", None)

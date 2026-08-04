@@ -1,3 +1,4 @@
+import functools
 import logging
 from datetime import timedelta
 
@@ -36,6 +37,37 @@ def calcular_proximo_lunes():
         dias_hasta_lunes = 7
     prox_lunes = hoy + timedelta(days=dias_hasta_lunes)
     return prox_lunes, prox_lunes.isocalendar()[1]
+
+
+def _error_si_no_lunes(accion="editarse"):
+    """Retorna un mensaje de error si hoy no es lunes, o None si lo es.
+
+    Se usa para restringir la creación y edición de publicaciones y sus
+    productos al día lunes.
+    """
+    if timezone.localdate().weekday() != 0:
+        return f"Las publicaciones solo pueden {accion} los lunes."
+    return None
+
+
+def lunes_requerido(accion="editarse"):
+    """Decorador que rechaza con 403 la acción si hoy no es lunes.
+
+    Antepone la regla de negocio de solo-lunes a cualquier método de un
+    ViewSet (create, update, destroy, restore, etc.).
+    """
+
+    def decorator(view_func):
+        @functools.wraps(view_func)
+        def wrapper(self, request, *args, **kwargs):
+            error = _error_si_no_lunes(accion)
+            if error:
+                return Response({"error": error}, status=status.HTTP_403_FORBIDDEN)
+            return view_func(self, request, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 class PublicacionViewSet(viewsets.ViewSet):
@@ -79,13 +111,8 @@ class PublicacionViewSet(viewsets.ViewSet):
         serializer = PublicacionSerializer(page, many=True)
         return ok_response(data=self.paginator.get_paginated_response(serializer.data).data)
 
+    @lunes_requerido(accion="crearse")
     def create(self, request):
-        if timezone.localdate().weekday() != 0:
-            return Response(
-                {"error": "Las publicaciones solo pueden crearse los lunes."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         prox_lunes, semana = calcular_proximo_lunes()
         publicacion = PublicacionSemanal.objects.create(
             fk_agricultor=request.user.usuario,
@@ -105,6 +132,7 @@ class PublicacionViewSet(viewsets.ViewSet):
         serializer = PublicacionSerializer(publicacion)
         return ok_response(data=serializer.data)
 
+    @lunes_requerido()
     def destroy(self, request, pk=None):
         publicacion = self._get_publicacion(pk, request)
 
@@ -222,6 +250,7 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
         serializer = ProductoSemanalSerializer(page, many=True)
         return ok_response(data=self.paginator.get_paginated_response(serializer.data).data)
 
+    @lunes_requerido()
     def create(self, request, pub_id=None):
         publicacion = self._get_publicacion(pub_id, request)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
@@ -239,6 +268,7 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
             status_code=status.HTTP_201_CREATED,
         )
 
+    @lunes_requerido()
     def partial_update(self, request, pub_id=None, pk=None):
         publicacion = self._get_publicacion(pub_id, request)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
@@ -257,6 +287,7 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
         serializer.save()
         return ok_response(data=serializer.data, message="Producto actualizado correctamente.")
 
+    @lunes_requerido()
     def destroy(self, request, pub_id=None, pk=None):
         publicacion = self._get_publicacion(pub_id, request)
         if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
@@ -274,12 +305,19 @@ class ProductoSemanalViewSet(viewsets.ViewSet):
         item.save(update_fields=["estado"])
         return ok_response(message="Producto eliminado correctamente.")
 
+    @lunes_requerido()
     def restore(self, request, pub_id=None, pk=None):
         publicacion = self._get_publicacion(pub_id, request)
         try:
             item = publicacion.productosemanal_set.get(pk=pk, estado=ProductoSemanal.ESTADO_INACTIVO)
         except ProductoSemanal.DoesNotExist as err:
             raise NotFound("Producto no encontrado en la papelera.") from err
+
+        if publicacion.estado != PublicacionSemanal.ESTADO_BORRADOR:
+            return Response(
+                {"error": "Solo se pueden restaurar productos en una publicación en estado borrador."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         item.estado = ProductoSemanal.ESTADO_ACTIVO
         item.save(update_fields=["estado"])

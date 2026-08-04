@@ -1,0 +1,30 @@
+meta {
+  name: Create Farmer (admin)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/auth/create-farmer/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "email": "pedro.lopez@ejemplo.com",
+    "password": "{{userPassword}}",
+    "telefono": "0987654321",
+    "nombre": "Pedro",
+    "apellido_paterno": "Lopez",
+    "fecha_nacimiento": "1995-05-15",
+    "sexo": "M",
+    "domicilio": "Av. Siempre Viva 742",
+    "fk_localidad": 1
+  }
+}
