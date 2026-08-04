@@ -676,6 +676,97 @@ class PagoListTest(PagosTestBase):
         resp = self.client.get("/api/pagos/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
+    def test_cliente_solo_ve_sus_pagos(self):
+        # Pago del cliente propio
+        pedido_propio = self._crear_pedido(self.estado_listo)
+        self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido_propio.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_propio = Pago.objects.get(fk_pedido=pedido_propio)
+
+        # Otro cliente con su propio pago
+        persona2 = Persona.objects.create(
+            nombre="Otro", apellido_paterno="Cliente", sexo="F", fecha_nacimiento="1993-03-03", domicilio="Calle 5"
+        )
+        user2 = User.objects.create_user(username="cliente2@test.com", email="cliente2@test.com", password="pass123")
+        usuario2 = Usuario.objects.create(
+            fk_user=user2, fk_persona=persona2, fk_rol=self.rol_cliente, correo="cliente2@test.com"
+        )
+        pedido_ajeno = self._crear_pedido(self.estado_listo)
+        pedido_ajeno.fk_cliente = usuario2
+        pedido_ajeno.save(update_fields=["fk_cliente"])
+        self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido_ajeno.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_ajeno = Pago.objects.get(fk_pedido=pedido_ajeno)
+
+        cliente_client = APIClient()
+        cliente_client.force_authenticate(user=self.user_cliente)
+        resp = cliente_client.get("/api/pagos/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        pago_ids = [p["id_pago"] for p in resp.json()["results"]]
+        self.assertIn(pago_propio.id_pago, pago_ids)
+        self.assertNotIn(pago_ajeno.id_pago, pago_ids)
+
+    def test_cliente_puede_ver_pago_propio(self):
+        pedido = self._crear_pedido(self.estado_listo)
+        create_resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_id = create_resp.json()["id_pago"]
+
+        cliente_client = APIClient()
+        cliente_client.force_authenticate(user=self.user_cliente)
+        resp = cliente_client.get(f"/api/pagos/{pago_id}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["id_pago"], pago_id)
+
+    def test_cliente_no_puede_ver_pago_ajeno(self):
+        persona2 = Persona.objects.create(
+            nombre="Otro cliente",
+            apellido_paterno="Cliente",
+            sexo="F",
+            fecha_nacimiento="1993-03-03",
+            domicilio="Calle 5",
+        )
+        user2 = User.objects.create_user(username="cliente2@test.com", email="cliente2@test.com", password="pass123")
+        usuario2 = Usuario.objects.create(
+            fk_user=user2, fk_persona=persona2, fk_rol=self.rol_cliente, correo="cliente2@test.com"
+        )
+        pedido_ajeno = self._crear_pedido(self.estado_listo)
+        pedido_ajeno.fk_cliente = usuario2
+        pedido_ajeno.save(update_fields=["fk_cliente"])
+        create_resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido_ajeno.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        pago_id = create_resp.json()["id_pago"]
+
+        # El cliente logueado no debe ver el detalle de un pago de otro cliente
+        cliente_client = APIClient()
+        cliente_client.force_authenticate(user=self.user_cliente)
+        resp = cliente_client.get(f"/api/pagos/{pago_id}/")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
 
 class PagoConcurrencyTest(TransactionTestCase):
     """Test de concurrencia para generación de folios."""

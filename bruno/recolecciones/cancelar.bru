@@ -1,0 +1,15 @@
+meta {
+  name: Cancelar recolección
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/recolecciones/{{recoleccionId}}/cancelar/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

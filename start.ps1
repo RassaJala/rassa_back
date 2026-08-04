@@ -76,6 +76,8 @@ En Linux/macOS/Git-Bash usa: bash start.sh
 
 function Activate-Venv {
     $candidates = @(
+        "venv\Scripts\Activate.ps1",
+        ".venv\Scripts\Activate.ps1",
         "venv\Scripts\activate",
         ".venv\Scripts\activate",
         "venv\bin\activate",

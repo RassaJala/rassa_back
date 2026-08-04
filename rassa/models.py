@@ -13,6 +13,7 @@ Política de on_delete:
 """
 
 from django.db import connection, models
+from django.db.models import Q
 from django.utils import timezone
 
 # ============================================================
@@ -210,8 +211,19 @@ class Usuario(models.Model):
         return f"{str(self.correo)} ({str(self.fk_rol)})"
 
     def tiene_rol(self, nombre_rol: str) -> bool:
-        """Verifica si el usuario tiene el rol indicado."""
-        return self.fk_rol.nombre_rol == nombre_rol
+        """Verifica si el usuario tiene el rol indicado.
+
+        Null-safe: un perfil sin rol (fk_rol=None, p.ej. legacy o mock) se
+        deniega con False en lugar de explotar (500) en los permisos que delegan
+        aquí (HasRole, get_queryset). fk_rol es NOT NULL en BD, así que un None
+        solo existe en instancias detachadas/mock: Django lanza
+        RelatedObjectDoesNotExist (subclase de AttributeError) al acceder en vez
+        de devolver None, por eso el guard no es solo `is not None`.
+        """
+        try:
+            return self.fk_rol is not None and self.fk_rol.nombre_rol == nombre_rol
+        except AttributeError:
+            return False
 
 
 # ============================================================
@@ -618,12 +630,20 @@ class Conversacion(models.Model):
     nombre = models.CharField(max_length=100, blank=True, null=True)
     tipo = models.BooleanField(default=False)  # FALSE = privada, TRUE = grupal
     fk_familia = models.ForeignKey(Familia, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_familia")
+    nombre_override = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "conversacion"
         ordering = ["id_conversacion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_familia"],
+                condition=Q(estado=True, fk_familia__isnull=False),
+                name="unique_active_family_conversation",
+            ),
+        ]
 
     def __str__(self):
         tipo_str = "Grupal" if self.tipo else "Privada"
@@ -633,11 +653,14 @@ class Conversacion(models.Model):
 class Integrante(models.Model):
     """Miembro participante en una conversación."""
 
+    ROL_CHOICES = [("miembro", "Miembro"), ("admin", "Admin")]
+
     id_miembro = models.AutoField(primary_key=True)
     fk_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
     fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
+    rol = models.CharField(max_length=10, choices=ROL_CHOICES, default="miembro")
 
     class Meta:
         db_table = "integrantes"
@@ -765,9 +788,7 @@ class Recoleccion(models.Model):
     ]
 
     id_recoleccion = models.AutoField(primary_key=True)
-    fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
-    )
+    fk_agricultor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=False, db_column="fk_agricultor")
     fecha_recoleccion = models.DateField()
     hora_inicio = models.TimeField(blank=True, null=True)
     hora_fin = models.TimeField(blank=True, null=True)
@@ -778,9 +799,44 @@ class Recoleccion(models.Model):
     class Meta:
         db_table = "recoleccion"
         ordering = ["id_recoleccion"]
+        # Regla de negocio elegida: el slot agricultor+fecha queda ocupado mientras
+        # exista una fila NO cancelada (pendiente/en_ruta/recolectado), por eso el
+        # UniqueConstraint parcial excluye únicamente "cancelado". Esto impide dos
+        # recolecciones activas el mismo día y también reprogramar tras completar.
+        # Cambiar esta regla (ej. liberar el slot al recolectar) requiere decisión
+        # de negocio. Fijada por test: test_recolecciones.test_slot_ocupado_tras_recolectar.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "fecha_recoleccion"],
+                condition=~models.Q(estado="cancelado"),
+                name="uniq_recoleccion_activa_agricultor_fecha",
+            ),
+        ]
 
     def __str__(self):
         return f"Recolección #{self.id_recoleccion} — {self.fecha_recoleccion}"
+
+
+class HistorialEstadoRecoleccion(models.Model):
+    """Historial de cambios de estado de una recolección."""
+
+    id_historial = models.AutoField(primary_key=True)
+    fk_recoleccion = models.ForeignKey(
+        Recoleccion, on_delete=models.CASCADE, db_column="fk_recoleccion", related_name="historial_estados"
+    )
+    estado_anterior = models.CharField(max_length=20, blank=True, null=True)
+    estado_nuevo = models.CharField(max_length=20)
+    fk_cambiado_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_cambiado_por"
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "historial_estado_recoleccion"
+        ordering = ["id_historial"]
+
+    def __str__(self):
+        return f"Historial #{self.id_historial} — Recolección #{self.fk_recoleccion_id}"
 
 
 class HistorialEstadoPedido(models.Model):

@@ -1,11 +1,11 @@
 meta {
-  name: Inactivar mensaje
+  name: Listar recolecciones
   type: http
-  seq: 12
+  seq: 2
 }
 
-patch {
-  url: {{baseUrl}}/api/chat/mensajes/40/inactivar/
+get {
+  url: {{baseUrl}}/api/recolecciones/?estado=pendiente
   body: none
   auth: inherit
 }

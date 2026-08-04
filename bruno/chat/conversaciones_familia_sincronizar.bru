@@ -1,0 +1,15 @@
+meta {
+  name: Sincronizar conversación familiar
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/api/chat/conversaciones/familia/5/sincronizar/
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}

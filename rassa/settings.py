@@ -162,6 +162,14 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "publicaciones_current": "60/minute",
     "pagos_read": "60/minute",
     "pagos_write": "20/hour",
+    # Scopes separados: lectura del calendario del agricultor (frecuente) y
+    # escrituras del vendedor, para no compartir budget.
+    # recolecciones_write: ScopedRateThrottle cachea por IP (get_ident), no por
+    # usuario; un vendedor operando (crear + estado + cancelar + reprogramar,
+    # flujo B3) y varios vendedores tras NAT compartían 20/hora. 100/hora da
+    # holgura al flujo operativo; revisar con negocio si se necesita por-usuario.
+    "recolecciones_read": "60/minute",
+    "recolecciones_write": "100/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===

@@ -1,11 +1,11 @@
 meta {
-  name: Inactivar mensaje
+  name: Listar agricultores
   type: http
-  seq: 12
+  seq: 7
 }
 
-patch {
-  url: {{baseUrl}}/api/chat/mensajes/40/inactivar/
+get {
+  url: {{baseUrl}}/api/recolecciones/agricultores/
   body: none
   auth: inherit
 }
