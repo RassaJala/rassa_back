@@ -16,7 +16,9 @@ from rassa.blueprints.liquidaciones.constants import (
     ESTADO_PAGADA,
     ESTADO_PEDIDO_ENTREGADO,
     ESTADO_PENDIENTE,
+    LOCK_TIMEOUT_SECONDS,
     MSG_LIQUIDACION_DUPLICADA,
+    RETRY_AFTER_SECONDS,
 )
 from rassa.models import (
     DetallePedido,
@@ -214,7 +216,7 @@ def _is_transient_error(exc: DatabaseError) -> bool:
     return sqlstate in ("40P01", "55P03")
 
 
-def _set_lock_timeout(timeout_str: str = "5s"):
+def _set_lock_timeout(timeout_str: str = LOCK_TIMEOUT_SECONDS):
     """Limita el tiempo de espera por locks en la transacción actual de PostgreSQL (SET LOCAL)."""
     if connection.vendor == "postgresql":
         with connection.cursor() as cursor:
@@ -227,7 +229,7 @@ def _deadlock_response(message: str = "Conflicto de concurrencia. Reintente."):
         message=message,
         status_code=status.HTTP_409_CONFLICT,
     )
-    response["Retry-After"] = "5"
+    response["Retry-After"] = str(RETRY_AFTER_SECONDS)
     return response
 
 

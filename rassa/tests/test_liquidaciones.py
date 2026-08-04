@@ -1835,12 +1835,12 @@ class LiquidacionAdditionalEdgeCasesTest(LiquidacionesTestBase):
     def test_redondeo_half_up_comision_fraccionaria(self):
         """Verifica la regla ROUND_HALF_UP con centavos fraccionarios.
 
-        100.55 * 10% = 10.055 -> 10.06 comision, 90.49 monto liquidar.
+        100.45 * 10% = 10.045 -> 10.05 comision, 90.40 monto liquidar.
         """
-        self._crear_pedido_entregado(total=Decimal("100.55"), creado_en=_aware(2026, 7, 21))
+        self._crear_pedido_entregado(total=Decimal("100.45"), creado_en=_aware(2026, 7, 21))
         resp = self._calcular(semana=30, anio=2026)
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.json()["data"]
-        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.55"))
-        self.assertEqual(Decimal(data["comision"]), Decimal("10.06"))
-        self.assertEqual(Decimal(data["monto_liquidar"]), Decimal("90.49"))
+        self.assertEqual(Decimal(data["monto_ventas"]), Decimal("100.45"))
+        self.assertEqual(Decimal(data["comision"]), Decimal("10.05"))
+        self.assertEqual(Decimal(data["monto_liquidar"]), Decimal("90.40"))
