@@ -38,12 +38,13 @@ class MermaCreateSerializer(serializers.ModelSerializer):
         producto_semanal_id = attrs.get("fk_producto_semanal")
         if pedido is not None and producto_semanal_id is not None:
             existe_producto = ProductoSemanal.objects.filter(pk=producto_semanal_id).exists()
-            if existe_producto and not DetallePedido.objects.filter(
-                fk_pedido=pedido, fk_producto_semanal_id=producto_semanal_id
-            ).exists():
-                raise serializers.ValidationError(
-                    {"fk_pedido": "El producto semanal no pertenece a este pedido."}
-                )
+            if (
+                existe_producto
+                and not DetallePedido.objects.filter(
+                    fk_pedido=pedido, fk_producto_semanal_id=producto_semanal_id
+                ).exists()
+            ):
+                raise serializers.ValidationError({"fk_pedido": "El producto semanal no pertenece a este pedido."})
         return attrs
 
     def validate_fk_decision(self, value):
