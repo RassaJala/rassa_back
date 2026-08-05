@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
+from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -874,7 +875,7 @@ class PublicacionCurrentTests(PublicacionBaseTestCase):
 # ======================================================================
 
 
-class CalcularProximoLunesTests(APITestCase):
+class CalcularProximoLunesTests(SimpleTestCase):
     """Unit tests de calcular_proximo_lunes() de rassa.blueprints.publicacion.views."""
 
     @patch("rassa.blueprints.publicacion.views.timezone.localdate")
@@ -897,3 +898,17 @@ class CalcularProximoLunesTests(APITestCase):
         prox_lunes, semana = calcular_proximo_lunes()
         self.assertEqual(prox_lunes, date(2026, 7, 27))
         self.assertEqual(semana, 31)
+
+    @patch("rassa.blueprints.publicacion.views.timezone.localdate")
+    def test_hoy_sabado_retorna_proximo_lunes_dos_dias(self, mock_date):
+        mock_date.return_value = date(2026, 7, 25)  # Saturday
+        prox_lunes, semana = calcular_proximo_lunes()
+        self.assertEqual(prox_lunes, date(2026, 7, 27))
+        self.assertEqual(semana, 31)
+
+    @patch("rassa.blueprints.publicacion.views.timezone.localdate")
+    def test_cruce_de_anio_retorna_lunes_de_semana_1(self, mock_date):
+        mock_date.return_value = date(2026, 12, 28)  # Monday de la semana 53
+        prox_lunes, semana = calcular_proximo_lunes()
+        self.assertEqual(prox_lunes, date(2027, 1, 4))
+        self.assertEqual(semana, 1)

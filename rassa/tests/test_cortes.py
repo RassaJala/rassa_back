@@ -273,7 +273,6 @@ class CorteListTest(CortesTestBase):
 
     def test_vendedor_no_ve_detalle_de_corte_de_otro(self):
         """GET /api/cortes/{id}/ de un corte de otro vendedor devuelve 404."""
-        self._crear_pago(Decimal("100.00"), self.usuario_vendedor)
         client1 = APIClient()
         client1.force_authenticate(user=self.usuario_vendedor.fk_user)
         resp = client1.post("/api/cortes/", {"monto_real": "100.00", "fecha": str(self.hoy)})

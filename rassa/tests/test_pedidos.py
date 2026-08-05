@@ -724,6 +724,11 @@ class PedidosTestCase(APITestCase):
 class PedidoCreateTestCase(APITestCase):
     """Tests para POST /api/pedidos/ — creación de pedidos."""
 
+    PRECIO_PRODUCTO = Decimal("20.00")
+    IVA_RATE = Decimal("1.21")
+    LIMITE_CREDITO = Decimal("1000.00")
+    MONTO_PREVIO_FAMILIA = Decimal("900.00")
+
     def setUp(self):
         # Roles
         self.rol_admin = Rol.objects.create(nombre_rol="Admin", descripcion="Administrador")
@@ -762,7 +767,7 @@ class PedidoCreateTestCase(APITestCase):
             fk_producto=self.producto,
             fk_unidad=self.unidad,
             stock=50,
-            precio=Decimal("20.00"),
+            precio=self.PRECIO_PRODUCTO,
             estado="activo",
         )
 
@@ -1050,8 +1055,7 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        # DRF ValidationError devuelve el mensaje como string o lista
-        self.assertIn("límite de crédito", str(response.data).lower())
+        self.assertIn("límite de crédito", response.data[0].lower())
 
     def test_credito_en_limite(self):
         # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
@@ -1109,7 +1113,7 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("límite de crédito", str(response.data).lower())
+        self.assertIn("límite de crédito", response.data[0].lower())
 
     # ── Límite de crédito — familia ─────────────────────────────
 
@@ -1135,7 +1139,7 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("límite de crédito", str(response.data).lower())
+        self.assertIn("límite de crédito", response.data[0].lower())
 
     def test_credito_familia_combinado_dentro_limite(self):
         """Un pedido dentro del límite combinado con la familia se acepta."""
@@ -1158,6 +1162,10 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Verificar que el pedido realmente se creó en BD con el total esperado
+        pedido_nuevo = PedidoCabecera.objects.get(pk=response.data["data"]["id_pedido"])
+        total_esperado = (self.PRECIO_PRODUCTO * 1 * self.IVA_RATE).quantize(Decimal("0.01"))
+        self.assertEqual(pedido_nuevo.total, total_esperado)
 
     # ── Límite de crédito — cancelación y stock ─────────────────
 
@@ -1179,7 +1187,7 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("límite de crédito", str(response.data).lower())
+        self.assertIn("límite de crédito", response.data[0].lower())
 
         # Cancelar el pedido pendiente como vendedor
         EstadoPedido.objects.get_or_create(tipo_estado="cancelado", defaults={"descripcion": "Cancelado"})
@@ -1219,6 +1227,7 @@ class PedidoCreateTestCase(APITestCase):
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
+        # workaround: el flujo real de creación aún no asigna fk_vendedor (pregunta de negocio abierta, bug #1 QA)
         PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=self.usuario_vendedor)
 
         self.client.force_authenticate(user=self.user_vendedor)
@@ -1228,6 +1237,28 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(len(historial), 1)
         self.assertIsNone(historial[0]["estado_anterior"])
         self.assertEqual(historial[0]["estado_nuevo"], "pendiente")
+
+    def test_historial_cliente_accede_a_historial_de_cualquier_pedido(self):
+        """Estado actual documentado: un cliente autenticado puede leer el historial de otro pedido por id.
+
+        REGLA PENDIENTE (bug #4 QA): /historial/ no aísla clientes; solo filtra por fk_vendedor
+        a los vendedores. Este test fija el comportamiento actual como red de seguridad hasta
+        que se decida el aislamiento deseado (cliente → 404 o solo su propio historial).
+        """
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+
+        # Otro cliente autenticado (no el dueño del pedido) aún puede leer el historial
+        otro_cliente_user, _ = self._crear_otro_cliente("cliente_historial_ajeno")
+        self.client.force_authenticate(user=otro_cliente_user)
+        resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]), 1)
 
     # ── Campos de salida del serializer ───────────────────────
 

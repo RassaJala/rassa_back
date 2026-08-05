@@ -445,7 +445,7 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         data = self._register_data(email="no-es-un-email")
         response = self.client.post(reverse("register"), data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("email", response.data)
+        self.assertEqual(list(response.data["email"]), ["Introduzca una dirección de correo electrónico válida."])
 
     # ==================================================================
     # GET /me/ — with REAL JWT

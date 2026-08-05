@@ -280,6 +280,9 @@ class PagoCreateTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
+        # El pedido no debe avanzar de estado pese al intento de pago fallido
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.fk_estado.tipo_estado, "listo_para_retirar")
 
     def test_pago_pedido_cancelado_falla(self):
         pedido = self._crear_pedido(self.estado_cancelado)
