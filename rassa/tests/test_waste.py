@@ -1,6 +1,7 @@
 """Tests para el blueprint Waste (Mermas)."""
 
 from datetime import date
+from decimal import Decimal
 from threading import Barrier, Thread
 from unittest.mock import patch
 
@@ -14,7 +15,10 @@ from rest_framework.test import APIClient, APITestCase
 from rassa.models import (
     CategoriaProducto,
     DecisionMerma,
+    DetallePedido,
+    EstadoPedido,
     Merma,
+    PedidoCabecera,
     Persona,
     Producto,
     ProductoSemanal,
@@ -96,6 +100,24 @@ class WasteBaseTestCase(APITestCase):
             estado=ProductoSemanal.ESTADO_ACTIVO,
         )
 
+        # Crear pedido del vendedor que contiene el producto semanal
+        self.estado_pedido = EstadoPedido.objects.create(tipo_estado="pendiente", descripcion="Pendiente")
+        self.pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.admin.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.vendedor.usuario,
+        )
+        self.detalle_pedido = DetallePedido.objects.create(
+            fk_pedido=self.pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+
     def _assert_success_envelope(self, response, *, status_code=status.HTTP_200_OK, message=None):
         self.assertEqual(response.status_code, status_code)
         body = response.json()
@@ -113,6 +135,7 @@ class WasteBaseTestCase(APITestCase):
     def _create_merma_payload(self, **overrides):
         payload = {
             "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
+            "fk_pedido": self.pedido.id_pedido,
             "cantidad": 5,
             "motivo": "Producto dañado",
             "comentarios": "Se encontró moho",
@@ -358,6 +381,134 @@ class MermaCreateTests(WasteBaseTestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_merma_requiere_fk_pedido(self):
+        """Error si falta fk_pedido."""
+        payload = self._create_merma_payload()
+        del payload["fk_pedido"]
+        response = self.client.post(reverse("merma-list"), payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_merma_pedido_inexistente(self):
+        """Error si fk_pedido no existe."""
+        response = self.client.post(
+            reverse("merma-list"),
+            self._create_merma_payload(fk_pedido=99999),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_pedido", response.json())
+
+    def test_merma_pedido_de_otro_vendedor(self):
+        """Vendedor NO puede registrar merma de un pedido de otro vendedor."""
+        otro_pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.admin.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.admin.usuario,
+        )
+        DetallePedido.objects.create(
+            fk_pedido=otro_pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+        response = self.client.post(
+            reverse("merma-list"),
+            self._create_merma_payload(fk_pedido=otro_pedido.id_pedido),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_pedido", response.json())
+
+    def test_admin_puede_usar_pedido_de_otro_vendedor(self):
+        """Admin SÍ puede registrar merma de un pedido de cualquier vendedor."""
+        otro_pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.admin.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.admin.usuario,
+        )
+        DetallePedido.objects.create(
+            fk_pedido=otro_pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+        self.client.force_authenticate(self.admin)
+        data = self._assert_success_envelope(
+            self.client.post(
+                reverse("merma-list"),
+                self._create_merma_payload(fk_pedido=otro_pedido.id_pedido),
+                format="json",
+            ),
+            status_code=status.HTTP_201_CREATED,
+        )
+        self.assertEqual(data["fk_pedido"], otro_pedido.id_pedido)
+
+    def test_merma_producto_no_pertenece_al_pedido(self):
+        """Error si el producto semanal no pertenece al pedido."""
+        producto2 = Producto.objects.create(
+            nombre_producto="Pera",
+            fk_categoria=self.categoria,
+            es_perecedero=True,
+            estado=True,
+        )
+        producto_semanal2 = ProductoSemanal.objects.create(
+            fk_publicacion=self.publicacion,
+            fk_producto=producto2,
+            fk_unidad=self.unidad,
+            stock=10,
+            precio="20.00",
+            foto="http://example.com/foto2.jpg",
+            estado=ProductoSemanal.ESTADO_ACTIVO,
+        )
+        otro_pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.admin.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.vendedor.usuario,
+        )
+        # El pedido solo contiene el producto ORIGINAL
+        DetallePedido.objects.create(
+            fk_pedido=otro_pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+        response = self.client.post(
+            reverse("merma-list"),
+            self._create_merma_payload(
+                fk_pedido=otro_pedido.id_pedido,
+                fk_producto_semanal=producto_semanal2.id_producto_semanal,
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("fk_pedido", response.json())
+
+    def test_merma_creada_devuelve_pedido(self):
+        """La respuesta de creación incluye fk_pedido y pedido_info."""
+        data = self._assert_success_envelope(
+            self.client.post(reverse("merma-list"), self._create_merma_payload(), format="json"),
+            status_code=status.HTTP_201_CREATED,
+        )
+        self.assertEqual(data["fk_pedido"], self.pedido.id_pedido)
+        self.assertIn("pedido_info", data)
+        pi = data["pedido_info"]
+        self.assertEqual(pi["id"], self.pedido.id_pedido)
+        self.assertIn("cliente", pi)
+        self.assertIn("estado", pi)
+        self.assertIn("total", pi)
+
 
 # ======================================================================
 # MERMA LIST
@@ -372,6 +523,7 @@ class MermaListTests(WasteBaseTestCase):
         # Crear una merma de prueba directamente
         self.merma = Merma.objects.create(
             fk_producto_semanal=self.producto_semanal,
+            fk_pedido=self.pedido,
             cantidad=5,
             motivo="Prueba",
             comentarios="Test",
@@ -410,12 +562,39 @@ class MermaListTests(WasteBaseTestCase):
         self.assertEqual(di["id"], self.decision.id_decision)
         self.assertEqual(di["nombre"], self.decision.decision)
 
+    def test_merma_list_includes_pedido_info(self):
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
+        item = data["results"][0]
+        self.assertIn("fk_pedido", item)
+        self.assertEqual(item["fk_pedido"], self.pedido.id_pedido)
+        self.assertIn("pedido_info", item)
+        pi = item["pedido_info"]
+        self.assertEqual(pi["id"], self.pedido.id_pedido)
+        self.assertIn("cliente", pi)
+        self.assertIn("estado", pi)
+        self.assertIn("total", pi)
+
+    def test_merma_list_filter_by_fk_pedido(self):
+        m2 = Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            cantidad=2,
+            motivo="Otra sin pedido",
+            fk_decision=self.decision,
+        )
+        data = self._assert_success_envelope(
+            self.client.get(reverse("merma-list"), {"fk_pedido": self.pedido.id_pedido})
+        )
+        ids = [item["id_merma"] for item in data["results"]]
+        self.assertEqual(ids, [self.merma.id_merma])
+        self.assertNotIn(m2.id_merma, ids)
+
     def test_merma_list_incluye_inactivos(self):
         """incluir_inactivos=true muestra mermas inactivas."""
         m = Merma.objects.create(
             cantidad=1,
             motivo="Test inactivo",
             fk_decision=self.decision,
+            fk_pedido=self.pedido,
             fk_producto_semanal=self.producto_semanal,
             estado=False,
         )
@@ -505,6 +684,23 @@ class MermaConcurrencyTests(TransactionTestCase):
             estado=ProductoSemanal.ESTADO_ACTIVO,
         )
 
+        self.estado_pedido = EstadoPedido.objects.create(tipo_estado="pendiente", descripcion="Pendiente")
+        self.pedido = PedidoCabecera.objects.create(
+            fk_cliente=self.admin.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.vendedor.usuario,
+        )
+        DetallePedido.objects.create(
+            fk_pedido=self.pedido,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+
     def test_concurrent_merma_race_condition(self):
         """Dos hilos intentan crear mermas que agotan stock. Solo una debe fallar.
 
@@ -522,6 +718,7 @@ class MermaConcurrencyTests(TransactionTestCase):
             barrier.wait()  # Ambos hilos sincronizan antes de POST
             payload = {
                 "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
+                "fk_pedido": self.pedido.id_pedido,
                 "cantidad": 6,
                 "motivo": "Concurrente",
                 "fk_decision": self.decision.id_decision,

@@ -74,10 +74,16 @@ class MermaViewSet(
             "fk_producto_semanal__fk_producto",
             "fk_producto_semanal__fk_publicacion",
             "fk_decision",
+            "fk_pedido__fk_cliente__fk_persona",
+            "fk_pedido__fk_vendedor__fk_persona",
+            "fk_pedido__fk_estado",
         )
         incluir_inactivos = self.request.query_params.get("incluir_inactivos", "").lower() in ("true", "1")
         if not incluir_inactivos:
             qs = qs.filter(estado=True)
+        fk_pedido = self.request.query_params.get("fk_pedido")
+        if fk_pedido:
+            qs = qs.filter(fk_pedido_id=fk_pedido)
         return qs.order_by("-creado_en")
 
     def create(self, request, *args, **kwargs):

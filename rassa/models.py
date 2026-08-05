@@ -510,6 +510,14 @@ class Merma(models.Model):
     motivo = models.CharField(max_length=300)
     comentarios = models.TextField(blank=True, null=True)
     fk_decision = models.ForeignKey(DecisionMerma, on_delete=models.PROTECT, db_column="fk_decision")
+    fk_pedido = models.ForeignKey(
+        PedidoCabecera,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="fk_pedido",
+        related_name="mermas",
+    )
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
