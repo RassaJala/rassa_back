@@ -82,6 +82,12 @@ class MermaViewSet(
         except (TypeError, ValueError) as err:
             raise ValidationError({"fk_pedido": "fk_pedido debe ser un número entero válido."}) from err
 
+    @staticmethod
+    def _rol_nombre(usuario) -> str | None:
+        """Return the user's role name, or None when unknown (null-safe)."""
+        rol = getattr(usuario, "fk_rol", None) if usuario is not None else None
+        return rol.nombre_rol if rol is not None else None
+
     def get_queryset(self):
         qs = Merma.objects.select_related(
             "fk_producto_semanal__fk_producto",
@@ -91,6 +97,10 @@ class MermaViewSet(
             "fk_pedido__fk_vendedor__fk_persona",
             "fk_pedido__fk_estado",
         )
+        # Un vendedor solo ve las mermas de sus propios pedidos; el admin las ve todas.
+        usuario = getattr(self.request.user, "usuario", None)
+        if self._rol_nombre(usuario) != ADMIN and usuario is not None:
+            qs = qs.filter(fk_pedido__fk_vendedor_id=usuario.pk)
         incluir_inactivos = self.request.query_params.get("incluir_inactivos", "").lower() in ("true", "1")
         if not incluir_inactivos:
             qs = qs.filter(estado=True)
@@ -106,6 +116,13 @@ class MermaViewSet(
         validated = serializer.validated_data
         producto_semanal_id = validated["fk_producto_semanal"]
         cantidad = validated["cantidad"]
+        pedido = validated["fk_pedido"]
+
+        # Un vendedor solo puede registrar mermas de sus propios pedidos.
+        # (El admin puede registrar mermas de cualquier pedido.)
+        usuario = getattr(request.user, "usuario", None)
+        if self._rol_nombre(usuario) != ADMIN and (usuario is None or pedido.fk_vendedor_id != usuario.pk):
+            raise ValidationError({"fk_pedido": "El pedido no pertenece al vendedor autenticado."})
 
         try:
             with transaction.atomic():

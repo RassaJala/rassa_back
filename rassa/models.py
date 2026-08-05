@@ -548,9 +548,7 @@ class Merma(models.Model):
     fk_decision = models.ForeignKey(DecisionMerma, on_delete=models.PROTECT, db_column="fk_decision")
     fk_pedido = models.ForeignKey(
         PedidoCabecera,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         db_column="fk_pedido",
         related_name="mermas",
     )

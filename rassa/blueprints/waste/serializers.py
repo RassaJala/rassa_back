@@ -3,7 +3,6 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
 from rassa.models import DecisionMerma, DetallePedido, Merma, PedidoCabecera, ProductoSemanal
-from rassa.permissions.role_permissions import ADMIN
 
 
 class DecisionMermaSerializer(serializers.ModelSerializer):
@@ -22,16 +21,6 @@ class MermaCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Merma
         fields = ["fk_producto_semanal", "fk_pedido", "cantidad", "motivo", "comentarios", "fk_decision"]
-
-    def validate_fk_pedido(self, value):
-        request = self.context.get("request")
-        if request is not None and getattr(request.user, "is_authenticated", False):
-            usuario = getattr(request.user, "usuario", None)
-            rol = getattr(usuario, "fk_rol", None) if usuario is not None else None
-            nombre_rol = rol.nombre_rol if rol is not None else None
-            if nombre_rol != ADMIN and usuario is not None and value.fk_vendedor_id != usuario.pk:
-                raise serializers.ValidationError("El pedido no pertenece al vendedor autenticado.")
-        return value
 
     def validate(self, attrs):
         pedido = attrs.get("fk_pedido")

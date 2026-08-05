@@ -1888,7 +1888,8 @@ class Command(BaseCommand):
         mermas = [
             {
                 "id_merma": 1,
-                "fk_producto_semanal_id": 16,
+                "fk_producto_semanal_id": 13,
+                "fk_pedido_id": 2,
                 "cantidad": 2,
                 "motivo": "Se magullaron durante el transporte",
                 "comentarios": "Las papas llegaron golpeadas",
@@ -1897,6 +1898,7 @@ class Command(BaseCommand):
             {
                 "id_merma": 2,
                 "fk_producto_semanal_id": 6,
+                "fk_pedido_id": 3,
                 "cantidad": 3,
                 "motivo": "Se marchitaron",
                 "comentarios": "Las lechugas no se vendieron en 3 días",
@@ -1905,6 +1907,7 @@ class Command(BaseCommand):
             {
                 "id_merma": 3,
                 "fk_producto_semanal_id": 1,
+                "fk_pedido_id": 7,
                 "cantidad": 5,
                 "motivo": "Se echaron a perder",
                 "comentarios": "Los tomates maduraron muy rápido",
@@ -1913,6 +1916,7 @@ class Command(BaseCommand):
             {
                 "id_merma": 4,
                 "fk_producto_semanal_id": 5,
+                "fk_pedido_id": 2,
                 "cantidad": 4,
                 "motivo": "No se vendieron",
                 "comentarios": "Sobraron manojos del fin de semana",

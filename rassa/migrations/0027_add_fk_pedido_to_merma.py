@@ -14,6 +14,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='merma',
             name='fk_pedido',
-            field=models.ForeignKey(blank=True, db_column='fk_pedido', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='mermas', to='rassa.pedidocabecera'),
+            field=models.ForeignKey(db_column='fk_pedido', on_delete=django.db.models.deletion.PROTECT, related_name='mermas', to='rassa.pedidocabecera'),
         ),
     ]
