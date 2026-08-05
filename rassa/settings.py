@@ -121,6 +121,40 @@ REST_FRAMEWORK = {
 }
 
 # === LOGGING ===
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {asctime} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "level": "INFO",
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "rassa": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+
 EXCLUDED_PATHS = [
     "/admin/",
     "/api/token/",
@@ -160,6 +194,22 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_write": "30/minute",
     "admin_users": "30/minute",
     "publicaciones_current": "60/minute",
+    "pagos_read": "60/minute",
+    "pagos_write": "20/hour",
+    # Throttling diferenciado para Liquidaciones:
+    # `liquidaciones_calcular`: 30/hora (operación pesada de cálculo server-side).
+    # `liquidaciones_marcar_pagada`: 60/hora (registro operativo de pago).
+    "liquidaciones_read": "60/minute",
+    "liquidaciones_calcular": "30/hour",
+    "liquidaciones_marcar_pagada": "60/hour",
+    # Scopes separados: lectura del calendario del agricultor (frecuente) y
+    # escrituras del vendedor, para no compartir budget.
+    # recolecciones_write: ScopedRateThrottle cachea por IP (get_ident), no por
+    # usuario; un vendedor operando (crear + estado + cancelar + reprogramar,
+    # flujo B3) y varios vendedores tras NAT compartían 20/hora. 100/hora da
+    # holgura al flujo operativo; revisar con negocio si se necesita por-usuario.
+    "recolecciones_read": "60/minute",
+    "recolecciones_write": "100/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===
@@ -188,6 +238,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # === DEFAULT ===
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# === CHAT ===
+CHAT_EDIT_WINDOW_MINUTES = 15
 
 # === TAX ===
 IVA_RATE = Decimal("0.21")

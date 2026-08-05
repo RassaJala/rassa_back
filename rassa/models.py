@@ -12,7 +12,11 @@ Política de on_delete:
   registros dependientes (ej: TipoPago, EstadoPedido, Rol).
 """
 
-from django.db import models
+from django.db import connection, models
+from django.db.models import Q
+from django.utils import timezone
+
+from rassa.blueprints.liquidaciones.constants import COMISION_RASSA
 
 # ============================================================
 # 1. TABLAS BASE (sin dependencias)
@@ -209,8 +213,19 @@ class Usuario(models.Model):
         return f"{str(self.correo)} ({str(self.fk_rol)})"
 
     def tiene_rol(self, nombre_rol: str) -> bool:
-        """Verifica si el usuario tiene el rol indicado."""
-        return self.fk_rol.nombre_rol == nombre_rol
+        """Verifica si el usuario tiene el rol indicado.
+
+        Null-safe: un perfil sin rol (fk_rol=None, p.ej. legacy o mock) se
+        deniega con False en lugar de explotar (500) en los permisos que delegan
+        aquí (HasRole, get_queryset). fk_rol es NOT NULL en BD, así que un None
+        solo existe en instancias detachadas/mock: Django lanza
+        RelatedObjectDoesNotExist (subclase de AttributeError) al acceder en vez
+        de devolver None, por eso el guard no es solo `is not None`.
+        """
+        try:
+            return self.fk_rol is not None and self.fk_rol.nombre_rol == nombre_rol
+        except AttributeError:
+            return False
 
 
 # ============================================================
@@ -484,14 +499,35 @@ class Pago(models.Model):
     fk_tipo = models.ForeignKey(TipoPago, on_delete=models.PROTECT, db_column="fk_tipo")
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     referencia = models.CharField(max_length=100, blank=True, null=True)
+    folio = models.CharField(max_length=50, unique=True, blank=True, default="")
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pago"
         ordering = ["id_pago"]
+        constraints = [
+            models.UniqueConstraint(fields=["fk_pedido"], name="unique_pago_per_pedido", nulls_distinct=True),
+        ]
 
     def __str__(self):
         return f"Pago #{self.id_pago} — ${self.monto}"
+
+    def save(self, *args, **kwargs):
+        if not self.folio:
+            today_str = timezone.localdate().strftime("%Y%m%d")
+            lock_id = int(today_str)
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
+            prefix = f"REC-{today_str}-"
+            last = Pago.objects.filter(folio__startswith=prefix).order_by("id_pago").last()
+            try:
+                last_num = int(last.folio.rsplit("-", 1)[-1]) if last else 0
+            except (ValueError, IndexError):
+                last_num = 0
+            next_num = last_num + 1
+            self.folio = f"{prefix}{next_num:03d}"
+        super().save(*args, **kwargs)
 
 
 # ============================================================
@@ -544,21 +580,44 @@ class Corte(models.Model):
     ]
 
     id_corte = models.AutoField(primary_key=True)
+    fk_vendedor = models.ForeignKey("Usuario", on_delete=models.SET_NULL, null=True, blank=True, related_name="cortes")
+    fecha = models.DateField(default=timezone.localdate, db_index=True)
     monto_real = models.DecimalField(max_digits=10, decimal_places=2)
-    monto_teorico = models.DecimalField(max_digits=10, decimal_places=2)
-    diferencia = models.DecimalField(max_digits=10, decimal_places=2)
+    monto_teorico = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Snapshot calculado al crear el corte; no se actualiza con pagos posteriores.",
+    )
+    diferencia = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Snapshot de monto_real - monto_teorico al crear; no se actualiza con pagos posteriores.",
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="abierto")
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "corte"
-        ordering = ["id_corte"]
+        ordering = ["-fecha"]
+        constraints = [
+            # PostgreSQL trata NULL != NULL: el constraint excluye filas con
+            # fk_vendedor NULL (cortes huérfanos por vendedor eliminado) para
+            # permitir varios cortes huérfanos en la misma fecha, mientras dos
+            # vendedores no-null siguen siendo únicos por fecha.
+            models.UniqueConstraint(
+                fields=["fk_vendedor", "fecha"],
+                name="unique_corte_vendedor_fecha",
+                condition=Q(fk_vendedor__isnull=False),
+            ),
+        ]
 
     def __str__(self):
         return f"Corte #{self.id_corte} — {str(self.estado)}"
 
     def save(self, *args, **kwargs):
         if self.diferencia is None:
+            # Intentional snapshot: diferencia is frozen at creation time; payments
+            # added after the corte do not retroactively update monto_teorico/diferencia.
             self.diferencia = self.monto_real - self.monto_teorico
         super().save(*args, **kwargs)
 
@@ -598,12 +657,21 @@ class Conversacion(models.Model):
     id_conversacion = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100, blank=True, null=True)
     tipo = models.BooleanField(default=False)  # FALSE = privada, TRUE = grupal
+    fk_familia = models.ForeignKey(Familia, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_familia")
+    nombre_override = models.BooleanField(default=False)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
     class Meta:
         db_table = "conversacion"
         ordering = ["id_conversacion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_familia"],
+                condition=Q(estado=True, fk_familia__isnull=False),
+                name="unique_active_family_conversation",
+            ),
+        ]
 
     def __str__(self):
         tipo_str = "Grupal" if self.tipo else "Privada"
@@ -613,11 +681,14 @@ class Conversacion(models.Model):
 class Integrante(models.Model):
     """Miembro participante en una conversación."""
 
+    ROL_CHOICES = [("miembro", "Miembro"), ("admin", "Admin")]
+
     id_miembro = models.AutoField(primary_key=True)
     fk_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, db_column="fk_usuario")
     fk_conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, db_column="fk_conversacion")
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
+    rol = models.CharField(max_length=10, choices=ROL_CHOICES, default="miembro")
 
     class Meta:
         db_table = "integrantes"
@@ -745,9 +816,7 @@ class Recoleccion(models.Model):
     ]
 
     id_recoleccion = models.AutoField(primary_key=True)
-    fk_agricultor = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_agricultor"
-    )
+    fk_agricultor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=False, db_column="fk_agricultor")
     fecha_recoleccion = models.DateField()
     hora_inicio = models.TimeField(blank=True, null=True)
     hora_fin = models.TimeField(blank=True, null=True)
@@ -758,9 +827,44 @@ class Recoleccion(models.Model):
     class Meta:
         db_table = "recoleccion"
         ordering = ["id_recoleccion"]
+        # Regla de negocio elegida: el slot agricultor+fecha queda ocupado mientras
+        # exista una fila NO cancelada (pendiente/en_ruta/recolectado), por eso el
+        # UniqueConstraint parcial excluye únicamente "cancelado". Esto impide dos
+        # recolecciones activas el mismo día y también reprogramar tras completar.
+        # Cambiar esta regla (ej. liberar el slot al recolectar) requiere decisión
+        # de negocio. Fijada por test: test_recolecciones.test_slot_ocupado_tras_recolectar.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "fecha_recoleccion"],
+                condition=~models.Q(estado="cancelado"),
+                name="uniq_recoleccion_activa_agricultor_fecha",
+            ),
+        ]
 
     def __str__(self):
         return f"Recolección #{self.id_recoleccion} — {self.fecha_recoleccion}"
+
+
+class HistorialEstadoRecoleccion(models.Model):
+    """Historial de cambios de estado de una recolección."""
+
+    id_historial = models.AutoField(primary_key=True)
+    fk_recoleccion = models.ForeignKey(
+        Recoleccion, on_delete=models.CASCADE, db_column="fk_recoleccion", related_name="historial_estados"
+    )
+    estado_anterior = models.CharField(max_length=20, blank=True, null=True)
+    estado_nuevo = models.CharField(max_length=20)
+    fk_cambiado_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, db_column="fk_cambiado_por"
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "historial_estado_recoleccion"
+        ordering = ["id_historial"]
+
+    def __str__(self):
+        return f"Historial #{self.id_historial} — Recolección #{self.fk_recoleccion_id}"
 
 
 class HistorialEstadoPedido(models.Model):
@@ -818,7 +922,14 @@ class Recibo(models.Model):
 
 
 class Liquidacion(models.Model):
-    """Liquidación de ventas de un agricultor en un periodo."""
+    """Liquidación de ventas de un agricultor en un periodo.
+
+    Estados:
+        - pendiente: recién calculada, pendiente de pago.
+        - pagada: pago registrado vía fk_pago_liquidacion.
+        - parcial: reservado para pagos parciales futuros (ninguna ruta
+          del backend lo produce actualmente).
+    """
 
     ESTADO_CHOICES = [
         ("pendiente", "Pendiente"),
@@ -834,6 +945,7 @@ class Liquidacion(models.Model):
     periodo_fin = models.DateField()
     monto_ventas = models.DecimalField(max_digits=10, decimal_places=2)
     comision = models.DecimalField(max_digits=10, decimal_places=2)
+    tasa_comision = models.DecimalField(max_digits=5, decimal_places=4, default=COMISION_RASSA)
     monto_liquidar = models.DecimalField(max_digits=10, decimal_places=2)
     fk_pago_liquidacion = models.ForeignKey(
         Pago,
@@ -848,11 +960,56 @@ class Liquidacion(models.Model):
     class Meta:
         db_table = "liquidacion"
         ordering = ["id_liquidacion"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_agricultor", "periodo_inicio", "periodo_fin"],
+                name="unique_liquidacion_agricultor_periodo",
+            ),
+        ]
 
     def __str__(self):
         return f"Liquidación #{self.id_liquidacion} — {str(self.fk_agricultor)}"
 
-    def save(self, *args, **kwargs):
-        if self.monto_liquidar is None:
-            self.monto_liquidar = self.monto_ventas - self.comision
-        super().save(*args, **kwargs)
+
+class LiquidacionVenta(models.Model):
+    """Snapshot de los pedidos que aportaron al cálculo de una liquidación.
+
+    Permite que el detalle de la liquidación (ventas incluidas) sea estable
+    frente a cambios futuros en el estado de los pedidos: aunque un pedido
+    deje de estar `entregado` después de liquidarse, sigue contando para
+    la liquidación original. Cierra el riesgo de "doble pago" si se
+    re-calcula un periodo con ventas distintas en el snapshot.
+    """
+
+    id_liquidacion_venta = models.AutoField(primary_key=True)
+    fk_liquidacion = models.ForeignKey(
+        Liquidacion,
+        on_delete=models.CASCADE,
+        db_column="fk_liquidacion",
+        related_name="ventas",
+    )
+    fk_pedido = models.ForeignKey(
+        "PedidoCabecera",
+        on_delete=models.PROTECT,
+        db_column="fk_pedido",
+        related_name="liquidaciones",
+    )
+    monto_aportado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Total del pedido al momento de la liquidación (snapshot).",
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "liquidacion_venta"
+        ordering = ["id_liquidacion_venta"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fk_liquidacion", "fk_pedido"],
+                name="unique_liquidacion_venta_pedido",
+            ),
+        ]
+
+    def __str__(self):
+        return f"LV #{self.id_liquidacion_venta} — liq={self.fk_liquidacion_id} pedido={self.fk_pedido_id}"

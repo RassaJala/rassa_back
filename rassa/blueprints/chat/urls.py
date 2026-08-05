@@ -2,17 +2,22 @@ from django.urls import path
 
 from .views import (
     ConversacionAgregarIntegranteView,
+    ConversacionDetalleView,
+    ConversacionFamiliaSyncView,
     ConversacionGrupalCreateView,
+    ConversacionIntegranteRemoveView,
     ConversacionIntegrantesListView,
+    ConversacionLeerView,
     ConversacionListView,
+    ConversacionOverrideNombreView,
     ConversacionPrivadaCreateView,
     ConversacionRenombrarView,
     MensajeCreateView,
     MensajeDocumentoCreateView,
     MensajeInactivarView,
-    MensajeLeerView,
     MensajeListView,
     MensajeUpdateView,
+    UsuarioBuscarView,
 )
 
 urlpatterns = [
@@ -35,6 +40,11 @@ urlpatterns = [
         "api/chat/conversaciones/<int:conversacion_id>/agregar-integrante/",
         ConversacionAgregarIntegranteView.as_view(),
         name="chat-conversaciones-agregar-integrante",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/integrantes/<int:usuario_id>/",
+        ConversacionIntegranteRemoveView.as_view(),
+        name="chat-conversaciones-remover-integrante",
     ),
     path(
         "api/chat/conversaciones/<int:conversacion_id>/integrantes/",
@@ -62,9 +72,9 @@ urlpatterns = [
         name="chat-mensajes-editar",
     ),
     path(
-        "api/chat/mensajes/<int:mensaje_id>/leer/",
-        MensajeLeerView.as_view(),
-        name="chat-mensajes-leer",
+        "api/chat/conversaciones/<int:conversacion_id>/leer/",
+        ConversacionLeerView.as_view(),
+        name="chat-conversaciones-leer",
     ),
     path(
         "api/chat/mensajes/<int:mensaje_id>/inactivar/",
@@ -75,5 +85,25 @@ urlpatterns = [
         "api/chat/mensajes/enviar-con-documento/",
         MensajeDocumentoCreateView.as_view(),
         name="chat-mensajes-enviar-con-documento",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/",
+        ConversacionDetalleView.as_view(),
+        name="chat-conversaciones-detalle",
+    ),
+    path(
+        "api/chat/usuarios/buscar/",
+        UsuarioBuscarView.as_view(),
+        name="chat-usuarios-buscar",
+    ),
+    path(
+        "api/chat/conversaciones/familia/<int:familia_id>/sincronizar/",
+        ConversacionFamiliaSyncView.as_view(),
+        name="chat-conversaciones-familia-sincronizar",
+    ),
+    path(
+        "api/chat/conversaciones/<int:conversacion_id>/override-nombre/",
+        ConversacionOverrideNombreView.as_view(),
+        name="chat-conversaciones-override-nombre",
     ),
 ]

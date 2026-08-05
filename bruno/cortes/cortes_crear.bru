@@ -1,0 +1,23 @@
+meta {
+  name: Crear corte de caja
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/cortes/
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{accessToken}}
+}
+
+body:json {
+  {
+    "monto_real": 3560.00,
+    "fecha": "2026-08-03"
+  }
+}

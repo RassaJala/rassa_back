@@ -1,0 +1,15 @@
+meta {
+  name: Listar recolecciones
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/recolecciones/?estado=pendiente
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

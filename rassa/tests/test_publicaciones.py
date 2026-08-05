@@ -627,6 +627,94 @@ class ProductoSemanalRestoreTests(PublicacionBaseTestCase):
 
 
 # ======================================================================
+# REGLA DE NEGOCIO — Editar/eliminar solo lunes y solo en borrador
+# ======================================================================
+
+
+class PublicacionMondayEditRuleTests(PublicacionBaseTestCase):
+    """Productos y publicaciones solo se pueden editar/eliminar los lunes."""
+
+    def setUp(self):
+        super().setUp()
+        self.pub_data = self._create_publicacion()
+        self.pub_id = self.pub_data["id_publicacion"]
+        data = self._assert_success_envelope(
+            self._create_producto_semanal(self.pub_id),
+            status_code=status.HTTP_201_CREATED,
+        )
+        self.item_id = data["id_producto_semanal"]
+
+    @patch("django.utils.timezone.localdate")
+    def test_create_producto_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        response = self._create_producto_semanal(self.pub_id)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    @patch("django.utils.timezone.localdate")
+    def test_partial_update_producto_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        response = self.client.patch(
+            reverse("producto-semanal-detail", args=[self.pub_id, self.item_id]),
+            {"stock": 20},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    @patch("django.utils.timezone.localdate")
+    def test_delete_producto_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        response = self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, self.item_id]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    def test_delete_producto_on_monday_soft_deletes(self):
+        self._assert_message_envelope(
+            self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, self.item_id])),
+            message="Producto eliminado correctamente.",
+        )
+        item = ProductoSemanal.objects.get(pk=self.item_id)
+        self.assertEqual(item.estado, "inactivo")
+
+    def test_restore_producto_in_published_returns_400(self):
+        self.client.delete(reverse("producto-semanal-detail", args=[self.pub_id, self.item_id]))
+        PublicacionSemanal.objects.filter(pk=self.pub_id).update(estado=PublicacionSemanal.ESTADO_PUBLICADO)
+        response = self.client.post(reverse("producto-semanal-restore", args=[self.pub_id, self.item_id]))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("borrador", response.json()["error"].lower())
+
+    @patch("django.utils.timezone.localdate")
+    def test_restore_producto_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        ProductoSemanal.objects.filter(pk=self.item_id).update(estado=ProductoSemanal.ESTADO_INACTIVO)
+        response = self.client.post(reverse("producto-semanal-restore", args=[self.pub_id, self.item_id]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    @patch("django.utils.timezone.localdate")
+    def test_delete_publicacion_on_tuesday_returns_403(self, mock_date):
+        mock_date.return_value = date(2026, 7, 21)  # Tuesday
+        response = self.client.delete(reverse("publicacion-detail", args=[self.pub_id]))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("lunes", response.json()["error"].lower())
+
+    def test_delete_publicacion_in_published_returns_400(self):
+        PublicacionSemanal.objects.filter(pk=self.pub_id).update(estado=PublicacionSemanal.ESTADO_PUBLICADO)
+        response = self.client.delete(reverse("publicacion-detail", args=[self.pub_id]))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("borrador", response.json()["error"].lower())
+
+    def test_delete_publicacion_on_monday_returns_200(self):
+        self._assert_message_envelope(
+            self.client.delete(reverse("publicacion-detail", args=[self.pub_id])),
+            message="Publicación eliminada correctamente.",
+        )
+        pub = PublicacionSemanal.objects.get(pk=self.pub_id)
+        self.assertEqual(pub.estado, PublicacionSemanal.ESTADO_CANCELADO)
+
+
+# ======================================================================
 # SEGURIDAD — Mass assignment & constraints
 # ======================================================================
 

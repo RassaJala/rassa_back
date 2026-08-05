@@ -1,0 +1,15 @@
+meta {
+  name: Resumen de mermas
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/mermas/resumen/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

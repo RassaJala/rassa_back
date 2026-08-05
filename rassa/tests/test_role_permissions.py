@@ -102,6 +102,28 @@ class HasRoleTest(TestCase):
         request = _make_request(None)
         self.assertFalse(perm.has_permission(request, None))
 
+    def test_tiene_rol_null_fk_rol_devuelve_false(self):
+        """tiene_rol con fk_rol=None devuelve False (denegado), no AttributeError/500."""
+        _, usuario = _make_user_with_rol(ADMIN)
+        usuario.fk_rol = None
+        self.assertFalse(usuario.tiene_rol(ADMIN))
+
+    def test_has_role_null_fk_rol_deniega(self):
+        """HasRole deniega a un usuario cuyo perfil tiene fk_rol=None (403 limpio, no 500)."""
+        from unittest.mock import MagicMock
+
+        _, usuario = _make_user_with_rol(ADMIN)
+        usuario.fk_rol = None
+
+        user = MagicMock()
+        user.is_authenticated = True
+        user.usuario = usuario
+
+        perm = HasRole(ADMIN)
+        request = _make_request(None)
+        request.user = user
+        self.assertFalse(perm.has_permission(request, None))
+
 
 class IsAdminOrReadOnlyTest(TestCase):
     """Tests para el permiso IsAdminOrReadOnly."""

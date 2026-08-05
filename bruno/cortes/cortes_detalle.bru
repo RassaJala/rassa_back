@@ -1,0 +1,16 @@
+meta {
+  name: Detalle de corte de caja
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/cortes/1/
+  body: none
+  auth: inherit
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}

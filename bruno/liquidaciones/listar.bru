@@ -1,0 +1,23 @@
+meta {
+  name: Listar Liquidaciones
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/liquidaciones/
+  body: none
+  auth: none
+}
+
+params:query {
+  agricultor: 
+  estado: 
+  periodo_inicio: 
+  periodo_fin: 
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{accessToken}}
+}

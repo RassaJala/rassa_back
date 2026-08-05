@@ -41,8 +41,8 @@ def _log(user, descripcion, request):
 
 
 def _ok(data=None, message=None, status_code=status.HTTP_200_OK):
-    """Standardized success response body with {ok, data, message} envelope."""
-    body = {"ok": True}
+    """Standardized response body with {ok, data, message} envelope."""
+    body = {"ok": status_code < 400}
     if message:
         body["message"] = message
     if data is not None:

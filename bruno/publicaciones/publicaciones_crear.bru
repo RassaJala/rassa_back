@@ -13,3 +13,7 @@ post {
 headers {
   Authorization: Bearer {{accessToken}}
 }
+
+vars:pre-request {
+  baseUrl: http://localhost:8000
+}
