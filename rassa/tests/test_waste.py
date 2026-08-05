@@ -588,6 +588,11 @@ class MermaListTests(WasteBaseTestCase):
         self.assertEqual(ids, [self.merma.id_merma])
         self.assertNotIn(m2.id_merma, ids)
 
+    def test_merma_list_filter_fk_pedido_invalido(self):
+        """fk_pedido no numérico no debe provocar un 500 sino un 400."""
+        response = self.client.get(reverse("merma-list"), {"fk_pedido": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_merma_list_incluye_inactivos(self):
         """incluir_inactivos=true muestra mermas inactivas."""
         m = Merma.objects.create(

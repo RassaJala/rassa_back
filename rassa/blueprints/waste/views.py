@@ -73,6 +73,15 @@ class MermaViewSet(
             return MermaCreateSerializer
         return MermaListSerializer
 
+    def _parse_fk_pedido(self, raw) -> int | None:
+        """Validate and return an integer fk_pedido or raise ValidationError."""
+        if raw is None or raw == "":
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as err:
+            raise ValidationError({"fk_pedido": "fk_pedido debe ser un número entero válido."}) from err
+
     def get_queryset(self):
         qs = Merma.objects.select_related(
             "fk_producto_semanal__fk_producto",
@@ -85,8 +94,8 @@ class MermaViewSet(
         incluir_inactivos = self.request.query_params.get("incluir_inactivos", "").lower() in ("true", "1")
         if not incluir_inactivos:
             qs = qs.filter(estado=True)
-        fk_pedido = self.request.query_params.get("fk_pedido")
-        if fk_pedido:
+        fk_pedido = self._parse_fk_pedido(self.request.query_params.get("fk_pedido"))
+        if fk_pedido is not None:
             qs = qs.filter(fk_pedido_id=fk_pedido)
         return qs.order_by("-creado_en")
 
