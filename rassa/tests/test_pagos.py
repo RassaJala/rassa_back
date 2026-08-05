@@ -255,34 +255,25 @@ class PagoCreateTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_pago_monto_diferente_al_total_pedido_falla(self):
-        pedido = self._crear_pedido(self.estado_listo)
-        resp = self.client.post(
-            "/api/pagos/",
-            {
-                "pedido": pedido.id_pedido,
-                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
-                "monto": "1.00",
-            },
-        )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
-
-    def test_pago_monto_mayor_al_total_pedido_falla(self):
-        pedido = self._crear_pedido(self.estado_listo)
-        resp = self.client.post(
-            "/api/pagos/",
-            {
-                "pedido": pedido.id_pedido,
-                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
-                "monto": "117.00",
-            },
-        )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
-        # El pedido no debe avanzar de estado pese al intento de pago fallido
-        pedido.refresh_from_db()
-        self.assertEqual(pedido.fk_estado.tipo_estado, "listo_para_retirar")
+    def test_pago_monto_incoincidente_no_avanza_estado(self):
+        # La regla del serializer es de igualdad (abs(total-monto) > 0.001),
+        # por lo que un monto distinto (menor o mayor) recorre el mismo camino.
+        for monto in ("1.00", "117.00"):
+            with self.subTest(monto=monto):
+                pedido = self._crear_pedido(self.estado_listo)
+                resp = self.client.post(
+                    "/api/pagos/",
+                    {
+                        "pedido": pedido.id_pedido,
+                        "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                        "monto": monto,
+                    },
+                )
+                self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
+                # El pedido no debe avanzar de estado pese al intento de pago fallido
+                pedido.refresh_from_db()
+                self.assertEqual(pedido.fk_estado.tipo_estado, "listo_para_retirar")
 
     def test_pago_pedido_cancelado_falla(self):
         pedido = self._crear_pedido(self.estado_cancelado)

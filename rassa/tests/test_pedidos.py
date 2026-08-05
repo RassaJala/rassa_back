@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+import pytest
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import DatabaseError
 from django.utils import timezone
@@ -725,7 +727,6 @@ class PedidoCreateTestCase(APITestCase):
     """Tests para POST /api/pedidos/ — creación de pedidos."""
 
     PRECIO_PRODUCTO = Decimal("20.00")
-    IVA_RATE = Decimal("1.21")
     LIMITE_CREDITO = Decimal("1000.00")
     MONTO_PREVIO_FAMILIA = Decimal("900.00")
 
@@ -802,7 +803,7 @@ class PedidoCreateTestCase(APITestCase):
             correo="cliente_create@rassa.com",
             fk_rol=self.rol_cliente,
         )
-        self.limite = LimiteCliente.objects.create(fk_usuario=self.usuario_cliente, monto=Decimal("1000.00"))
+        self.limite = LimiteCliente.objects.create(fk_usuario=self.usuario_cliente, monto=self.LIMITE_CREDITO)
 
         # Vendedor (para referencia)
         self.user_vendedor = User.objects.create_user(
@@ -1057,7 +1058,7 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("límite de crédito", response.data[0].lower())
 
-    def test_credito_en_limite(self):
+    def test_credito_cerca_del_limite(self):
         # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
         # Con 41 unidades de 20 = 820 + 21% IVA = 992.20 → dentro del límite
         self.client.force_authenticate(user=self.user_cliente)
@@ -1068,6 +1069,49 @@ class PedidoCreateTestCase(APITestCase):
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_credito_exacto_al_limite_acepta(self):
+        """Total pedido == límite de crédito se acepta (regla: excede solo si > límite)."""
+        # Unidad: 20 * (1 + 0.21) = 24.20. Pedido previo = límite - 24.20 = 975.80
+        # + nuevo 24.20 = 1000.00 == límite → aceptado
+        unidad_total = (self.PRECIO_PRODUCTO * (Decimal("1") + settings.IVA_RATE)).quantize(Decimal("0.01"))
+        PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            subtotal=self.LIMITE_CREDITO - unidad_total,
+            iva=Decimal("0.00"),
+            total=self.LIMITE_CREDITO - unidad_total,
+        )
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_credito_un_centavo_sobre_el_limite_rechaza(self):
+        # Unidad 24.20. Pedido previo = límite - 24.20 + 0.01 = 975.81
+        # + nuevo 24.20 = 1000.01 > 1000 → rechazado
+        unidad_total = (self.PRECIO_PRODUCTO * (Decimal("1") + settings.IVA_RATE)).quantize(Decimal("0.01"))
+        prioridad = (self.LIMITE_CREDITO - unidad_total) + Decimal("0.01")
+        PedidoCabecera.objects.create(
+            fk_cliente=self.usuario_cliente,
+            fk_estado=self.estado_pendiente,
+            subtotal=prioridad,
+            iva=Decimal("0.00"),
+            total=prioridad,
+        )
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [
+                {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1},
+            ]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("límite de crédito", response.data[0].lower())
 
     def test_sin_limite_asignado(self):
         """Usuario sin LimiteCliente asociado puede crear pedidos."""
@@ -1129,7 +1173,7 @@ class PedidoCreateTestCase(APITestCase):
             fk_estado=self.estado_pendiente,
             subtotal=Decimal("743.80"),
             iva=Decimal("156.20"),
-            total=Decimal("900.00"),
+            total=self.MONTO_PREVIO_FAMILIA,
         )
 
         self.client.force_authenticate(user=self.user_cliente)
@@ -1152,7 +1196,7 @@ class PedidoCreateTestCase(APITestCase):
             fk_estado=self.estado_pendiente,
             subtotal=Decimal("743.80"),
             iva=Decimal("156.20"),
-            total=Decimal("900.00"),
+            total=self.MONTO_PREVIO_FAMILIA,
         )
 
         self.client.force_authenticate(user=self.user_cliente)
@@ -1164,7 +1208,7 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         # Verificar que el pedido realmente se creó en BD con el total esperado
         pedido_nuevo = PedidoCabecera.objects.get(pk=response.data["data"]["id_pedido"])
-        total_esperado = (self.PRECIO_PRODUCTO * 1 * self.IVA_RATE).quantize(Decimal("0.01"))
+        total_esperado = (self.PRECIO_PRODUCTO * (Decimal("1") + settings.IVA_RATE)).quantize(Decimal("0.01"))
         self.assertEqual(pedido_nuevo.total, total_esperado)
 
     # ── Límite de crédito — cancelación y stock ─────────────────
@@ -1177,7 +1221,7 @@ class PedidoCreateTestCase(APITestCase):
             fk_vendedor=self.usuario_vendedor,
             subtotal=Decimal("743.80"),
             iva=Decimal("156.20"),
-            total=Decimal("900.00"),
+            total=self.MONTO_PREVIO_FAMILIA,
         )
 
         self.client.force_authenticate(user=self.user_cliente)
@@ -1238,12 +1282,19 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIsNone(historial[0]["estado_anterior"])
         self.assertEqual(historial[0]["estado_nuevo"], "pendiente")
 
-    def test_historial_cliente_accede_a_historial_de_cualquier_pedido(self):
-        """Estado actual documentado: un cliente autenticado puede leer el historial de otro pedido por id.
+    @pytest.mark.xfail(
+        strict=True,
+        reason="B2: /historial/ sin aislamiento para clientes (IDOR) — "
+        "pedido/views.py historial() solo filtra vendedores. "
+        "Cuando B2 se corrija este test pasa (XPASS) y hay que quitar el xfail.",
+    )
+    def test_historial_cliente_no_accede_a_historial_de_otro(self):
+        """Un cliente autenticado NO debe leer el historial de un pedido ajeno (404).
 
-        REGLA PENDIENTE (bug #4 QA): /historial/ no aísla clientes; solo filtra por fk_vendedor
-        a los vendedores. Este test fija el comportamiento actual como red de seguridad hasta
-        que se decida el aislamiento deseado (cliente → 404 o solo su propio historial).
+        REGLA PENDIENTE (bug #4 QA / B2): hoy /historial/ no aísla clientes; solo filtra por
+        fk_vendedor a los vendedores. Este test fija el comportamiento deseado como red de
+        seguridad: mientras B2 exista queda XFAIL (suite verde); el día que se aplique el fix
+        pasa y el xfail strict obliga a revisarlo.
         """
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload(
@@ -1253,12 +1304,11 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
 
-        # Otro cliente autenticado (no el dueño del pedido) aún puede leer el historial
+        # Otro cliente autenticado (no el dueño del pedido) debe recibir 404
         otro_cliente_user, _ = self._crear_otro_cliente("cliente_historial_ajeno")
         self.client.force_authenticate(user=otro_cliente_user)
         resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(resp.data["data"]), 1)
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     # ── Campos de salida del serializer ───────────────────────
 
