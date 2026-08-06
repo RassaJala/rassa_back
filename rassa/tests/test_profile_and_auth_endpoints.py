@@ -445,7 +445,9 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         data = self._register_data(email="no-es-un-email")
         response = self.client.post(reverse("register"), data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(list(response.data["email"]), ["Introduzca una dirección de correo electrónico válida."])
+        self.assertIn("email", response.data)
+        # C4: no acoplarse a la traducción exacta de Django/DRF; verificar que el mensaje habla de correo.
+        self.assertIn("correo", str(response.data["email"][0]).lower())
 
     # ==================================================================
     # GET /me/ — with REAL JWT

@@ -1,11 +1,13 @@
 """Vistas para el módulo de Pedidos."""
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import DatabaseError, models, transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -145,6 +147,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 pedido = PedidoCabecera.objects.create(
                     fk_cliente=usuario,
                     fk_estado_id=estado_pendiente_id,
+                    fk_vendedor=serializer.validated_data.get("fk_vendedor"),
                     subtotal=subtotal,
                     iva=iva,
                     total=total,
@@ -250,6 +253,11 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                         message=f"No se puede cancelar un pedido en estado '{estado_actual}'.",
                         status_code=status.HTTP_400_BAD_REQUEST,
                     )
+                # Restaurar inventario de cada línea dentro del bloque atómico
+                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
+                    ps = detalle.fk_producto_semanal
+                    if ps:
+                        ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
             else:
                 esperado = SECUENCIA.get(estado_actual)
                 if nuevo_estado_str != esperado:
@@ -271,8 +279,10 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 )
 
             estado_anterior = pedido.fk_estado
+            if nuevo_estado_str == "confirmado":
+                pedido.fecha_expiracion = timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS)
             pedido.fk_estado = nuevo_estado
-            pedido.save(update_fields=["fk_estado"])
+            pedido.save(update_fields=["fk_estado", "fecha_expiracion"])
 
             HistorialEstadoPedido.objects.create(
                 fk_pedido=pedido,
@@ -312,12 +322,10 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
         GET /api/pedidos/{id}/historial/
         """
-        qs = PedidoCabecera.objects.all()
-        usuario = getattr(request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=usuario)
-
+        # ponytail: el aislamiento por rol ahora viene de get_queryset()/ROLE_FILTER_MAP
+        # (Cliente→fk_cliente, Vendedor→fk_vendedor, admin todo). Un cliente sin pedido
+        # con fk_cliente propio recibe 404 (B2/#80).
+        qs = self.get_queryset()
         if not qs.filter(pk=pk).exists():
             return ok_response(
                 message="Pedido no encontrado.",

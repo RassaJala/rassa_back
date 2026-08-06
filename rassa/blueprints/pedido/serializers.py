@@ -3,7 +3,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal
+from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal, Usuario
 
 ESTADOS_TERMINALES = {"entregado", "cancelado"}
 ESTADOS_CANCELABLES = {"pendiente", "confirmado", "en_preparacion", "listo_para_retirar"}
@@ -203,6 +203,12 @@ class PedidoCreateSerializer(serializers.Serializer):
     """Serializer de entrada para crear un pedido desde el carrito."""
 
     items = ItemPedidoSerializer(many=True, allow_empty=False)
+    id_vendedor = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.filter(fk_rol__nombre_rol="Vendedor"),
+        source="fk_vendedor",
+        required=False,
+        allow_null=True,
+    )
 
 
 class DetallePedidoOutputSerializer(serializers.ModelSerializer):

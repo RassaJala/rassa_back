@@ -20,6 +20,7 @@ from rassa.models import (
     Producto,
     ProductoSemanal,
     PublicacionSemanal,
+    Recibo,
     Rol,
     TipoPago,
     Unidad,
@@ -183,6 +184,23 @@ class PagoCreateTest(PagosTestBase):
         # Pedido debe pasar a entregado
         pedido.refresh_from_db()
         self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
+
+    def test_pago_crea_recibo(self):
+        """Un pago exitoso genera un Recibo (B5)."""
+        pedido = self._crear_pedido(self.estado_listo)
+        resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        recibo = Recibo.objects.get(fk_pedido=pedido)
+        self.assertEqual(recibo.monto, Decimal("116.00"))
+        self.assertTrue(recibo.folio.startswith("R-"))
+        self.assertEqual(recibo.fk_pago.fk_pedido, pedido)
 
     def test_folio_formato_correcto(self):
         pedido = self._crear_pedido(self.estado_listo)

@@ -4,7 +4,6 @@ from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
-import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import DatabaseError
@@ -871,9 +870,10 @@ class PedidoCreateTestCase(APITestCase):
         data = response.data["data"]
         self.assertEqual(data["cliente_nombre"], "Laura Create")
         self.assertEqual(data["estado"], "pendiente")
+        iva_esperado = (Decimal("40.00") * settings.IVA_RATE).quantize(Decimal("0.01"))
         self.assertEqual(Decimal(str(data["subtotal"])), Decimal("40.00"))
-        self.assertEqual(Decimal(str(data["iva"])), Decimal("8.40"))  # 21% de 40
-        self.assertEqual(Decimal(str(data["total"])), Decimal("48.40"))
+        self.assertEqual(Decimal(str(data["iva"])), iva_esperado)
+        self.assertEqual(Decimal(str(data["total"])), Decimal("40.00") + iva_esperado)
         self.assertIn("detalles", data)
         self.assertEqual(len(data["detalles"]), 1)
 
@@ -890,11 +890,10 @@ class PedidoCreateTestCase(APITestCase):
         data = response.data["data"]
         self.assertEqual(len(data["detalles"]), 2)
         # subtotal = 2*20 + 3*15 = 85
+        iva_esperado = (Decimal("85.00") * settings.IVA_RATE).quantize(Decimal("0.01"))
         self.assertEqual(Decimal(str(data["subtotal"])), Decimal("85.00"))
-        # iva = 85 * 0.21 = 17.85
-        self.assertEqual(Decimal(str(data["iva"])), Decimal("17.85"))
-        # total = 85 + 17.85 = 102.85
-        self.assertEqual(Decimal(str(data["total"])), Decimal("102.85"))
+        self.assertEqual(Decimal(str(data["iva"])), iva_esperado)
+        self.assertEqual(Decimal(str(data["total"])), Decimal("85.00") + iva_esperado)
 
     def test_crear_pedido_descuenta_stock(self):
         self.client.force_authenticate(user=self.user_cliente)
@@ -1148,8 +1147,8 @@ class PedidoCreateTestCase(APITestCase):
             iva=Decimal("86.78"),
             total=Decimal("500.00"),
         )
-        # Ahora intentar otro pedido de $600 → suma 1100 > 1000
-        # 30 unidades de 20 = 600 + IVA 126 = 726 pero el límite es 1000 y ya gastó 500
+        # Ahora intentar otro pedido: 30 unidades de 20 = 600 subtotal + IVA 21% 126 = 726 total.
+        # Sumado al pendiente previo de 500 → 500 + 726 = 1226 > 1000 → excede el límite.
         payload = self._crear_payload(
             [
                 {"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 30},
@@ -1215,6 +1214,7 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_cancelar_pendiente_libera_saldo_credito(self):
         """Cancelar un pedido pendiente libera el saldo y permite uno nuevo antes bloqueado."""
+        # ponytail: workaround B1 (#79) — la creación real aún no asigna fk_vendedor
         pedido_previo = PedidoCabecera.objects.create(
             fk_cliente=self.usuario_cliente,
             fk_estado=self.estado_pendiente,
@@ -1248,8 +1248,9 @@ class PedidoCreateTestCase(APITestCase):
         response2 = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
 
-    def test_credito_excede_limite_no_descuenta_stock(self):
-        """Si la validación de crédito falla, el stock del ProductoSemanal no se descuenta."""
+    def test_credito_excede_no_deja_stock_descontado(self):
+        """El stock no queda descontado al fallar la validación de crédito
+        (invariante de la transacción atómica; el guard real es el atomic, no el orden)."""
         self.client.force_authenticate(user=self.user_cliente)
         # 50 unidades de 20 = 1000 + IVA 21% = 1210 > 1000 límite
         payload = self._crear_payload(
@@ -1259,6 +1260,35 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.producto_semanal.refresh_from_db()
         self.assertEqual(self.producto_semanal.stock, 50)
+
+    def test_cancelar_pedido_restaura_stock(self):
+        """Cancelar un pedido restaura el stock del ProductoSemanal descontado en la creación."""
+        stock_inicial = self.producto_semanal.stock
+
+        # Crear pedido como cliente (descuenta 1 unidad)
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, stock_inicial - 1)
+
+        # Asignar vendedor (B1/#79: la creación real aún no lo asigna) y cancelar
+        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=self.usuario_vendedor)
+        EstadoPedido.objects.get_or_create(tipo_estado="cancelado", defaults={"descripcion": "Cancelado"})
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp_cancel = self.client.patch(
+            f"/api/pedidos/{pedido_id}/status/",
+            {"nuevo_estado": "cancelado"},
+            format="json",
+        )
+        self.assertEqual(resp_cancel.status_code, status.HTTP_200_OK)
+
+        self.producto_semanal.refresh_from_db()
+        self.assertEqual(self.producto_semanal.stock, stock_inicial)
 
     # ── Historial — endpoint dedicado ───────────────────────────
 
@@ -1282,20 +1312,8 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIsNone(historial[0]["estado_anterior"])
         self.assertEqual(historial[0]["estado_nuevo"], "pendiente")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="B2: /historial/ sin aislamiento para clientes (IDOR) — "
-        "pedido/views.py historial() solo filtra vendedores. "
-        "Cuando B2 se corrija este test pasa (XPASS) y hay que quitar el xfail.",
-    )
     def test_historial_cliente_no_accede_a_historial_de_otro(self):
-        """Un cliente autenticado NO debe leer el historial de un pedido ajeno (404).
-
-        REGLA PENDIENTE (bug #4 QA / B2): hoy /historial/ no aísla clientes; solo filtra por
-        fk_vendedor a los vendedores. Este test fija el comportamiento deseado como red de
-        seguridad: mientras B2 exista queda XFAIL (suite verde); el día que se aplique el fix
-        pasa y el xfail strict obliga a revisarlo.
-        """
+        """Un cliente autenticado NO debe leer el historial de un pedido ajeno (404)."""
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload(
             [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
@@ -1307,6 +1325,42 @@ class PedidoCreateTestCase(APITestCase):
         # Otro cliente autenticado (no el dueño del pedido) debe recibir 404
         otro_cliente_user, _ = self._crear_otro_cliente("cliente_historial_ajeno")
         self.client.force_authenticate(user=otro_cliente_user)
+        resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_historial_vendedor_no_accede_a_historial_de_otro_vendedor(self):
+        """Un vendedor NO debe leer el historial de un pedido asignado a otro vendedor (404)."""
+        # Segundo vendedor (patrón del setUp)
+        user_vendedor2 = User.objects.create_user(
+            username="vendedor_hist2", email="vendedor_hist2@rassa.com", password="password123"
+        )
+        persona_vendedor2 = Persona.objects.create(
+            nombre="Vera",
+            apellido_paterno="Hist",
+            fecha_nacimiento="1986-04-11",
+            sexo="F",
+            domicilio="Calle Historial",
+        )
+        usuario_vendedor2 = Usuario.objects.create(
+            fk_user=user_vendedor2,
+            fk_persona=persona_vendedor2,
+            telefono="5555555555",
+            correo="vendedor_hist2@rassa.com",
+            fk_rol=self.rol_vendedor,
+        )
+
+        # Crear pedido como cliente y asignarlo al vendedor2
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=usuario_vendedor2)
+
+        # El vendedor 1 (no asignado) debe recibir 404
+        self.client.force_authenticate(user=self.user_vendedor)
         resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
