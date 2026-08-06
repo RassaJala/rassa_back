@@ -35,6 +35,7 @@ Body:
 ```json
 {
   "fk_producto_semanal": 1,
+  "fk_pedido": 1,
   "cantidad": 5,
   "motivo": "Producto dañado durante transporte",
   "comentarios": "Se detectó al llegar al almacén",

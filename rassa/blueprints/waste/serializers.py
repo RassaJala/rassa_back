@@ -2,7 +2,7 @@ from django.core.validators import MinValueValidator
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
-from rassa.models import DecisionMerma, Merma
+from rassa.models import DecisionMerma, DetallePedido, Merma, PedidoCabecera, ProductoSemanal
 
 
 class DecisionMermaSerializer(serializers.ModelSerializer):
@@ -16,10 +16,25 @@ class DecisionMermaSerializer(serializers.ModelSerializer):
 
 class MermaCreateSerializer(serializers.ModelSerializer):
     fk_producto_semanal = serializers.IntegerField(validators=[MinValueValidator(1)])
+    fk_pedido = serializers.PrimaryKeyRelatedField(queryset=PedidoCabecera.objects.all())
 
     class Meta:
         model = Merma
-        fields = ["fk_producto_semanal", "cantidad", "motivo", "comentarios", "fk_decision"]
+        fields = ["fk_producto_semanal", "fk_pedido", "cantidad", "motivo", "comentarios", "fk_decision"]
+
+    def validate(self, attrs):
+        pedido = attrs.get("fk_pedido")
+        producto_semanal_id = attrs.get("fk_producto_semanal")
+        if pedido is not None and producto_semanal_id is not None:
+            existe_producto = ProductoSemanal.objects.filter(pk=producto_semanal_id).exists()
+            if (
+                existe_producto
+                and not DetallePedido.objects.filter(
+                    fk_pedido=pedido, fk_producto_semanal_id=producto_semanal_id
+                ).exists()
+            ):
+                raise serializers.ValidationError({"fk_pedido": "El producto semanal no pertenece a este pedido."})
+        return attrs
 
     def validate_fk_decision(self, value):
         if not value.estado:
@@ -35,12 +50,14 @@ class MermaCreateSerializer(serializers.ModelSerializer):
 class MermaListSerializer(serializers.ModelSerializer):
     producto_info = serializers.SerializerMethodField()
     decision_info = serializers.SerializerMethodField()
+    pedido_info = serializers.SerializerMethodField()
 
     class Meta:
         model = Merma
         fields = [
             "id_merma",
             "fk_producto_semanal",
+            "fk_pedido",
             "cantidad",
             "motivo",
             "comentarios",
@@ -49,6 +66,7 @@ class MermaListSerializer(serializers.ModelSerializer):
             "estado",
             "producto_info",
             "decision_info",
+            "pedido_info",
         ]
         read_only_fields = fields
 
@@ -71,4 +89,20 @@ class MermaListSerializer(serializers.ModelSerializer):
         return {
             "id": obj.fk_decision.id_decision,
             "nombre": obj.fk_decision.decision,
+        }
+
+    def get_pedido_info(self, obj):
+        pedido = obj.fk_pedido
+        if pedido is None:
+            return None
+        cliente = pedido.fk_cliente
+        cliente_nombre = None
+        if cliente is not None and cliente.fk_persona is not None:
+            persona = cliente.fk_persona
+            cliente_nombre = f"{persona.nombre} {persona.apellido_paterno}".strip()
+        return {
+            "id": pedido.id_pedido,
+            "cliente": cliente_nombre,
+            "estado": pedido.fk_estado.tipo_estado if pedido.fk_estado_id else None,
+            "total": str(pedido.total),
         }

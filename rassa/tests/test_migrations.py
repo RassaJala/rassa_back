@@ -155,7 +155,9 @@ class Migration0015Tests(TransactionTestCase):
         # addCleanup corre tras el test y reporta su propio fallo sin enmascarar el
         # error principal (un finally podría tapar el fallo real de la migración).
         def restaurar_esquema():
-            MigrationExecutor(connection).migrate([("rassa", "0016_historialestadorecoleccion")])
+            executor = MigrationExecutor(connection)
+            leaf = next(iter(executor.loader.graph.leaf_nodes("rassa")))
+            executor.migrate([leaf])
 
         self.addCleanup(restaurar_esquema)
 
@@ -183,7 +185,9 @@ class Migration0015Tests(TransactionTestCase):
         executor.migrate([("rassa", "0014_populate_conversacion_fk_familia")])
 
         def restaurar_esquema():
-            MigrationExecutor(connection).migrate([("rassa", "0016_historialestadorecoleccion")])
+            executor = MigrationExecutor(connection)
+            leaf = next(iter(executor.loader.graph.leaf_nodes("rassa")))
+            executor.migrate([leaf])
 
         self.addCleanup(restaurar_esquema)
 

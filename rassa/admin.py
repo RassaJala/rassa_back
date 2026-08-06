@@ -12,7 +12,7 @@ class DecisionMermaAdmin(admin.ModelAdmin):
 
 @admin.register(Merma)
 class MermaAdmin(admin.ModelAdmin):
-    list_display = ["id_merma", "fk_producto_semanal", "cantidad", "fk_decision", "creado_en", "estado"]
-    list_filter = ["fk_decision", "estado"]
+    list_display = ["id_merma", "fk_pedido", "fk_producto_semanal", "cantidad", "fk_decision", "creado_en", "estado"]
+    list_filter = ["fk_decision", "estado", "fk_pedido"]
     search_fields = ["motivo"]
     date_hierarchy = "creado_en"
