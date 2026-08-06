@@ -181,6 +181,10 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(data["monto"], "116.00")
         self.assertEqual(data["tipo_pago_nombre"], "Efectivo")
 
+        # C-M3: el Recibo se expone en la respuesta del pago
+        self.assertTrue(data["recibo_folio"].startswith("R-"))
+        self.assertEqual(data["recibo_monto"], "116.00")
+
         # Pedido debe pasar a entregado
         pedido.refresh_from_db()
         self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")

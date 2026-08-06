@@ -877,6 +877,45 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIn("detalles", data)
         self.assertEqual(len(data["detalles"]), 1)
 
+        # C-M2: la expiración nace en la creación (pendiente), ≈ now + PEDIDO_EXPIRACION_HORAS
+        pedido = PedidoCabecera.objects.get(pk=data["id_pedido"])
+        self.assertIsNotNone(pedido.fecha_expiracion)
+        esperado = timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS)
+        self.assertLess(abs((pedido.fecha_expiracion - esperado).total_seconds()), 5)
+
+    def test_crear_pedido_asigna_id_vendedor(self):
+        """B1: crear con id_vendedor válido deja el vendedor asignado al pedido."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = {
+            **self._crear_payload([{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]),
+            "id_vendedor": self.usuario_vendedor.id_usuario,
+        }
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido = PedidoCabecera.objects.get(pk=response.data["data"]["id_pedido"])
+        self.assertEqual(pedido.fk_vendedor, self.usuario_vendedor)
+
+    def test_crear_pedido_id_vendedor_no_vendedor_400(self):
+        """C-M1: un id de rol no-vendedor (cliente) se rechaza con 400."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = {
+            **self._crear_payload([{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]),
+            "id_vendedor": self.usuario_cliente.id_usuario,
+        }
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_crear_pedido_id_vendedor_omitido(self):
+        """C-M1: sin id_vendedor el pedido se crea con fk_vendedor nulo (caso omitido/null)."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido = PedidoCabecera.objects.get(pk=response.data["data"]["id_pedido"])
+        self.assertIsNone(pedido.fk_vendedor)
+
     def test_crear_pedido_multiples_items(self):
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload(
@@ -1058,7 +1097,6 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIn("límite de crédito", response.data[0].lower())
 
     def test_credito_cerca_del_limite(self):
-        # límite = 1000, con 47 unidades de 20 = 940 + 21% IVA = 1137.40 → excede
         # Con 41 unidades de 20 = 820 + 21% IVA = 992.20 → dentro del límite
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload(
@@ -1113,7 +1151,12 @@ class PedidoCreateTestCase(APITestCase):
         self.assertIn("límite de crédito", response.data[0].lower())
 
     def test_sin_limite_asignado(self):
-        """Usuario sin LimiteCliente asociado puede crear pedidos."""
+        """Un usuario sin LimiteCliente asociado puede crear pedidos.
+
+        # REGLA PENDIENTE: issue #84 — un cliente sin LimiteCliente tiene crédito
+        # ilimitado (así queda documentado el estado actual). Pendiente de decisión
+        # (a) límite por defecto, (b) rechazar sin límite, o (c) aceptarlo como regla.
+        """
         user_sin_limite = User.objects.create_user(
             username="sin_limite", email="sin_limite@rassa.com", password="password123"
         )
@@ -1265,19 +1308,18 @@ class PedidoCreateTestCase(APITestCase):
         """Cancelar un pedido restaura el stock del ProductoSemanal descontado en la creación."""
         stock_inicial = self.producto_semanal.stock
 
-        # Crear pedido como cliente (descuenta 1 unidad)
+        # Crear pedido como cliente (descuenta 1 unidad), asignando el vendedor en la creación (B1/#79)
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload(
-            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
-        )
+        payload = {
+            **self._crear_payload([{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]),
+            "id_vendedor": self.usuario_vendedor.id_usuario,
+        }
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
         self.producto_semanal.refresh_from_db()
         self.assertEqual(self.producto_semanal.stock, stock_inicial - 1)
 
-        # Asignar vendedor (B1/#79: la creación real aún no lo asigna) y cancelar
-        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=self.usuario_vendedor)
         EstadoPedido.objects.get_or_create(tipo_estado="cancelado", defaults={"descripcion": "Cancelado"})
         self.client.force_authenticate(user=self.user_vendedor)
         resp_cancel = self.client.patch(
@@ -1295,14 +1337,13 @@ class PedidoCreateTestCase(APITestCase):
     def test_historial_endpoint_vendedor(self):
         """GET /api/pedidos/{id}/historial/ como vendedor devuelve el historial del pedido."""
         self.client.force_authenticate(user=self.user_cliente)
-        payload = self._crear_payload(
-            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
-        )
+        payload = {
+            **self._crear_payload([{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]),
+            "id_vendedor": self.usuario_vendedor.id_usuario,
+        }
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
-        # workaround: el flujo real de creación aún no asigna fk_vendedor (pregunta de negocio abierta, bug #1 QA)
-        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=self.usuario_vendedor)
 
         self.client.force_authenticate(user=self.user_vendedor)
         resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
@@ -1349,7 +1390,23 @@ class PedidoCreateTestCase(APITestCase):
             fk_rol=self.rol_vendedor,
         )
 
-        # Crear pedido como cliente y asignarlo al vendedor2
+        # Crear pedido como cliente, asignando vendedor2 en la creación (B1/#79)
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = {
+            **self._crear_payload([{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]),
+            "id_vendedor": usuario_vendedor2.id_usuario,
+        }
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+
+        # El vendedor 1 (no asignado) debe recibir 404
+        self.client.force_authenticate(user=self.user_vendedor)
+        resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_historial_cliente_dueño_accede_a_su_historial(self):
+        """S-B2: el cliente dueño del pedido accede a su propio historial (200)."""
         self.client.force_authenticate(user=self.user_cliente)
         payload = self._crear_payload(
             [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
@@ -1357,12 +1414,25 @@ class PedidoCreateTestCase(APITestCase):
         response = self.client.post("/api/pedidos/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         pedido_id = response.data["data"]["id_pedido"]
-        PedidoCabecera.objects.filter(pk=pedido_id).update(fk_vendedor=usuario_vendedor2)
 
-        # El vendedor 1 (no asignado) debe recibir 404
-        self.client.force_authenticate(user=self.user_vendedor)
         resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(resp.data["data"]), 1)
+
+    def test_historial_admin_accede_a_pedido(self):
+        """S-B2: un admin accede al historial de cualquier pedido (200)."""
+        self.client.force_authenticate(user=self.user_cliente)
+        payload = self._crear_payload(
+            [{"id_producto_semanal": self.producto_semanal.id_producto_semanal, "cantidad": 1}]
+        )
+        response = self.client.post("/api/pedidos/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pedido_id = response.data["data"]["id_pedido"]
+
+        self.client.force_authenticate(user=self.user_admin)
+        resp = self.client.get(f"/api/pedidos/{pedido_id}/historial/", format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(resp.data["data"]), 1)
 
     # ── Campos de salida del serializer ───────────────────────
 

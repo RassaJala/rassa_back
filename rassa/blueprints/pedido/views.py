@@ -148,6 +148,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                     fk_cliente=usuario,
                     fk_estado_id=estado_pendiente_id,
                     fk_vendedor=serializer.validated_data.get("fk_vendedor"),
+                    fecha_expiracion=timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS),
                     subtotal=subtotal,
                     iva=iva,
                     total=total,
@@ -253,11 +254,6 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                         message=f"No se puede cancelar un pedido en estado '{estado_actual}'.",
                         status_code=status.HTTP_400_BAD_REQUEST,
                     )
-                # Restaurar inventario de cada línea dentro del bloque atómico
-                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
-                    ps = detalle.fk_producto_semanal
-                    if ps:
-                        ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
             else:
                 esperado = SECUENCIA.get(estado_actual)
                 if nuevo_estado_str != esperado:
@@ -278,11 +274,18 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # Efecto secundario: restaurar inventario SOLO tras validar la transición.
+            # Un return temprano dentro de atomic() haría commit del restore (rollback solo con excepción),
+            # así que el restore va después de todas las validaciones (C-A2).
+            if nuevo_estado_str == "cancelado":
+                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
+                    ps = detalle.fk_producto_semanal
+                    if ps:
+                        ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
+
             estado_anterior = pedido.fk_estado
-            if nuevo_estado_str == "confirmado":
-                pedido.fecha_expiracion = timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS)
             pedido.fk_estado = nuevo_estado
-            pedido.save(update_fields=["fk_estado", "fecha_expiracion"])
+            pedido.save(update_fields=["fk_estado"])
 
             HistorialEstadoPedido.objects.create(
                 fk_pedido=pedido,
@@ -322,11 +325,16 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
         GET /api/pedidos/{id}/historial/
         """
-        # ponytail: el aislamiento por rol ahora viene de get_queryset()/ROLE_FILTER_MAP
-        # (Cliente→fk_cliente, Vendedor→fk_vendedor, admin todo). Un cliente sin pedido
-        # con fk_cliente propio recibe 404 (B2/#80).
-        qs = self.get_queryset()
-        if not qs.filter(pk=pk).exists():
+        # ponytail: aislamiento por rol (ROLE_FILTER_MAP) sin prefetch/order_by ni el
+        # param ?estado= de get_queryset() — solo importa si el pedido pertenece al usuario.
+        usuario, nombre_rol = self._get_usuario_rol()
+        acceso = PedidoCabecera.objects
+        campo = ROLE_FILTER_MAP.get(nombre_rol)
+        if campo:
+            acceso = acceso.filter(**{campo: usuario})
+        elif nombre_rol != ADMIN:
+            acceso = acceso.none()
+        if not acceso.filter(pk=pk).exists():
             return ok_response(
                 message="Pedido no encontrado.",
                 status_code=status.HTTP_404_NOT_FOUND,
