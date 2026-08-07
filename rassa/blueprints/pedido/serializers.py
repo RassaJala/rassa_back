@@ -3,7 +3,9 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal
+from rassa.models import DetallePedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal, Usuario
+from rassa.permissions.role_permissions import VENDEDOR
+from rassa.utils import nombre_completo as _nombre_completo
 
 ESTADOS_TERMINALES = {"entregado", "cancelado"}
 ESTADOS_CANCELABLES = {"pendiente", "confirmado", "en_preparacion", "listo_para_retirar"}
@@ -30,13 +32,6 @@ def es_pedido_expirado(pedido) -> bool:
     if not pedido.fecha_expiracion:
         return False
     return pedido.fecha_expiracion < timezone.now()
-
-
-def _nombre_completo(usuario):
-    if usuario and usuario.fk_persona:
-        p = usuario.fk_persona
-        return f"{p.nombre} {p.apellido_paterno}"
-    return None
 
 
 class PedidoListSerializer(serializers.ModelSerializer):
@@ -203,6 +198,12 @@ class PedidoCreateSerializer(serializers.Serializer):
     """Serializer de entrada para crear un pedido desde el carrito."""
 
     items = ItemPedidoSerializer(many=True, allow_empty=False)
+    id_vendedor = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.filter(fk_rol__nombre_rol=VENDEDOR),
+        source="fk_vendedor",
+        required=False,
+        allow_null=True,
+    )
 
 
 class DetallePedidoOutputSerializer(serializers.ModelSerializer):
@@ -241,7 +242,4 @@ class PedidoOutputSerializer(serializers.ModelSerializer):
         ]
 
     def get_cliente_nombre(self, obj):
-        if obj.fk_cliente and obj.fk_cliente.fk_persona:
-            p = obj.fk_cliente.fk_persona
-            return f"{p.nombre} {p.apellido_paterno}"
-        return None
+        return _nombre_completo(obj.fk_cliente)

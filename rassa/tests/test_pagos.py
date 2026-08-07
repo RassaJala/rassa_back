@@ -20,6 +20,7 @@ from rassa.models import (
     Producto,
     ProductoSemanal,
     PublicacionSemanal,
+    Recibo,
     Rol,
     TipoPago,
     Unidad,
@@ -180,9 +181,30 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(data["monto"], "116.00")
         self.assertEqual(data["tipo_pago_nombre"], "Efectivo")
 
+        # C-M3: el Recibo se expone en la respuesta del pago
+        self.assertTrue(data["recibo_folio"].startswith("R-"))
+        self.assertEqual(data["recibo_monto"], "116.00")
+
         # Pedido debe pasar a entregado
         pedido.refresh_from_db()
         self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
+
+    def test_pago_crea_recibo(self):
+        """Un pago exitoso genera un Recibo (B5)."""
+        pedido = self._crear_pedido(self.estado_listo)
+        resp = self.client.post(
+            "/api/pagos/",
+            {
+                "pedido": pedido.id_pedido,
+                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                "monto": "116.00",
+            },
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        recibo = Recibo.objects.get(fk_pedido=pedido)
+        self.assertEqual(recibo.monto, Decimal("116.00"))
+        self.assertTrue(recibo.folio.startswith("R-"))
+        self.assertEqual(recibo.fk_pago.fk_pedido, pedido)
 
     def test_folio_formato_correcto(self):
         pedido = self._crear_pedido(self.estado_listo)
@@ -255,18 +277,25 @@ class PagoCreateTest(PagosTestBase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_pago_monto_diferente_al_total_pedido_falla(self):
-        pedido = self._crear_pedido(self.estado_listo)
-        resp = self.client.post(
-            "/api/pagos/",
-            {
-                "pedido": pedido.id_pedido,
-                "tipo_pago": self.tipo_efectivo.id_tipo_pago,
-                "monto": "1.00",
-            },
-        )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
+    def test_pago_monto_incoincidente_no_avanza_estado(self):
+        # La regla del serializer es de igualdad (abs(total-monto) > 0.001),
+        # por lo que un monto distinto (menor o mayor) recorre el mismo camino.
+        for monto in ("1.00", "117.00"):
+            with self.subTest(monto=monto):
+                pedido = self._crear_pedido(self.estado_listo)
+                resp = self.client.post(
+                    "/api/pagos/",
+                    {
+                        "pedido": pedido.id_pedido,
+                        "tipo_pago": self.tipo_efectivo.id_tipo_pago,
+                        "monto": monto,
+                    },
+                )
+                self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertFalse(Pago.objects.filter(fk_pedido=pedido).exists())
+                # El pedido no debe avanzar de estado pese al intento de pago fallido
+                pedido.refresh_from_db()
+                self.assertEqual(pedido.fk_estado.tipo_estado, "listo_para_retirar")
 
     def test_pago_pedido_cancelado_falla(self):
         pedido = self._crear_pedido(self.estado_cancelado)
@@ -426,6 +455,10 @@ class PagoPermisosTest(PagosTestBase):
                 "monto": "116.00",
             },
         )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_tipos_pago_sin_autenticacion_401(self):
+        resp = self.client.get("/api/tipos-pago/")
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_cliente_puede_ver_tipos_pago(self):
@@ -865,6 +898,47 @@ class PagoConcurrencyTest(TransactionTestCase):
         folios = list(Pago.objects.values_list("folio", flat=True))
         self.assertEqual(len(folios), NUM_THREADS)
         self.assertEqual(len(set(folios)), NUM_THREADS, "Folios duplicados bajo concurrencia")
+
+    def test_doble_pago_concurrente_mismo_pedido(self):
+        """Doble pago concurrente del MISMO pedido: solo 1 pago sobrevive.
+
+        La rama select_for_update + re-validación bajo lock (pagos/views.py) debe
+        garantizar: exactamente 1x201, N-1x400, 0x500, y la invariante
+        (1 Pago + 1 Recibo + pedido entregado).
+        """
+        NUM_THREADS = 4
+        pedido = self._crear_pedido()
+        results = []
+        barrier = threading.Barrier(NUM_THREADS)
+
+        def pay():
+            client = APIClient()
+            client.force_authenticate(user=self.usuario.fk_user)
+            barrier.wait()
+            resp = client.post(
+                "/api/pagos/",
+                {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+            )
+            results.append(resp.status_code)
+
+        threads = [threading.Thread(target=pay) for _ in range(NUM_THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        self.assertEqual(sum(1 for r in results if r == status.HTTP_201_CREATED), 1, "Solo un pago debe tener exito")
+        self.assertEqual(
+            sum(1 for r in results if r == status.HTTP_400_BAD_REQUEST), NUM_THREADS - 1, "El resto debe ser 400"
+        )
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, results)
+
+        # Invariante: 1 Pago + 1 Recibo + pedido entregado
+        self.assertEqual(Pago.objects.filter(fk_pedido=pedido).count(), 1)
+        self.assertEqual(Recibo.objects.filter(fk_pedido=pedido).count(), 1)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
 
 
 class PagoConstraintRegresionTest(TestCase):

@@ -13,6 +13,7 @@ from rassa.models import (
     HistorialEstadoPedido,
     Pago,
     PedidoCabecera,
+    Recibo,
     TipoPago,
 )
 from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
@@ -145,6 +146,13 @@ class PagoViewSet(
                     referencia=referencia,
                 )
                 pago.save()
+
+                Recibo.objects.create(
+                    fk_pago=pago,
+                    fk_pedido=pedido,
+                    folio=f"R-{pago.folio}",
+                    monto=monto,
+                )
 
                 # Advance pedido to entregado
                 estado_anterior = pedido.fk_estado

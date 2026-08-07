@@ -1,11 +1,13 @@
 """Vistas para el módulo de Pedidos."""
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import DatabaseError, models, transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -145,6 +147,8 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 pedido = PedidoCabecera.objects.create(
                     fk_cliente=usuario,
                     fk_estado_id=estado_pendiente_id,
+                    fk_vendedor=serializer.validated_data.get("fk_vendedor"),
+                    fecha_expiracion=timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS),
                     subtotal=subtotal,
                     iva=iva,
                     total=total,
@@ -270,6 +274,15 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # Efecto secundario: restaurar inventario SOLO tras validar la transición.
+            # Un return temprano dentro de atomic() haría commit del restore (rollback solo con excepción),
+            # así que el restore va después de todas las validaciones (C-A2).
+            if nuevo_estado_str == "cancelado":
+                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
+                    ps = detalle.fk_producto_semanal
+                    if ps:
+                        ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
+
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
             pedido.save(update_fields=["fk_estado"])
@@ -312,13 +325,16 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
         GET /api/pedidos/{id}/historial/
         """
-        qs = PedidoCabecera.objects.all()
-        usuario = getattr(request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=usuario)
-
-        if not qs.filter(pk=pk).exists():
+        # ponytail: aislamiento por rol (ROLE_FILTER_MAP) sin prefetch/order_by ni el
+        # param ?estado= de get_queryset() — solo importa si el pedido pertenece al usuario.
+        usuario, nombre_rol = self._get_usuario_rol()
+        acceso = PedidoCabecera.objects
+        campo = ROLE_FILTER_MAP.get(nombre_rol)
+        if campo:
+            acceso = acceso.filter(**{campo: usuario})
+        elif nombre_rol != ADMIN:
+            acceso = acceso.none()
+        if not acceso.filter(pk=pk).exists():
             return ok_response(
                 message="Pedido no encontrado.",
                 status_code=status.HTTP_404_NOT_FOUND,

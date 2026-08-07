@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from rassa.models import DetallePedido, Pago, PedidoCabecera, TipoPago
-from rassa.utils import nombre_completo as _nombre_completo
+from rassa.utils import nombre_completo
 
 ESTADO_REQUERIDO = "listo_para_retirar"
 
@@ -67,7 +67,7 @@ class ClienteNombreMixin:
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
         if pedido and pedido.fk_cliente:
-            return _nombre_completo(pedido.fk_cliente)
+            return nombre_completo(pedido.fk_cliente)
         return None
 
 
@@ -95,6 +95,9 @@ class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
     total_pedido = serializers.SerializerMethodField()
     fecha_pago = serializers.DateTimeField(source="creado_en", read_only=True)
     productos = serializers.SerializerMethodField()
+    recibo_folio = serializers.SerializerMethodField()
+    recibo_monto = serializers.SerializerMethodField()
+    recibo_creado_en = serializers.SerializerMethodField()
 
     class Meta:
         model = Pago
@@ -111,6 +114,9 @@ class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
             "total_pedido",
             "productos",
             "fecha_pago",
+            "recibo_folio",
+            "recibo_monto",
+            "recibo_creado_en",
         ]
 
     def get_pedido(self, obj):
@@ -127,6 +133,22 @@ class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
             return []
         detalles = obj.fk_pedido.detallepedido_set.all()
         return ProductoReciboSerializer(detalles, many=True).data
+
+    def _recibo(self, obj):
+        qs = getattr(obj, "recibo_set", None)
+        return qs.order_by("-id_recibo").first() if qs else None
+
+    def get_recibo_folio(self, obj):
+        recibo = self._recibo(obj)
+        return recibo.folio if recibo else None
+
+    def get_recibo_monto(self, obj):
+        recibo = self._recibo(obj)
+        return str(recibo.monto) if recibo else None
+
+    def get_recibo_creado_en(self, obj):
+        recibo = self._recibo(obj)
+        return recibo.creado_en if recibo else None
 
 
 class PagoListSerializer(ClienteNombreMixin, serializers.ModelSerializer):
