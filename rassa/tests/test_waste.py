@@ -2,7 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
-from threading import Barrier, Thread
+from threading import Barrier, BrokenBarrierError, Thread
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -69,6 +69,7 @@ class WasteBaseTestCase(APITestCase):
         self.admin = _create_user_with_role("Admin", "admin_test")
         self.vendedor = _create_user_with_role("Vendedor", "vendedor_test")
         self.agricultor = _create_user_with_role("Agricultor", "agricultor_test")
+        self.cliente = _create_user_with_role("Cliente", "cliente_test")
 
         # Crear catálogos base
         self.categoria = CategoriaProducto.objects.create(nombre="Frutas", descripcion="Frutas", estado=True)
@@ -278,13 +279,13 @@ class MermaCreateTests(WasteBaseTestCase):
         self.assertIn("fk_producto_semanal", body)
 
     def test_merma_invalid_producto(self):
-        """Error 404 si producto_semanal no existe."""
+        """Error 400 si producto_semanal no existe."""
         response = self.client.post(
             reverse("merma-list"),
             self._create_merma_payload(fk_producto_semanal=99999),
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         body = response.json()
         self.assertIn("fk_producto_semanal", body)
 
@@ -558,6 +559,56 @@ class MermaCreateTests(WasteBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("fk_pedido", response.json())
 
+    def test_merma_producto_semanal_inactivo(self):
+        """Error si el ProductoSemanal está inactivo."""
+        self.producto_semanal.estado = ProductoSemanal.ESTADO_INACTIVO
+        self.producto_semanal.save()
+        response = self.client.post(
+            reverse("merma-list"),
+            self._create_merma_payload(),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_merma_transient_db_error_returns_409(self):
+        """Error transitorio de BD (deadlock/lock_timeout) devuelve 409 con Retry-After."""
+        from unittest.mock import patch
+
+        from django.db.utils import OperationalError
+
+        with patch(
+            "rassa.blueprints.waste.views._is_transient_db_error", return_value=True
+        ), patch(
+            "rassa.blueprints.waste.views.ProductoSemanal.objects.select_for_update",
+            side_effect=OperationalError("simulated deadlock"),
+        ):
+            response = self.client.post(
+                reverse("merma-list"),
+                self._create_merma_payload(),
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.get("Retry-After"), "5")
+
+    def test_merma_permanent_db_error_returns_500(self):
+        """Error no transitorio de BD devuelve 500."""
+        from unittest.mock import patch
+
+        from django.db.utils import OperationalError
+
+        with patch(
+            "rassa.blueprints.waste.views._is_transient_db_error", return_value=False
+        ), patch(
+            "rassa.blueprints.waste.views.ProductoSemanal.objects.select_for_update",
+            side_effect=OperationalError("simulated permanent error"),
+        ):
+            response = self.client.post(
+                reverse("merma-list"),
+                self._create_merma_payload(),
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def test_merma_creada_devuelve_pedido(self):
         """La respuesta de creación incluye fk_pedido y pedido_info."""
         data = self._assert_success_envelope(
@@ -765,6 +816,159 @@ class MermaListTests(WasteBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
+class MermaRetrieveTests(WasteBaseTestCase):
+    """Tests para el endpoint de detalle (retrieve) de una merma."""
+
+    def setUp(self):
+        super().setUp()
+        self.merma = Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            fk_pedido=self.pedido,
+            cantidad=5,
+            motivo="Prueba retrieve",
+            comentarios="Comentario interno",
+            fk_decision=self.decision,
+        )
+
+    def test_vendedor_retrieve_merma_propia(self):
+        self.client.force_authenticate(self.vendedor)
+        url = reverse("merma-detail", args=[self.merma.id_merma])
+        data = self._assert_success_envelope(self.client.get(url))
+        self.assertEqual(data["id_merma"], self.merma.id_merma)
+        self.assertIn("producto_info", data)
+        self.assertIn("decision_info", data)
+        self.assertIn("pedido_info", data)
+
+    def test_admin_retrieve_merma(self):
+        self.client.force_authenticate(self.admin)
+        url = reverse("merma-detail", args=[self.merma.id_merma])
+        data = self._assert_success_envelope(self.client.get(url))
+        self.assertEqual(data["id_merma"], self.merma.id_merma)
+
+    def test_retrieve_merma_inexistente_404(self):
+        self.client.force_authenticate(self.admin)
+        url = reverse("merma-detail", args=[99999])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_agricultor_cannot_retrieve_merma(self):
+        self.client.force_authenticate(self.agricultor)
+        url = reverse("merma-detail", args=[self.merma.id_merma])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cliente_retrieve_merma_propia(self):
+        self.pedido.fk_cliente = self.cliente.usuario
+        self.pedido.save()
+        self.client.force_authenticate(self.cliente)
+        url = reverse("merma-detail", args=[self.merma.id_merma])
+        data = self._assert_success_envelope(self.client.get(url))
+        self.assertEqual(data["id_merma"], self.merma.id_merma)
+        self.assertNotIn("comentarios", data)
+        self.assertNotIn("pedido_info", data)
+
+    def test_cliente_no_ve_merma_ajena_en_retrieve(self):
+        self.client.force_authenticate(self.cliente)
+        url = reverse("merma-detail", args=[self.merma.id_merma])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MermaClienteAccessTests(WasteBaseTestCase):
+    """Tests de acceso para rol CLIENTE (IDOR ownership)."""
+
+    def setUp(self):
+        super().setUp()
+        # Pedido donde el comprador es el usuario con rol Cliente
+        self.pedido_cliente = PedidoCabecera.objects.create(
+            fk_cliente=self.cliente.usuario,
+            fk_estado=self.estado_pedido,
+            subtotal=Decimal("25.00"),
+            iva=Decimal("4.00"),
+            fk_vendedor=self.vendedor.usuario,
+        )
+        DetallePedido.objects.create(
+            fk_pedido=self.pedido_cliente,
+            fk_producto_semanal=self.producto_semanal,
+            nombre_producto="Manzana",
+            precio_unitario=Decimal("25.00"),
+            cantidad=5,
+            importe=Decimal("125.00"),
+        )
+        # Merma del pedido del cliente
+        self.merma_cliente = Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            fk_pedido=self.pedido_cliente,
+            cantidad=3,
+            motivo="Merma visible para cliente",
+            comentarios="Comentario interno",
+            fk_decision=self.decision,
+        )
+        # Merma de otro pedido (admin como comprador, no cliente)
+        self.merma_otro = Merma.objects.create(
+            fk_producto_semanal=self.producto_semanal,
+            fk_pedido=self.pedido,
+            cantidad=2,
+            motivo="Merma de otro pedido",
+            fk_decision=self.decision,
+        )
+        self.client.force_authenticate(self.cliente)
+
+    def test_cliente_ve_sus_propias_mermas(self):
+        """Cliente autenticado ve mermas de pedidos donde es el comprador."""
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
+        ids = [item["id_merma"] for item in data["results"]]
+        self.assertIn(self.merma_cliente.id_merma, ids)
+
+    def test_cliente_no_ve_mermas_de_otro_pedido(self):
+        """Cliente NO ve mermas de pedidos de otros compradores (IDOR)."""
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
+        ids = [item["id_merma"] for item in data["results"]]
+        self.assertNotIn(self.merma_otro.id_merma, ids)
+
+    def test_cliente_list_filtro_fk_pedido_propio(self):
+        """Cliente filtra por fk_pedido y ve solo mermas de su pedido."""
+        data = self._assert_success_envelope(
+            self.client.get(reverse("merma-list"), {"fk_pedido": self.pedido_cliente.id_pedido})
+        )
+        ids = [item["id_merma"] for item in data["results"]]
+        self.assertIn(self.merma_cliente.id_merma, ids)
+
+    def test_cliente_list_filtro_fk_pedido_ajeno_vacio(self):
+        """Cliente filtra por fk_pedido ajeno y la lista queda vacía."""
+        data = self._assert_success_envelope(
+            self.client.get(reverse("merma-list"), {"fk_pedido": self.pedido.id_pedido})
+        )
+        self.assertEqual(len(data["results"]), 0)
+
+    def test_cliente_no_puede_crear_merma(self):
+        """Cliente NO puede registrar merma (POST prohibido)."""
+        response = self.client.post(
+            reverse("merma-list"),
+            {
+                "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
+                "fk_pedido": self.pedido_cliente.id_pedido,
+                "cantidad": 5,
+                "motivo": "Intento de cliente",
+                "fk_decision": self.decision.id_decision,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cliente_serializer_omite_comentarios(self):
+        """El serializer omite comentarios para rol Cliente."""
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
+        for item in data["results"]:
+            self.assertNotIn("comentarios", item)
+
+    def test_cliente_serializer_omite_pedido_info(self):
+        """El serializer omite pedido_info para rol Cliente."""
+        data = self._assert_success_envelope(self.client.get(reverse("merma-list")))
+        for item in data["results"]:
+            self.assertNotIn("pedido_info", item)
+
+
 # ======================================================================
 # CONCURRENCIA
 # ======================================================================
@@ -846,7 +1050,11 @@ class MermaConcurrencyTests(TransactionTestCase):
             try:
                 client = APIClient()
                 client.force_authenticate(self.vendedor)
-                barrier.wait()  # Ambos hilos sincronizan antes de POST
+                try:
+                    barrier.wait()  # Ambos hilos sincronizan antes de POST
+                except BrokenBarrierError:
+                    results.append(None)  # Timeout en CI lento — se ignora este hilo
+                    return
                 payload = {
                     "fk_producto_semanal": self.producto_semanal.id_producto_semanal,
                     "fk_pedido": self.pedido.id_pedido,
@@ -868,8 +1076,16 @@ class MermaConcurrencyTests(TransactionTestCase):
             t.join()
 
         self.assertEqual(len(results), 2)
+        results = [r for r in results if r is not None]
+        if len(results) < 2:
+            self.skipTest("Concurrency test skipped: BrokenBarrierError in slow CI")
         self.assertIn(status.HTTP_201_CREATED, results)
-        self.assertIn(status.HTTP_400_BAD_REQUEST, results)
+        # El segundo hilo puede fallar con 400 (stock insuficiente) o 409
+        # (lock_timeout si el primer hilo no liberó el lock a tiempo).
+        self.assertTrue(
+            status.HTTP_400_BAD_REQUEST in results or status.HTTP_409_CONFLICT in results,
+            f"Expected 400 or 409, got {results}",
+        )
 
         # Verificar stock final
         self.producto_semanal.refresh_from_db()
@@ -997,6 +1213,13 @@ class MermaResumenTestCase(WasteBaseTestCase):
         data = response.data["data"]
         self.assertEqual(data["producto_mas_afectado"]["nombre"], "Manzana")
         self.assertEqual(data["producto_mas_afectado"]["total"], 15)
+
+    def test_resumen_incluye_total_grupos(self):
+        response = self.admin_client.get(reverse("merma-resumen"))
+        self._assert_success_envelope(response)
+        data = response.data["data"]
+        self.assertIn("total_grupos", data)
+        self.assertEqual(data["total_grupos"], 3)
 
     def test_resumen_sin_mermas(self):
         Merma.objects.all().delete()

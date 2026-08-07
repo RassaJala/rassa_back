@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
 from rassa.models import DecisionMerma, DetallePedido, Merma, PedidoCabecera, ProductoSemanal
+from rassa.permissions.role_permissions import CLIENTE
 
 
 class DecisionMermaSerializer(serializers.ModelSerializer):
@@ -26,13 +27,17 @@ class MermaCreateSerializer(serializers.ModelSerializer):
         pedido = attrs.get("fk_pedido")
         producto_semanal_id = attrs.get("fk_producto_semanal")
         if pedido is not None and producto_semanal_id is not None:
-            existe_producto = ProductoSemanal.objects.filter(pk=producto_semanal_id).exists()
-            if (
-                existe_producto
-                and not DetallePedido.objects.filter(
-                    fk_pedido=pedido, fk_producto_semanal_id=producto_semanal_id
-                ).exists()
-            ):
+            ps = ProductoSemanal.objects.filter(
+                pk=producto_semanal_id,
+                estado=ProductoSemanal.ESTADO_ACTIVO,
+            ).first()
+            if ps is None:
+                raise serializers.ValidationError(
+                    {"fk_producto_semanal": "El producto semanal no existe o no está activo."}
+                )
+            if not DetallePedido.objects.filter(
+                fk_pedido=pedido, fk_producto_semanal_id=producto_semanal_id
+            ).exists():
                 raise serializers.ValidationError({"fk_pedido": "El producto semanal no pertenece a este pedido."})
         return attrs
 
@@ -69,6 +74,24 @@ class MermaListSerializer(serializers.ModelSerializer):
             "pedido_info",
         ]
         read_only_fields = fields
+
+    @staticmethod
+    def _es_cliente(context) -> bool:
+        request = context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return False
+        usuario = getattr(request.user, "usuario", None)
+        if usuario is None:
+            return False
+        rol = getattr(usuario, "fk_rol", None)
+        return rol is not None and rol.nombre_rol == CLIENTE
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if self._es_cliente(self.context):
+            fields.pop("comentarios", None)
+            fields.pop("pedido_info", None)
+        return fields
 
     def get_producto_info(self, obj):
         if obj.fk_producto_semanal is None:

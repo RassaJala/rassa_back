@@ -6,6 +6,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
+        ('rassa', '0006_cascade_to_set_null_protect'),
         ('rassa', '0015_chat_familia_fields'),
         ('rassa', '0016_historialestadorecoleccion'),
     ]

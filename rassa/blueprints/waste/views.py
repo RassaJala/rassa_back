@@ -1,18 +1,20 @@
 """Vistas para el módulo de Mermas (Waste)."""
 
 import logging
+import re
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count, F, Sum
 from django.db.models.functions import TruncMonth, TruncWeek
+from django.db.utils import IntegrityError, OperationalError as DbOperationalError
 from rest_framework import mixins, permissions, status
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from rassa.models import DecisionMerma, Merma, ProductoSemanal
-from rassa.permissions.role_permissions import ADMIN, VENDEDOR, HasRole
+from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.utils import parse_date_param
 from rassa.views import CatalogPagination, OkResponseMixin, _log
 from rassa.views import _ok as ok_response
@@ -20,6 +22,32 @@ from rassa.views import _ok as ok_response
 from .serializers import DecisionMermaSerializer, MermaCreateSerializer, MermaListSerializer
 
 logger = logging.getLogger(__name__)
+
+LOCK_TIMEOUT_SECONDS = "5s"
+
+
+def _set_lock_timeout(timeout_str: str = LOCK_TIMEOUT_SECONDS):
+    if connection.vendor == "postgresql":
+        if not re.match(r"^\d+s$", timeout_str):
+            raise ValueError(f"Formato de timeout inválido: {timeout_str}")
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET LOCAL lock_timeout = '{timeout_str}'")
+
+
+def _is_transient_db_error(exc: DbOperationalError) -> bool:
+    if connection.vendor == "postgresql":
+        cause = exc.__cause__ or exc.__context__
+        sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        return sqlstate in (
+            "40P01",  # deadlock_detected
+            "55P03",  # lock_not_available
+            "57014",  # query_canceled
+            "40001",  # serialization_failure
+            "08000",  # connection_exception
+            "08003",  # connection_does_not_exist
+            "08006",  # connection_failure
+        )
+    return False
 
 
 class DecisionMermaViewSet(OkResponseMixin, ModelViewSet):
@@ -60,13 +88,21 @@ class MermaViewSet(
 ):
     """ViewSet para registro y consulta de mermas.
 
-    - List / Retrieve: accesible por Admin y Vendedor.
+    - List / Retrieve: accesible por Admin, Vendedor y Cliente.
+      Cada rol ve solo sus datos (ownership).
     - Create: accesible por Admin y Vendedor. Descuenta stock del
       ProductoSemanal dentro de una transacción atómica con lock.
+      El Cliente NO puede crear mermas.
     """
 
-    permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN, VENDEDOR)]
     pagination_class = CatalogPagination
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "merma_write"
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [permissions.IsAuthenticated(), HasRole(ADMIN, VENDEDOR)]
+        return [permissions.IsAuthenticated(), HasRole(ADMIN, VENDEDOR, CLIENTE)]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -97,9 +133,11 @@ class MermaViewSet(
             "fk_pedido__fk_vendedor__fk_persona",
             "fk_pedido__fk_estado",
         )
-        # Un vendedor solo ve las mermas de sus propios pedidos; el admin las ve todas.
         usuario = getattr(self.request.user, "usuario", None)
-        if self._rol_nombre(usuario) != ADMIN and usuario is not None:
+        rol = self._rol_nombre(usuario)
+        if rol == CLIENTE and usuario is not None:
+            qs = qs.filter(fk_pedido__fk_cliente_id=usuario.pk)
+        elif rol == VENDEDOR and usuario is not None:
             qs = qs.filter(fk_pedido__fk_vendedor_id=usuario.pk)
         incluir_inactivos = self.request.query_params.get("incluir_inactivos", "").lower() in ("true", "1")
         if not incluir_inactivos:
@@ -126,7 +164,17 @@ class MermaViewSet(
 
         try:
             with transaction.atomic():
-                producto_semanal = ProductoSemanal.objects.select_for_update().get(pk=producto_semanal_id)
+                _set_lock_timeout()
+                producto_semanal = (
+                    ProductoSemanal.objects
+                    .select_for_update()
+                    .get(pk=producto_semanal_id)
+                )
+
+                if producto_semanal.estado != ProductoSemanal.ESTADO_ACTIVO:
+                    raise ValidationError(
+                        {"fk_producto_semanal": "El producto semanal no está activo."}
+                    )
 
                 if producto_semanal.stock < cantidad:
                     raise ValidationError(
@@ -146,11 +194,27 @@ class MermaViewSet(
             raise
         except ProductoSemanal.DoesNotExist:
             raise NotFound({"fk_producto_semanal": "El producto semanal no existe."}) from None
-        except Exception:
-            logger.exception("Error inesperado al registrar merma")
-            return Response(
-                {"ok": False, "message": "Error al registrar la merma. Intente de nuevo."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except DbOperationalError as exc:
+            if _is_transient_db_error(exc):
+                logger.warning(
+                    "Error transitorio al registrar merma (lock_timeout/deadlock): %s", exc,
+                )
+                response = ok_response(
+                    message="Conflicto de concurrencia. Reintente.",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+                response["Retry-After"] = "5"
+                return response
+            logger.exception("Error de base de datos al registrar merma")
+            return ok_response(
+                message="Error al registrar la merma. Intente de nuevo.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except IntegrityError:
+            logger.exception("Error de integridad al registrar merma")
+            return ok_response(
+                message="Error al registrar la merma. Intente de nuevo.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         _log(request.user, f"merma_creada Merma #{merma.id_merma} — {merma.motivo}", request)
@@ -190,6 +254,7 @@ class MermaResumenView(APIView):
               "data": {
                 "agrupacion": "mes",
                 "total_general": 100,
+                "total_grupos": 3,
                 "producto_mas_afectado": {
                   "nombre": "Manzana",
                   "total": 50
@@ -210,6 +275,8 @@ class MermaResumenView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated, HasRole(ADMIN)]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "merma_resumen"
 
     def _parse_producto_id(self, raw: str | None) -> int | None:
         """Validate and return an integer producto_id or raise ValidationError."""
@@ -227,10 +294,7 @@ class MermaResumenView(APIView):
         return raw
 
     def get(self, request):
-        qs = Merma.objects.filter(estado=True).select_related(
-            "fk_producto_semanal__fk_producto",
-            "fk_decision",
-        )
+        qs = Merma.objects.filter(estado=True, fk_producto_semanal__isnull=False)
 
         # --- Validar y parsear query params ---
         fecha_desde = request.query_params.get("fecha_desde")
@@ -298,6 +362,7 @@ class MermaResumenView(APIView):
             )
             .order_by("-periodo", "-total_cantidad")
         )
+        total_grupos = agrupado.count()
         detalle = list(agrupado[:100])
 
         # Logging de auditoría
@@ -316,6 +381,7 @@ class MermaResumenView(APIView):
             data={
                 "agrupacion": agrupar_por,
                 "total_general": total_general,
+                "total_grupos": total_grupos,
                 "producto_mas_afectado": producto_mas_afectado,
                 "detalle": detalle,
             },

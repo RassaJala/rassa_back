@@ -10,10 +10,47 @@ class Migration(migrations.Migration):
         ('rassa', '0026_merge_20260804_1000'),
     ]
 
+    def set_existing_merma_fk_pedido(apps, schema_editor):
+        """Asigna un pedido a mermas existentes para cumplir con NOT NULL.
+
+        Esta migracion asume que NO existen mermas previas en la BD
+        (greenfield). Si la BD ya tiene mermas historicas, este backfill
+        las asignara al primer pedido por ID, lo cual es semanticamente
+        incorrecto. En ese caso, se debe ejecutar un script de migracion
+        de datos personalizado ANTES de aplicar esta migracion.
+        """
+        Merma = apps.get_model("rassa", "Merma")
+        PedidoCabecera = apps.get_model("rassa", "PedidoCabecera")
+        pedido = PedidoCabecera.objects.order_by("id_pedido").first()
+        if pedido is not None:
+            Merma.objects.filter(fk_pedido__isnull=True).update(fk_pedido=pedido)
+
+    def revert_fk_pedido_not_null(apps, schema_editor):
+        """Restaura fk_pedido como nullable para permitir rollback."""
+        pass  # No-op a nivel Python; el AlterField de operaciones[2] maneja el schema
+
     operations = [
         migrations.AddField(
             model_name='merma',
             name='fk_pedido',
-            field=models.ForeignKey(db_column='fk_pedido', on_delete=django.db.models.deletion.PROTECT, related_name='mermas', to='rassa.pedidocabecera'),
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                db_column='fk_pedido',
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name='mermas',
+                to='rassa.pedidocabecera',
+            ),
+        ),
+        migrations.RunPython(set_existing_merma_fk_pedido, revert_fk_pedido_not_null),
+        migrations.AlterField(
+            model_name='merma',
+            name='fk_pedido',
+            field=models.ForeignKey(
+                db_column='fk_pedido',
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name='mermas',
+                to='rassa.pedidocabecera',
+            ),
         ),
     ]

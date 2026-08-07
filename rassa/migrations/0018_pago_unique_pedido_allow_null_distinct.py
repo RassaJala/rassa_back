@@ -18,7 +18,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("rassa", "0012_pago_folio_default"),
-        ("rassa", "0017_merge_20260722_1151"),
+        ("rassa", "0007_squash_all_branches"),
     ]
 
     operations = [

@@ -210,6 +210,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     # holgura al flujo operativo; revisar con negocio si se necesita por-usuario.
     "recolecciones_read": "60/minute",
     "recolecciones_write": "100/hour",
+    "merma_write": "60/hour",
+    "merma_resumen": "30/hour",
 }
 
 # === TEST: disable throttling so test suites don't exhaust rate limits ===

@@ -97,7 +97,7 @@ def cancelar_duplicados_legacy(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("rassa", "0014_populate_conversacion_fk_familia"),
+        ("rassa", "0006_cascade_to_set_null_protect"),
     ]
 
     operations = [

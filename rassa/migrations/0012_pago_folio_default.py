@@ -5,7 +5,10 @@ from django.db import migrations, models
 
 def set_default_folio(apps, schema_editor):
     Pago = apps.get_model("rassa", "Pago")
-    Pago.objects.filter(folio__isnull=True).update(folio="")
+    nulls = Pago.objects.filter(folio__isnull=True).order_by("id_pago")
+    for i, pago in enumerate(nulls, start=1):
+        pago.folio = f"LEGACY-{i:04d}"
+        pago.save(update_fields=["folio"])
 
 
 class Migration(migrations.Migration):

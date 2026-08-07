@@ -95,7 +95,7 @@ class DecisionMerma(models.Model):
     """Decisiones para mermas (Donar, Desechar, Vender más barato, Compostar)."""
 
     id_decision = models.AutoField(primary_key=True)
-    decision = models.CharField(max_length=50)
+    decision = models.CharField(max_length=50, unique=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     estado = models.BooleanField(default=True)
 
@@ -558,6 +558,12 @@ class Merma(models.Model):
     class Meta:
         db_table = "merma"
         ordering = ["id_merma"]
+        indexes = [
+            models.Index(fields=["fk_pedido"]),
+            models.Index(fields=["creado_en"]),
+            models.Index(fields=["fk_producto_semanal"]),
+            models.Index(fields=["fk_decision"]),
+        ]
 
     def __str__(self):
         return f"Merma #{self.id_merma} — {str(self.motivo)}"
