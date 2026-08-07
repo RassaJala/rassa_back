@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from rassa.models import DetallePedido, Pago, PedidoCabecera, TipoPago
-from rassa.utils import nombre_completo as _nombre_completo
+from rassa.utils import nombre_completo
 
 ESTADO_REQUERIDO = "listo_para_retirar"
 
@@ -67,7 +67,7 @@ class ClienteNombreMixin:
     def get_cliente_nombre(self, obj):
         pedido = obj.fk_pedido
         if pedido and pedido.fk_cliente:
-            return _nombre_completo(pedido.fk_cliente)
+            return nombre_completo(pedido.fk_cliente)
         return None
 
 
@@ -135,7 +135,8 @@ class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
         return ProductoReciboSerializer(detalles, many=True).data
 
     def _recibo(self, obj):
-        return getattr(obj, "recibo_set", None).first() if getattr(obj, "recibo_set", None) else None
+        qs = getattr(obj, "recibo_set", None)
+        return qs.order_by("-id_recibo").first() if qs else None
 
     def get_recibo_folio(self, obj):
         recibo = self._recibo(obj)

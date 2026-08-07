@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import DatabaseError
@@ -1150,12 +1151,17 @@ class PedidoCreateTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("límite de crédito", response.data[0].lower())
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="issue #84: clientes sin LimiteCliente tienen credito ilimitado (el guard que falta)",
+    )
     def test_sin_limite_asignado(self):
-        """Un usuario sin LimiteCliente asociado puede crear pedidos.
+        """XFail — un cliente sin LimiteCliente NO debería crear pedidos con crédito ilimitado.
 
-        # REGLA PENDIENTE: issue #84 — un cliente sin LimiteCliente tiene crédito
-        # ilimitado (así queda documentado el estado actual). Pendiente de decisión
-        # (a) límite por defecto, (b) rechazar sin límite, o (c) aceptarlo como regla.
+        # REGLA PENDIENTE issue #84: hoy el flujo devuelve 201 (crédito ilimitado para
+        # clientes sin LimiteCliente). Este test asevera el guard correcto (rechazo → 400)
+        # pendiente de decidir (a) límite en registro, (b) rechazar, o (c) aceptarlo.
+        # XFAIL hoy; XPASS (strict) el día que la decisión se implemente → revisarlo.
         """
         user_sin_limite = User.objects.create_user(
             username="sin_limite", email="sin_limite@rassa.com", password="password123"
@@ -1177,7 +1183,7 @@ class PedidoCreateTestCase(APITestCase):
             ]
         )
         response = self.client.post("/api/pedidos/", payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_credito_excede_con_pedidos_pendientes(self):
         """Cliente con pedido pendiente previo que sumado excede el límite."""
@@ -1257,7 +1263,8 @@ class PedidoCreateTestCase(APITestCase):
 
     def test_cancelar_pendiente_libera_saldo_credito(self):
         """Cancelar un pedido pendiente libera el saldo y permite uno nuevo antes bloqueado."""
-        # ponytail: workaround B1 (#79) — la creación real aún no asigna fk_vendedor
+        # ponytail: pedido previo creado por ORM para fijar el saldo de crédito;
+        # fk_vendedor se asigna para que el vendedor pueda cancelarlo (camino B1/#79 aplicado)
         pedido_previo = PedidoCabecera.objects.create(
             fk_cliente=self.usuario_cliente,
             fk_estado=self.estado_pendiente,

@@ -899,6 +899,47 @@ class PagoConcurrencyTest(TransactionTestCase):
         self.assertEqual(len(folios), NUM_THREADS)
         self.assertEqual(len(set(folios)), NUM_THREADS, "Folios duplicados bajo concurrencia")
 
+    def test_doble_pago_concurrente_mismo_pedido(self):
+        """Doble pago concurrente del MISMO pedido: solo 1 pago sobrevive.
+
+        La rama select_for_update + re-validación bajo lock (pagos/views.py) debe
+        garantizar: exactamente 1x201, N-1x400, 0x500, y la invariante
+        (1 Pago + 1 Recibo + pedido entregado).
+        """
+        NUM_THREADS = 4
+        pedido = self._crear_pedido()
+        results = []
+        barrier = threading.Barrier(NUM_THREADS)
+
+        def pay():
+            client = APIClient()
+            client.force_authenticate(user=self.usuario.fk_user)
+            barrier.wait()
+            resp = client.post(
+                "/api/pagos/",
+                {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+            )
+            results.append(resp.status_code)
+
+        threads = [threading.Thread(target=pay) for _ in range(NUM_THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), NUM_THREADS)
+        self.assertEqual(sum(1 for r in results if r == status.HTTP_201_CREATED), 1, "Solo un pago debe tener exito")
+        self.assertEqual(
+            sum(1 for r in results if r == status.HTTP_400_BAD_REQUEST), NUM_THREADS - 1, "El resto debe ser 400"
+        )
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, results)
+
+        # Invariante: 1 Pago + 1 Recibo + pedido entregado
+        self.assertEqual(Pago.objects.filter(fk_pedido=pedido).count(), 1)
+        self.assertEqual(Recibo.objects.filter(fk_pedido=pedido).count(), 1)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
+
 
 class PagoConstraintRegresionTest(TestCase):
     """Tests de regresión para la migración 0018 (cambio nulls_distinct en Pago).
