@@ -867,6 +867,7 @@ class PublicacionCurrentTests(PublicacionBaseTestCase):
         for pub in body["data"]:
             self.assertIn("agricultor", pub)
             self.assertIn("productos", pub)
+            self.assertIn("precio", pub["productos"][0])
             self.assertIn("nombre", pub["agricultor"])
 
 

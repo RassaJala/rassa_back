@@ -198,6 +198,8 @@ class PedidoCreateSerializer(serializers.Serializer):
     """Serializer de entrada para crear un pedido desde el carrito."""
 
     items = ItemPedidoSerializer(many=True, allow_empty=False)
+    # Regla de negocio: pedido sin id_vendedor queda visible/editable solo para
+    # ADMIN (aislamiento por rol filtra fk_vendedor=None).
     id_vendedor = serializers.PrimaryKeyRelatedField(
         queryset=Usuario.objects.filter(fk_rol__nombre_rol=VENDEDOR),
         source="fk_vendedor",

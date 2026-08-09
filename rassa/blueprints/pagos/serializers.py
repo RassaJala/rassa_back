@@ -135,8 +135,12 @@ class PagoOutputSerializer(ClienteNombreMixin, serializers.ModelSerializer):
         return ProductoReciboSerializer(detalles, many=True).data
 
     def _recibo(self, obj):
-        qs = getattr(obj, "recibo_set", None)
-        return qs.order_by("-id_recibo").first() if qs else None
+        # Prefetch cache (PagoViewSet.get_queryset) para evitar 3 queries por pago.
+        # Sin cache (response de create), fallback a la query directa.
+        if not hasattr(obj, "recibos_ordenados"):
+            return obj.recibo_set.order_by("-id_recibo").first()
+        recibos = obj.recibos_ordenados
+        return recibos[0] if recibos else None
 
     def get_recibo_folio(self, obj):
         recibo = self._recibo(obj)

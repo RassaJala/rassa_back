@@ -2,9 +2,10 @@
 
 import threading
 from decimal import Decimal
+from unittest import skipUnless
 
 from django.contrib.auth.models import User
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -899,6 +900,7 @@ class PagoConcurrencyTest(TransactionTestCase):
         self.assertEqual(len(folios), NUM_THREADS)
         self.assertEqual(len(set(folios)), NUM_THREADS, "Folios duplicados bajo concurrencia")
 
+    @skipUnless(connection.vendor == "postgresql", "select_for_update es no-op en SQLite")
     def test_doble_pago_concurrente_mismo_pedido(self):
         """Doble pago concurrente del MISMO pedido: solo 1 pago sobrevive.
 
@@ -914,12 +916,17 @@ class PagoConcurrencyTest(TransactionTestCase):
         def pay():
             client = APIClient()
             client.force_authenticate(user=self.usuario.fk_user)
-            barrier.wait()
-            resp = client.post(
-                "/api/pagos/",
-                {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
-            )
-            results.append(resp.status_code)
+            try:
+                barrier.wait()
+                resp = client.post(
+                    "/api/pagos/",
+                    {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+                )
+                results.append(resp.status_code)
+            finally:
+                # Cada hilo cierra su propia conexión para no dejar sesiones
+                # abiertas al teardown (mismo patrón que test_cortes.py:536).
+                connection.close()
 
         threads = [threading.Thread(target=pay) for _ in range(NUM_THREADS)]
         for t in threads:
