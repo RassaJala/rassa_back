@@ -1,5 +1,6 @@
 """Tests para el módulo de Pagos."""
 
+import re
 import threading
 from decimal import Decimal
 from unittest import skipUnless
@@ -223,6 +224,9 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(parts[0], "REC")
         self.assertEqual(len(parts[1]), 8)  # YYYYMMDD
         self.assertEqual(len(parts[2]), 3)  # NNN
+        # R3.4: el folio del Recibo es R-REC-YYYYMMDD-NNN (fórmula completa)
+        recibo = Recibo.objects.get(fk_pedido=pedido)
+        self.assertRegex(recibo.folio, r"^R-REC-\d{8}-\d{3}$")
 
     def test_folio_secuencia_incrementa(self):
         p1 = self._crear_pedido(self.estado_listo)
@@ -869,6 +873,10 @@ class PagoConcurrencyTest(TransactionTestCase):
         )
         return pedido
 
+    @skipUnless(
+        connection.vendor == "postgresql",
+        "pg_advisory_xact_lock es no-op en SQLite; folios duplicados bajo concurrencia",
+    )
     def test_folio_no_duplicado_bajo_concurrencia(self):
         NUM_THREADS = 5
         pedidos = [self._crear_pedido() for _ in range(NUM_THREADS)]
@@ -878,12 +886,16 @@ class PagoConcurrencyTest(TransactionTestCase):
         def pay(pedido):
             client = APIClient()
             client.force_authenticate(user=self.usuario.fk_user)
-            barrier.wait()
-            resp = client.post(
-                "/api/pagos/",
-                {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
-            )
-            results.append(resp.status_code)
+            try:
+                barrier.wait()
+                resp = client.post(
+                    "/api/pagos/",
+                    {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+                )
+                results.append(resp.status_code)
+            finally:
+                # Cada hilo cierra su propia conexión (mismo patrón que el vecino).
+                connection.close()
 
         threads = [threading.Thread(target=pay, args=(p,)) for p in pedidos]
         for t in threads:
@@ -946,6 +958,86 @@ class PagoConcurrencyTest(TransactionTestCase):
         self.assertEqual(Recibo.objects.filter(fk_pedido=pedido).count(), 1)
         pedido.refresh_from_db()
         self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
+
+    @skipUnless(connection.vendor == "postgresql", "select_for_update es no-op en SQLite")
+    def test_cancelar_y_pagar_concurrente_mismo_pedido(self):
+        """Cancelar y pagar el MISMO pedido en concurrencia: exactamente uno gana.
+
+        El ganador (cancel o pago) es la carrera — no se asevera cuál. Invariantes:
+        1 éxito total (cancel 200 XOR pago 201), el perdedor 400 o 409, 0x500, y un
+        estado final coherente con el vencedor (entregado+1 Pago+1 Recibo o cancelado+0 Pagos).
+        """
+        EstadoPedido.objects.create(id_estado=7, tipo_estado="cancelado", descripcion="Cancelado")
+        rol_admin = Rol.objects.create(id_rol=1, nombre_rol="Admin", descripcion="Admin")
+        persona_admin = Persona.objects.create(
+            nombre="Admin",
+            apellido_paterno="Conc",
+            sexo="M",
+            fecha_nacimiento="1990-01-01",
+            domicilio="Calle Admin",
+        )
+        admin_user = User.objects.create_user(username="admin@conc.test", email="admin@conc.test", password="pass")
+        Usuario.objects.create(
+            fk_user=admin_user,
+            fk_persona=persona_admin,
+            fk_rol=rol_admin,
+            correo="admin@conc.test",
+        )
+
+        pedido = self._crear_pedido()
+        results = []
+        barrier = threading.Barrier(2)
+
+        def cancelar():
+            client = APIClient()
+            client.force_authenticate(user=admin_user)
+            try:
+                barrier.wait()
+                resp = client.patch(
+                    f"/api/pedidos/{pedido.id_pedido}/status/",
+                    {"nuevo_estado": "cancelado"},
+                    format="json",
+                )
+                results.append(("cancel", resp.status_code))
+            finally:
+                connection.close()
+
+        def pagar():
+            client = APIClient()
+            client.force_authenticate(user=self.usuario.fk_user)
+            try:
+                barrier.wait()
+                resp = client.post(
+                    "/api/pagos/",
+                    {"pedido": pedido.id_pedido, "tipo_pago": self.tipo_efectivo.id_tipo_pago, "monto": "116.00"},
+                )
+                results.append(("pago", resp.status_code))
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=cancelar), threading.Thread(target=pagar)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(results), 2)
+        codes = [code for _, code in results]
+        self.assertNotIn(status.HTTP_500_INTERNAL_SERVER_ERROR, codes)
+        exito = [code for code in codes if code in (status.HTTP_200_OK, status.HTTP_201_CREATED)]
+        self.assertEqual(len(exito), 1, "Exactamente una operación (cancel o pago) debe ganar")
+        perdedor = [code for code in codes if code not in (status.HTTP_200_OK, status.HTTP_201_CREATED)]
+        self.assertEqual(len(perdedor), 1)
+        self.assertIn(perdedor[0], (status.HTTP_400_BAD_REQUEST, status.HTTP_409_CONFLICT))
+
+        pedido.refresh_from_db()
+        if status.HTTP_201_CREATED in codes:
+            self.assertEqual(pedido.fk_estado.tipo_estado, "entregado")
+            self.assertEqual(Pago.objects.filter(fk_pedido=pedido).count(), 1)
+            self.assertEqual(Recibo.objects.filter(fk_pedido=pedido).count(), 1)
+        else:
+            self.assertEqual(pedido.fk_estado.tipo_estado, "cancelado")
+            self.assertEqual(Pago.objects.filter(fk_pedido=pedido).count(), 0)
 
 
 class PagoConstraintRegresionTest(TestCase):

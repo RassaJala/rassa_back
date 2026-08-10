@@ -111,7 +111,7 @@ class PagoViewSet(
         except EstadoPedido.DoesNotExist:
             return Response(
                 {"message": "Estado 'entregado' no configurado en la base de datos."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -193,6 +193,7 @@ class PagoViewSet(
             )
             .prefetch_related(
                 "fk_pedido__detallepedido_set",
+                Prefetch("recibo_set", queryset=Recibo.objects.order_by("-id_recibo"), to_attr="recibos_ordenados"),
             )
             .get(pk=pago.pk)
         )

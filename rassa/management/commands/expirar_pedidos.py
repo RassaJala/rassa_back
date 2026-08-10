@@ -9,12 +9,12 @@ paso. Puede ejecutarse repetidamente (cron) sin efectos laterales.
 
 import logging
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.db.models import F
 from django.utils import timezone
 
-from rassa.models import DetallePedido, EstadoPedido, HistorialEstadoPedido, PedidoCabecera, ProductoSemanal
+from rassa.blueprints.pedido.views import _restaurar_stock_pedido
+from rassa.models import EstadoPedido, HistorialEstadoPedido, PedidoCabecera
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,14 @@ class Command(BaseCommand):
     help = "Cancela pedidos pendientes cuya fecha_expiracion ya paso y restaura el stock."
 
     def handle(self, *args, **options):
+        # R1.4: el lookup del estado cancelado se hace ANTES del bloque atómico
+        # para que el fallo sea ruidoso y limpio (CommandError), no un rollback vacío.
+        try:
+            cancelado = EstadoPedido.objects.get(tipo_estado="cancelado")
+        except EstadoPedido.DoesNotExist:
+            logger.error("Estado 'cancelado' no configurado en la base de datos")
+            raise CommandError("El estado 'cancelado' no está configurado en la base de datos. Ejecute el seed de estados.")
+
         count = 0
         with transaction.atomic():
             expirados = (
@@ -30,17 +38,11 @@ class Command(BaseCommand):
                 .select_related("fk_estado")
                 .filter(fk_estado__tipo_estado="pendiente", fecha_expiracion__lt=timezone.now())
             )
-            cancelado = EstadoPedido.objects.get(tipo_estado="cancelado")
 
             for pedido in expirados:
                 # Mismo restore de stock que el flujo de cancelación manual
-                # (pedido/views.py cambiar_estado).
-                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
-                    producto_semanal = detalle.fk_producto_semanal
-                    if producto_semanal:
-                        ProductoSemanal.objects.filter(pk=producto_semanal.pk).update(
-                            stock=F("stock") + detalle.cantidad
-                        )
+                # (pedido/views.py cambiar_estado) — helper compartido (_restaurar_stock_pedido).
+                _restaurar_stock_pedido(pedido)
 
                 estado_anterior = pedido.fk_estado
                 pedido.fk_estado = cancelado

@@ -50,6 +50,19 @@ def _get_estado_pendiente_id():
     return EstadoPedido.objects.get(tipo_estado="pendiente").pk
 
 
+def _restaurar_stock_pedido(pedido):
+    """Restaura el stock de los detalles de un pedido (cancelación o expiración).
+
+    Fuente única de verdad para el restore; usada por cambiar_estado y por el
+    comando expirar_pedidos. Una regla de restore cambiada desvía el inventario
+    en silencio si se aplica en un solo lugar.
+    """
+    for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
+        ps = detalle.fk_producto_semanal
+        if ps:
+            ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
+
+
 SECUENCIA = {
     "pendiente": "confirmado",
     "confirmado": "en_preparacion",
@@ -108,6 +121,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
+        # R4.1 (review): el campo expirado del serializer ahora es filtrable.
+        expirado = self.request.query_params.get("expirado")
+        if expirado == "true":
+            qs = qs.filter(fk_estado__tipo_estado="pendiente", fecha_expiracion__lt=timezone.now())
+        elif expirado == "false":
+            qs = qs.exclude(fk_estado__tipo_estado="pendiente", fecha_expiracion__lt=timezone.now())
         return qs
 
     def get_serializer_class(self):
@@ -238,7 +257,11 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             self.check_object_permissions(request, pedido)
             estado_actual = pedido.fk_estado.tipo_estado
 
-            if es_pedido_expirado(pedido):
+            # R1.1: malla de seguridad para pedidos expirados. El scheduler
+            # expirar_pedidos está pendiente de despliegue en ops (issue #85),
+            # así que el ADMIN conserva una salida operativa: el restore de stock
+            # se ejecuta más abajo en el bloque de cancelación.
+            if es_pedido_expirado(pedido) and nombre_rol != ADMIN:
                 logger.warning("Pedido %s expirado: transición '%s' bloqueada", pedido.pk, nuevo_estado_str)
                 return ok_response(
                     message="El pedido expiró y ya no está disponible.",
@@ -281,10 +304,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             # Un return temprano dentro de atomic() haría commit del restore (rollback solo con excepción),
             # así que el restore va después de todas las validaciones (C-A2).
             if nuevo_estado_str == "cancelado":
-                for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
-                    ps = detalle.fk_producto_semanal
-                    if ps:
-                        ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
+                _restaurar_stock_pedido(pedido)
 
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
@@ -336,6 +356,9 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        # ponytail: se lee request.data crudo (id_vendedor) y el acceso se gobierna por
+        # el gate de rol ADMIN en lugar de check_object_permissions de DRF — patrón
+        # coherente con el módulo (ver historial más abajo).
         vendedor = None
         try:
             vendedor = Usuario.objects.filter(fk_rol__nombre_rol=VENDEDOR, pk=request.data.get("id_vendedor")).first()
@@ -541,10 +564,18 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         )
         usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
 
-    estado_pendiente_id = _get_estado_pendiente_id()
-    gasto_actual = PedidoCabecera.objects.select_for_update().filter(
-        fk_cliente_id__in=usuario_ids, fk_estado_id=estado_pendiente_id
-    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
+    # R1.2 (review vic-ar5): el gasto_actual suma TODOS los pedidos activos
+    # (no terminales: pendiente, confirmado, en_preparacion, listo_para_retirar).
+    # Si solo contara 'pendiente', confirmar un pedido liberaria su total del
+    # limite y el cliente podria duplicar su exposicion real.
+    gasto_actual = (
+        PedidoCabecera.objects.select_for_update()
+        .filter(fk_cliente_id__in=usuario_ids)
+        .exclude(fk_estado__tipo_estado__in=ESTADOS_TERMINALES)
+        .order_by("pk")
+        .aggregate(total_sum=models.Sum("total"))["total_sum"]
+        or Decimal("0.00")
+    )
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:
@@ -558,6 +589,6 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         raise ValidationError(
             f"El pedido excede el límite de crédito. "
             f"Límite: ${limite.monto:.2f}, "
-            f"Saldo actual en pedidos pendientes: ${gasto_actual:.2f}, "
+            f"Saldo actual en pedidos activos: ${gasto_actual:.2f}, "
             f"Total con este pedido: ${nuevo_saldo:.2f}."
         )
