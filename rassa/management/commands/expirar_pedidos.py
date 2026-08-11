@@ -29,7 +29,10 @@ class Command(BaseCommand):
             cancelado = EstadoPedido.objects.get(tipo_estado="cancelado")
         except EstadoPedido.DoesNotExist:
             logger.error("Estado 'cancelado' no configurado en la base de datos")
-            raise CommandError("El estado 'cancelado' no está configurado en la base de datos. Ejecute el seed de estados.")
+            raise CommandError(
+                "El estado 'cancelado' no está configurado en la base de datos. "
+                "Ejecute el seed de estados."
+            ) from None
 
         count = 0
         with transaction.atomic():

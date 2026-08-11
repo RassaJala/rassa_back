@@ -1,6 +1,5 @@
 """Tests para el módulo de Pagos."""
 
-import re
 import threading
 from decimal import Decimal
 from unittest import skipUnless
