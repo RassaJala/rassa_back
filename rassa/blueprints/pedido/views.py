@@ -568,14 +568,9 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
     # (no terminales: pendiente, confirmado, en_preparacion, listo_para_retirar).
     # Si solo contara 'pendiente', confirmar un pedido liberaria su total del
     # limite y el cliente podria duplicar su exposicion real.
-    gasto_actual = (
-        PedidoCabecera.objects.select_for_update()
-        .filter(fk_cliente_id__in=usuario_ids)
-        .exclude(fk_estado__tipo_estado__in=ESTADOS_TERMINALES)
-        .order_by("pk")
-        .aggregate(total_sum=models.Sum("total"))["total_sum"]
-        or Decimal("0.00")
-    )
+    gasto_actual = PedidoCabecera.objects.select_for_update().filter(fk_cliente_id__in=usuario_ids).exclude(
+        fk_estado__tipo_estado__in=ESTADOS_TERMINALES
+    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:

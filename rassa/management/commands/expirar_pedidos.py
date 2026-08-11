@@ -30,8 +30,7 @@ class Command(BaseCommand):
         except EstadoPedido.DoesNotExist:
             logger.error("Estado 'cancelado' no configurado en la base de datos")
             raise CommandError(
-                "El estado 'cancelado' no está configurado en la base de datos. "
-                "Ejecute el seed de estados."
+                "El estado 'cancelado' no está configurado en la base de datos. Ejecute el seed de estados."
             ) from None
 
         count = 0
