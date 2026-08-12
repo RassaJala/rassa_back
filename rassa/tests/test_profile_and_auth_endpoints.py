@@ -421,6 +421,35 @@ class ProfileAndAuthEndpointsTest(APITestCase):
         self.assertIn("inválidos", str(response.data))
 
     # ==================================================================
+    # REFRESH TOKEN
+    # ==================================================================
+
+    def test_refresh_token_devuelve_access_nuevo(self):
+        """POST /api/token/refresh/ con un refresh válido devuelve un access nuevo."""
+        login_resp = self.client.post(
+            reverse("token_obtain_pair"),
+            {"email": self.email, "password": self.password},
+            format="json",
+        )
+        self.assertEqual(login_resp.status_code, status.HTTP_200_OK)
+        access_anterior = login_resp.data["access"]
+        refresh = login_resp.data["refresh"]
+
+        response = self.client.post(reverse("token_refresh"), {"refresh": refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", response.data)
+        self.assertNotEqual(response.data["access"], access_anterior)
+
+    def test_register_email_malformado_400(self):
+        """Registro con email inválido devuelve 400."""
+        data = self._register_data(email="no-es-un-email")
+        response = self.client.post(reverse("register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data)
+        # C4: no acoplarse a la traducción exacta de Django/DRF; verificar que el mensaje habla de correo.
+        self.assertIn("correo", str(response.data["email"][0]).lower())
+
+    # ==================================================================
     # GET /me/ — with REAL JWT
     # ==================================================================
 

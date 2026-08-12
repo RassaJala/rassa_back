@@ -1,11 +1,13 @@
 """Vistas para el módulo de Pedidos."""
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import DatabaseError, models, transaction
+from django.db import DatabaseError, connection, models, transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -19,6 +21,7 @@ from rassa.models import (
     LimiteCliente,
     PedidoCabecera,
     ProductoSemanal,
+    Usuario,
 )
 from rassa.permissions.role_permissions import ADMIN, CLIENTE, VENDEDOR, HasRole
 from rassa.views import _log, ok_response
@@ -34,6 +37,7 @@ from .serializers import (
     PedidoOutputSerializer,
     es_pedido_expirado,
 )
+from .services.stock import restaurar_stock_pedido
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,17 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             return [IsAuthenticated(), HasRole(CLIENTE)]
         return [IsAuthenticated(), HasRole(VENDEDOR, ADMIN, CLIENTE)]
 
+    def _qs_por_rol(self, qs=None):
+        """Aplica aislamiento por rol (ROLE_FILTER_MAP + ADMIN) a un queryset de PedidoCabecera."""
+        qs = PedidoCabecera.objects if qs is None else qs
+        usuario, nombre_rol = self._get_usuario_rol()
+        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
+        if filter_field:
+            qs = qs.filter(**{filter_field: usuario})
+        elif nombre_rol != ADMIN:
+            qs = qs.none()
+        return qs
+
     def get_queryset(self):
         qs = (
             PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
@@ -90,15 +105,16 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             )
             .order_by("-creado_en")
         )
-        usuario, nombre_rol = self._get_usuario_rol()
-        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
-        if filter_field:
-            qs = qs.filter(**{filter_field: usuario})
-        elif nombre_rol != ADMIN:
-            qs = qs.none()
+        qs = self._qs_por_rol(qs)
         estado = self.request.query_params.get("estado")
         if estado:
             qs = qs.filter(fk_estado__tipo_estado=estado)
+        # R4.1 (review): el campo expirado del serializer ahora es filtrable.
+        expirado = self.request.query_params.get("expirado")
+        if expirado == "true":
+            qs = qs.filter(fk_estado__tipo_estado="pendiente", fecha_expiracion__lt=timezone.now())
+        elif expirado == "false":
+            qs = qs.exclude(fk_estado__tipo_estado="pendiente", fecha_expiracion__lt=timezone.now())
         return qs
 
     def get_serializer_class(self):
@@ -145,6 +161,8 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                 pedido = PedidoCabecera.objects.create(
                     fk_cliente=usuario,
                     fk_estado_id=estado_pendiente_id,
+                    fk_vendedor=serializer.validated_data.get("fk_vendedor"),
+                    fecha_expiracion=timezone.now() + timedelta(hours=settings.PEDIDO_EXPIRACION_HORAS),
                     subtotal=subtotal,
                     iva=iva,
                     total=total,
@@ -195,13 +213,28 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
     def _get_pedido_con_permiso(self, pk):
         qs = PedidoCabecera.objects.select_for_update(nowait=True).prefetch_related("detallepedido_set")
-        usuario, nombre_rol = self._get_usuario_rol()
-        filter_field = ROLE_FILTER_MAP.get(nombre_rol)
-        if filter_field:
-            qs = qs.filter(**{filter_field: usuario})
-        elif nombre_rol != ADMIN:
-            qs = qs.none()
+        qs = self._qs_por_rol(qs)
         return qs.get(pk=pk)
+
+    def _reload_pedido_detalle(self, pk):
+        """Recarga el pedido con el detalle completo para el serializer.
+
+        R1 (review 4R): bloque de recarga duplicado en cambiar_estado y
+        asignar_vendedor extraído a un único helper.
+        """
+        return (
+            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
+            .prefetch_related(
+                "detallepedido_set",
+                Prefetch(
+                    "historialestadopedido_set",
+                    queryset=HistorialEstadoPedido.objects.select_related(
+                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
+                    ),
+                ),
+            )
+            .get(pk=pk)
+        )
 
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
@@ -232,7 +265,19 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             self.check_object_permissions(request, pedido)
             estado_actual = pedido.fk_estado.tipo_estado
 
-            if es_pedido_expirado(pedido):
+            # R1.1: malla de seguridad para pedidos expirados. El scheduler
+            # expirar_pedidos está pendiente de despliegue en ops (issue #85),
+            # así que el ADMIN conserva una salida operativa: el restore de stock
+            # se ejecuta más abajo en el bloque de cancelación.
+            if es_pedido_expirado(pedido) and nombre_rol == ADMIN:
+                # R1 (review 4R): rastro del override del ADMIN sobre un pedido expirado.
+                # Sin esto la excepcion es one-way door: al avanzar, es_pedido_expirado
+                # pasa a False para siempre y el resto de la secuencia no muestra el override.
+                logger.warning(
+                    "ADMIN %s override de expiracion pedido %s -> %s", nombre_rol, pedido.pk, nuevo_estado_str
+                )
+            if es_pedido_expirado(pedido) and nombre_rol != ADMIN:
+                logger.warning("Pedido %s expirado: transición '%s' bloqueada", pedido.pk, nuevo_estado_str)
                 return ok_response(
                     message="El pedido expiró y ya no está disponible.",
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,6 +315,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # Efecto secundario: restaurar inventario SOLO tras validar la transición.
+            # Un return temprano dentro de atomic() haría commit del restore (rollback solo con excepción),
+            # así que el restore va después de todas las validaciones (C-A2).
+            if nuevo_estado_str == "cancelado":
+                restaurar_stock_pedido(pedido)
+
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
             pedido.save(update_fields=["fk_estado"])
@@ -287,23 +338,68 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             request,
         )
 
-        pedido = (
-            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
-            .prefetch_related(
-                "detallepedido_set",
-                Prefetch(
-                    "historialestadopedido_set",
-                    queryset=HistorialEstadoPedido.objects.select_related(
-                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
-                    ),
-                ),
-            )
-            .get(pk=pedido.pk)
-        )
+        pedido = self._reload_pedido_detalle(pedido.pk)
 
         return ok_response(
             data=PedidoDetailSerializer(pedido).data,
             message=f"Estado cambiado a '{nuevo_estado_str}' correctamente.",
+        )
+
+    @action(detail=True, methods=["patch"], url_path="asignar-vendedor")
+    def asignar_vendedor(self, request, pk=None):
+        """PATCH /api/pedidos/{id}/asignar-vendedor/ — solo ADMIN asigna vendedor.
+
+        Un pedido sin vendedor (fk_vendedor=None) queda invisible para los roles
+        de negocio (aislamiento por rol) — solo el admin puede asignarle uno.
+        """
+        _, nombre_rol = self._get_usuario_rol()
+        if nombre_rol != ADMIN:
+            return ok_response(
+                message="Solo administradores pueden asignar vendedor.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ponytail: se lee request.data crudo (id_vendedor) y el acceso se gobierna por
+        # el gate de rol ADMIN en lugar de check_object_permissions de DRF — patrón
+        # coherente con el módulo (ver historial más abajo).
+        vendedor = None
+        try:
+            vendedor = Usuario.objects.filter(fk_rol__nombre_rol=VENDEDOR, pk=request.data.get("id_vendedor")).first()
+        except (TypeError, ValueError):
+            vendedor = None
+
+        if vendedor is None:
+            logger.warning("Intento de asignar vendedor inválido al pedido %s", pk)
+            return ok_response(
+                message="El campo 'id_vendedor' es inválido o el usuario no tiene rol de vendedor.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                pedido = PedidoCabecera.objects.select_for_update().get(pk=pk)
+                # R1 (review 4R): no reasignar pedidos terminales ya cobrados:
+                # reescribir la atribución/comisiones de un pedido cerrado.
+                if pedido.fk_estado.tipo_estado in ESTADOS_TERMINALES:
+                    return ok_response(
+                        message="No se puede reasignar vendedor: el pedido está en estado terminal.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+                pedido.fk_vendedor = vendedor
+                pedido.save(update_fields=["fk_vendedor"])
+        except PedidoCabecera.DoesNotExist:
+            return ok_response(
+                message="Pedido no encontrado.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        _log(request.user, f"asignar_vendedor pedido={pk} vendedor={vendedor.id_usuario}", request)
+
+        pedido = self._reload_pedido_detalle(pk)
+
+        return ok_response(
+            data=PedidoDetailSerializer(pedido).data,
+            message="Vendedor asignado correctamente.",
         )
 
     @action(detail=True, methods=["get"], url_path="historial")
@@ -312,13 +408,12 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
         GET /api/pedidos/{id}/historial/
         """
-        qs = PedidoCabecera.objects.all()
-        usuario = getattr(request.user, "usuario", None)
-        rol = getattr(usuario, "fk_rol", None) if usuario else None
-        if rol and rol.nombre_rol == "Vendedor":
-            qs = qs.filter(fk_vendedor=usuario)
-
-        if not qs.filter(pk=pk).exists():
+        # ponytail: aislamiento por rol (ROLE_FILTER_MAP) sin prefetch/order_by ni el
+        # param ?estado= de get_queryset() — R1 (review 4R): un solo get, sin TOCTOU
+        # entre el exists() y la query siguiente.
+        try:
+            self._qs_por_rol().get(pk=pk)
+        except PedidoCabecera.DoesNotExist:
             return ok_response(
                 message="Pedido no encontrado.",
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -442,8 +537,9 @@ def _crear_detalles_bulk(pedido, detalle_items):
 def _validar_limite_credito(usuario, total_pedido: Decimal):
     """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia.
 
-    Debe ejecutarse DENTRO de transaction.atomic() con select_for_update
-    para evitar race conditions entre requests concurrentes.
+    Debe ejecutarse DENTRO de transaction.atomic(). La serialización entre
+    creaciones concurrentes de la misma familia la da un advisory lock de
+    PostgreSQL, no un select_for_update sobre todos los pedidos.
     """
     try:
         limite = LimiteCliente.objects.select_for_update().get(fk_usuario=usuario)
@@ -461,6 +557,17 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
     )
 
     if familias:
+        # R1 (review 4R): lock de familia por advisory lock en vez de lockear TODOS
+        # los pedidos no terminales (serializaba creaciones y producia 409 espurios
+        # en cancel/pago con nowait=True). El gasto se lee sin lock de filas.
+        # ponytail: advisory lock solo aplica en PostgreSQL; en SQLite es no-op (los
+        # tests de concurrencia usan @skipUnless postgresql). Con varias familias se
+        # usa la primera (ordén pk) — suficiente para serializar el caso común.
+        lock_key = int(sorted(familias)[0])
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
+
         miembros = (
             FamiliaUsuario.objects.select_for_update()
             .filter(fk_familia_id__in=familias, estado=True)
@@ -469,10 +576,13 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         )
         usuario_ids.update(miembros.values_list("fk_usuario_id", flat=True))
 
-    estado_pendiente_id = _get_estado_pendiente_id()
-    gasto_actual = PedidoCabecera.objects.select_for_update().filter(
-        fk_cliente_id__in=usuario_ids, fk_estado_id=estado_pendiente_id
-    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
+    # R1.2 (review vic-ar5): el gasto_actual suma TODOS los pedidos activos
+    # (no terminales: pendiente, confirmado, en_preparacion, listo_para_retirar).
+    # Si solo contara 'pendiente', confirmar un pedido liberaria su total del
+    # limite y el cliente podria duplicar su exposicion real.
+    gasto_actual = PedidoCabecera.objects.filter(fk_cliente_id__in=usuario_ids).exclude(
+        fk_estado__tipo_estado__in=ESTADOS_TERMINALES
+    ).aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:
@@ -486,6 +596,6 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
         raise ValidationError(
             f"El pedido excede el límite de crédito. "
             f"Límite: ${limite.monto:.2f}, "
-            f"Saldo actual en pedidos pendientes: ${gasto_actual:.2f}, "
+            f"Saldo actual en pedidos activos: ${gasto_actual:.2f}, "
             f"Total con este pedido: ${nuevo_saldo:.2f}."
         )
