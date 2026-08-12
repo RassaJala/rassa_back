@@ -26,7 +26,7 @@ def backfill_fecha_expiracion(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("rassa", "0026_merge_20260804_1000")]
+    dependencies = [("rassa", "0027_add_fk_pedido_to_merma")]
     operations = [
         migrations.RunPython(backfill_fecha_expiracion, migrations.RunPython.noop),
     ]
