@@ -10,6 +10,7 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from rassa.blueprints.pagos.services.pago_service import RECIBO_FOLIO_PREFIX
 from rassa.models import (
     CategoriaProducto,
     DetallePedido,
@@ -183,7 +184,7 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(data["tipo_pago_nombre"], "Efectivo")
 
         # C-M3: el Recibo se expone en la respuesta del pago
-        self.assertTrue(data["recibo_folio"].startswith("R-"))
+        self.assertTrue(data["recibo_folio"].startswith(RECIBO_FOLIO_PREFIX))
         self.assertEqual(data["recibo_monto"], "116.00")
 
         # Pedido debe pasar a entregado
@@ -204,7 +205,7 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         recibo = Recibo.objects.get(fk_pedido=pedido)
         self.assertEqual(recibo.monto, Decimal("116.00"))
-        self.assertTrue(recibo.folio.startswith("R-"))
+        self.assertTrue(recibo.folio.startswith(RECIBO_FOLIO_PREFIX))
         self.assertEqual(recibo.fk_pago.fk_pedido, pedido)
 
     def test_folio_formato_correcto(self):
@@ -225,7 +226,7 @@ class PagoCreateTest(PagosTestBase):
         self.assertEqual(len(parts[2]), 3)  # NNN
         # R3.4: el folio del Recibo es R-REC-YYYYMMDD-NNN (fórmula completa)
         recibo = Recibo.objects.get(fk_pedido=pedido)
-        self.assertRegex(recibo.folio, r"^R-REC-\d{8}-\d{3}$")
+        self.assertRegex(recibo.folio, rf"^{RECIBO_FOLIO_PREFIX}REC-\d{{8}}-\d{{3}}$")
 
     def test_folio_secuencia_incrementa(self):
         p1 = self._crear_pedido(self.estado_listo)

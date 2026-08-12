@@ -155,9 +155,20 @@ class PagoViewSet(
                     usuario=usuario,
                 )
 
+        except PedidoCabecera.DoesNotExist:
+            # R4 (review 4R): pedido inexistente => 404, no 500. El get con
+            # select_for_update se resuelve dentro del atomic: aquí ya no hay
+            # escrituras, el rollback interno no deja nada que commitear.
+            return Response(
+                {"message": "Pedido no encontrado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except IntegrityError as exc:
-            err_str = str(exc)
-            if "folio" in err_str or "unique_pago_per_pedido" in err_str:
+            # R4 (review 4R): detectar la concurrencia por presencia real del pago
+            # (unique_pago_per_pedido) en vez de por substring del mensaje del
+            # driver, que es frágil entre backends. Si no hay pago, el error es
+            # real y se re-lanza.
+            if Pago.objects.filter(fk_pedido_id=pedido_id).exists():
                 logger.warning("IntegrityError esperado (concurrencia): %s", exc)
                 return Response(
                     {"message": "Error de concurrencia. Intente de nuevo."},

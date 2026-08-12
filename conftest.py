@@ -15,6 +15,8 @@ so it works with both `manage.py test` (Django runner) and pytest.
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 
 class MockHttpError(Exception):
     """Stand-in for googleapiclient.errors.HttpError for testing.
@@ -47,3 +49,15 @@ if "googleapiclient" not in sys.modules:
     sys.modules["googleapiclient.discovery"] = googleapiclient.discovery
     sys.modules["googleapiclient.errors"] = errors_mock
     sys.modules["googleapiclient.http"] = http_mock
+
+
+@pytest.fixture(autouse=True)
+def _desactivar_rate_limits(monkeypatch):
+    """Review 4R R3: los viewsets declaran throttle_classes explícitos (p.ej.
+    PagoViewSet con ScopedRateThrottle); el modo test de settings solo limpia
+    DEFAULT_THROTTLE_CLASSES, así que los tests pagan 429 según el orden de
+    ejecución. Se neutraliza allow_request para que la suite sea reproducible.
+    """
+    from rest_framework.throttling import ScopedRateThrottle
+
+    monkeypatch.setattr(ScopedRateThrottle, "allow_request", lambda self, request, view: True)

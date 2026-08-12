@@ -1787,3 +1787,23 @@ class ExpirarPedidosCommandTest(APITestCase):
         self.producto_semanal.refresh_from_db()
         self.assertEqual(self.producto_semanal.stock, 10)
         self.assertEqual(HistorialEstadoPedido.objects.filter(fk_pedido=pedido).count(), 0)
+
+    def test_fallo_en_un_pedido_no_revierte_el_lote(self):
+        """C1: un DatabaseError en un pedido no impide cancelar los siguientes.
+
+        La transacción por pedido (savepoint) garantiza progreso parcial: el
+        primer pedido queda pendiente y el segundo se cancela pese al fallo.
+        """
+        p1 = self._crear_pedido(fecha_expiracion=timezone.now() - timedelta(hours=1), cantidad=1)
+        p2 = self._crear_pedido(fecha_expiracion=timezone.now() - timedelta(hours=1), cantidad=2)
+
+        with patch(
+            "rassa.management.commands.expirar_pedidos._restaurar_stock_pedido",
+            side_effect=[DatabaseError("boom"), None],
+        ):
+            call_command("expirar_pedidos")
+
+        p1.refresh_from_db()
+        p2.refresh_from_db()
+        self.assertEqual(p1.fk_estado.tipo_estado, "pendiente")
+        self.assertEqual(p2.fk_estado.tipo_estado, "cancelado")

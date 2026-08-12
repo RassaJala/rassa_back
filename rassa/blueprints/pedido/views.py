@@ -5,7 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import DatabaseError, models, transaction
+from django.db import DatabaseError, connection, models, transaction
 from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -37,6 +37,7 @@ from .serializers import (
     PedidoOutputSerializer,
     es_pedido_expirado,
 )
+from .services.stock import restaurar_stock_pedido
 
 logger = logging.getLogger(__name__)
 
@@ -48,19 +49,6 @@ def _get_estado_pendiente_id():
     """
     # ponytail: sin caché entre tests para evitar stale FK en transacciones nuevas
     return EstadoPedido.objects.get(tipo_estado="pendiente").pk
-
-
-def _restaurar_stock_pedido(pedido):
-    """Restaura el stock de los detalles de un pedido (cancelación o expiración).
-
-    Fuente única de verdad para el restore; usada por cambiar_estado y por el
-    comando expirar_pedidos. Una regla de restore cambiada desvía el inventario
-    en silencio si se aplica en un solo lugar.
-    """
-    for detalle in DetallePedido.objects.filter(fk_pedido=pedido).select_related("fk_producto_semanal"):
-        ps = detalle.fk_producto_semanal
-        if ps:
-            ProductoSemanal.objects.filter(pk=ps.pk).update(stock=models.F("stock") + detalle.cantidad)
 
 
 SECUENCIA = {
@@ -228,6 +216,26 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         qs = self._qs_por_rol(qs)
         return qs.get(pk=pk)
 
+    def _reload_pedido_detalle(self, pk):
+        """Recarga el pedido con el detalle completo para el serializer.
+
+        R1 (review 4R): bloque de recarga duplicado en cambiar_estado y
+        asignar_vendedor extraído a un único helper.
+        """
+        return (
+            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
+            .prefetch_related(
+                "detallepedido_set",
+                Prefetch(
+                    "historialestadopedido_set",
+                    queryset=HistorialEstadoPedido.objects.select_related(
+                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
+                    ),
+                ),
+            )
+            .get(pk=pk)
+        )
+
     @action(detail=True, methods=["patch"], url_path="status")
     def cambiar_estado(self, request, pk=None):
         _, nombre_rol = self._get_usuario_rol()
@@ -261,6 +269,13 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             # expirar_pedidos está pendiente de despliegue en ops (issue #85),
             # así que el ADMIN conserva una salida operativa: el restore de stock
             # se ejecuta más abajo en el bloque de cancelación.
+            if es_pedido_expirado(pedido) and nombre_rol == ADMIN:
+                # R1 (review 4R): rastro del override del ADMIN sobre un pedido expirado.
+                # Sin esto la excepcion es one-way door: al avanzar, es_pedido_expirado
+                # pasa a False para siempre y el resto de la secuencia no muestra el override.
+                logger.warning(
+                    "ADMIN %s override de expiracion pedido %s -> %s", nombre_rol, pedido.pk, nuevo_estado_str
+                )
             if es_pedido_expirado(pedido) and nombre_rol != ADMIN:
                 logger.warning("Pedido %s expirado: transición '%s' bloqueada", pedido.pk, nuevo_estado_str)
                 return ok_response(
@@ -304,7 +319,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             # Un return temprano dentro de atomic() haría commit del restore (rollback solo con excepción),
             # así que el restore va después de todas las validaciones (C-A2).
             if nuevo_estado_str == "cancelado":
-                _restaurar_stock_pedido(pedido)
+                restaurar_stock_pedido(pedido)
 
             estado_anterior = pedido.fk_estado
             pedido.fk_estado = nuevo_estado
@@ -323,19 +338,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
             request,
         )
 
-        pedido = (
-            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
-            .prefetch_related(
-                "detallepedido_set",
-                Prefetch(
-                    "historialestadopedido_set",
-                    queryset=HistorialEstadoPedido.objects.select_related(
-                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
-                    ),
-                ),
-            )
-            .get(pk=pedido.pk)
-        )
+        pedido = self._reload_pedido_detalle(pedido.pk)
 
         return ok_response(
             data=PedidoDetailSerializer(pedido).data,
@@ -375,6 +378,13 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         try:
             with transaction.atomic():
                 pedido = PedidoCabecera.objects.select_for_update().get(pk=pk)
+                # R1 (review 4R): no reasignar pedidos terminales ya cobrados:
+                # reescribir la atribución/comisiones de un pedido cerrado.
+                if pedido.fk_estado.tipo_estado in ESTADOS_TERMINALES:
+                    return ok_response(
+                        message="No se puede reasignar vendedor: el pedido está en estado terminal.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
                 pedido.fk_vendedor = vendedor
                 pedido.save(update_fields=["fk_vendedor"])
         except PedidoCabecera.DoesNotExist:
@@ -385,19 +395,7 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
 
         _log(request.user, f"asignar_vendedor pedido={pk} vendedor={vendedor.id_usuario}", request)
 
-        pedido = (
-            PedidoCabecera.objects.select_related("fk_estado", "fk_cliente__fk_persona", "fk_vendedor__fk_persona")
-            .prefetch_related(
-                "detallepedido_set",
-                Prefetch(
-                    "historialestadopedido_set",
-                    queryset=HistorialEstadoPedido.objects.select_related(
-                        "fk_estado_anterior", "fk_estado_nuevo", "fk_cambiado_por__fk_persona"
-                    ),
-                ),
-            )
-            .get(pk=pk)
-        )
+        pedido = self._reload_pedido_detalle(pk)
 
         return ok_response(
             data=PedidoDetailSerializer(pedido).data,
@@ -411,9 +409,11 @@ class PedidoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.G
         GET /api/pedidos/{id}/historial/
         """
         # ponytail: aislamiento por rol (ROLE_FILTER_MAP) sin prefetch/order_by ni el
-        # param ?estado= de get_queryset() — solo importa si el pedido pertenece al usuario.
-        acceso = self._qs_por_rol()
-        if not acceso.filter(pk=pk).exists():
+        # param ?estado= de get_queryset() — R1 (review 4R): un solo get, sin TOCTOU
+        # entre el exists() y la query siguiente.
+        try:
+            self._qs_por_rol().get(pk=pk)
+        except PedidoCabecera.DoesNotExist:
             return ok_response(
                 message="Pedido no encontrado.",
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -537,8 +537,9 @@ def _crear_detalles_bulk(pedido, detalle_items):
 def _validar_limite_credito(usuario, total_pedido: Decimal):
     """Valida que el nuevo pedido no exceda el límite de crédito del cliente o su familia.
 
-    Debe ejecutarse DENTRO de transaction.atomic() con select_for_update
-    para evitar race conditions entre requests concurrentes.
+    Debe ejecutarse DENTRO de transaction.atomic(). La serialización entre
+    creaciones concurrentes de la misma familia la da un advisory lock de
+    PostgreSQL, no un select_for_update sobre todos los pedidos.
     """
     try:
         limite = LimiteCliente.objects.select_for_update().get(fk_usuario=usuario)
@@ -556,6 +557,17 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
     )
 
     if familias:
+        # R1 (review 4R): lock de familia por advisory lock en vez de lockear TODOS
+        # los pedidos no terminales (serializaba creaciones y producia 409 espurios
+        # en cancel/pago con nowait=True). El gasto se lee sin lock de filas.
+        # ponytail: advisory lock solo aplica en PostgreSQL; en SQLite es no-op (los
+        # tests de concurrencia usan @skipUnless postgresql). Con varias familias se
+        # usa la primera (ordén pk) — suficiente para serializar el caso común.
+        lock_key = int(sorted(familias)[0])
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
+
         miembros = (
             FamiliaUsuario.objects.select_for_update()
             .filter(fk_familia_id__in=familias, estado=True)
@@ -568,9 +580,9 @@ def _validar_limite_credito(usuario, total_pedido: Decimal):
     # (no terminales: pendiente, confirmado, en_preparacion, listo_para_retirar).
     # Si solo contara 'pendiente', confirmar un pedido liberaria su total del
     # limite y el cliente podria duplicar su exposicion real.
-    gasto_actual = PedidoCabecera.objects.select_for_update().filter(fk_cliente_id__in=usuario_ids).exclude(
+    gasto_actual = PedidoCabecera.objects.filter(fk_cliente_id__in=usuario_ids).exclude(
         fk_estado__tipo_estado__in=ESTADOS_TERMINALES
-    ).order_by("pk").aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
+    ).aggregate(total_sum=models.Sum("total"))["total_sum"] or Decimal("0.00")
 
     nuevo_saldo = gasto_actual + total_pedido
     if nuevo_saldo > limite.monto:
